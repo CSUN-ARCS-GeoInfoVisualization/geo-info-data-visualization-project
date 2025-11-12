@@ -18,9 +18,17 @@ export function Dashboard() {
       <div className="mb-8">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div>
-            <h1 className="text-3xl font-bold mb-2">Wildfire Risk Dashboard</h1>
+            <h1 className="text-3xl font-bold mb-2">Geo Info Data Visualization Project</h1>
             <p className="text-muted-foreground">
-              Real-time wildfire risk assessment and monitoring for your area
+              Wildfire Prediction Senior Research Project conducted at California State University, Northridge
+
+              Team Members:
+
+              Ido Cohen,
+              Alex Hernandez-Abrego,
+              Sannia Jean,
+              Ivan Lopez,
+              Tony Song
             </p>
           </div>
           <div className="flex items-center gap-4">
