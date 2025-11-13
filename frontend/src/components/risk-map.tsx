@@ -1,9 +1,9 @@
 import { useState, useRef, useEffect } from "react";
-import { 
-  Map, 
-  Layers, 
-  Thermometer, 
-  Wind, 
+import {
+  Map,
+  Layers,
+  Thermometer,
+  Wind,
   Droplets,
   Flame,
   AlertTriangle,
@@ -93,7 +93,7 @@ const mockRiskZones: RiskZone[] = [
     lastUpdated: "5 minutes ago"
   },
   {
-    id: "zone-2", 
+    id: "zone-2",
     name: "East Hills",
     riskLevel: "high",
     coordinates: { x: 60, y: 20, width: 25, height: 30 },
@@ -137,7 +137,7 @@ const mockFireIncidents: FireIncident[] = [
   },
   {
     id: "fire-2",
-    name: "Pine Valley Fire", 
+    name: "Pine Valley Fire",
     status: "contained",
     acres: 156,
     containment: 95,
@@ -210,7 +210,7 @@ export function RiskMap() {
   const [selectedStation, setSelectedStation] = useState<string | null>(null);
   const [mapView, setMapView] = useState<"satellite" | "terrain" | "street">("satellite");
   const [timeframe, setTimeframe] = useState<"current" | "forecast-6h" | "forecast-24h">("current");
-  
+
   // Interactive features
   const [viewport, setViewport] = useState<MapViewport>({ x: 0, y: 0, zoom: 1 });
   const [isDragging, setIsDragging] = useState(false);
@@ -222,10 +222,10 @@ export function RiskMap() {
   const [searchQuery, setSearchQuery] = useState("");
   const [isAnimating, setIsAnimating] = useState(false);
   const [animationSpeed, setAnimationSpeed] = useState(1);
-  
+
   const mapRef = useRef<HTMLDivElement>(null);
   const animationRef = useRef<number>();
-  
+
   const [layers, setLayers] = useState<MapLayer[]>([
     { id: "risk-zones", name: "Risk Zones", icon: Layers, enabled: true, opacity: 70, color: "multi" },
     { id: "fire-incidents", name: "Fire Incidents", icon: Flame, enabled: true, opacity: 100, color: "red" },
@@ -236,13 +236,13 @@ export function RiskMap() {
   ]);
 
   const toggleLayer = (layerId: string) => {
-    setLayers(prev => prev.map(layer => 
+    setLayers(prev => prev.map(layer =>
       layer.id === layerId ? { ...layer, enabled: !layer.enabled } : layer
     ));
   };
 
   const updateLayerOpacity = (layerId: string, opacity: number) => {
-    setLayers(prev => prev.map(layer => 
+    setLayers(prev => prev.map(layer =>
       layer.id === layerId ? { ...layer, opacity } : layer
     ));
   };
@@ -274,7 +274,7 @@ export function RiskMap() {
       if (rect) {
         const x = ((e.clientX - rect.left) / rect.width) * 100;
         const y = ((e.clientY - rect.top) / rect.height) * 100;
-        
+
         setIsDrawing(true);
         setCurrentDrawing({
           id: `shape-${Date.now()}`,
@@ -298,7 +298,7 @@ export function RiskMap() {
       if (rect) {
         const x2 = ((e.clientX - rect.left) / rect.width) * 100;
         const y2 = ((e.clientY - rect.top) / rect.height) * 100;
-        
+
         if (currentDrawing.type === "rectangle") {
           setCurrentDrawing(prev => prev ? { ...prev, coordinates: { ...prev.coordinates, x2, y2 } } : null);
         } else if (currentDrawing.type === "circle") {
@@ -362,13 +362,13 @@ export function RiskMap() {
 
   // Search functionality
   const searchResults = [
-    ...mockRiskZones.filter(zone => 
+    ...mockRiskZones.filter(zone =>
       zone.name.toLowerCase().includes(searchQuery.toLowerCase())
     ).map(zone => ({ ...zone, type: "zone" as const })),
-    ...mockFireIncidents.filter(incident => 
+    ...mockFireIncidents.filter(incident =>
       incident.name.toLowerCase().includes(searchQuery.toLowerCase())
     ).map(incident => ({ ...incident, type: "incident" as const })),
-    ...mockWeatherStations.filter(station => 
+    ...mockWeatherStations.filter(station =>
       station.name.toLowerCase().includes(searchQuery.toLowerCase())
     ).map(station => ({ ...station, type: "station" as const }))
   ].slice(0, 5);
@@ -391,8 +391,8 @@ export function RiskMap() {
           <div className="flex items-center gap-2">
             <div className="relative">
               <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input 
-                placeholder="Search locations..." 
+              <Input
+                placeholder="Search locations..."
                 className="pl-10 w-48"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
@@ -432,8 +432,8 @@ export function RiskMap() {
                 <SelectItem value="forecast-24h">24hr Forecast</SelectItem>
               </SelectContent>
             </Select>
-            <Button 
-              variant="outline" 
+            <Button
+              variant="outline"
               size="sm"
               onClick={() => setIsAnimating(!isAnimating)}
             >
@@ -467,8 +467,8 @@ export function RiskMap() {
                     <div className="flex items-center gap-1 border rounded-lg">
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <Button 
-                            variant={mapTool === "select" ? "default" : "ghost"} 
+                          <Button
+                            variant={mapTool === "select" ? "default" : "ghost"}
                             size="sm"
                             onClick={() => setMapTool("select")}
                           >
@@ -479,8 +479,8 @@ export function RiskMap() {
                       </Tooltip>
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <Button 
-                            variant={mapTool === "pan" ? "default" : "ghost"} 
+                          <Button
+                            variant={mapTool === "pan" ? "default" : "ghost"}
                             size="sm"
                             onClick={() => setMapTool("pan")}
                           >
@@ -491,8 +491,8 @@ export function RiskMap() {
                       </Tooltip>
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <Button 
-                            variant={mapTool === "draw-circle" ? "default" : "ghost"} 
+                          <Button
+                            variant={mapTool === "draw-circle" ? "default" : "ghost"}
                             size="sm"
                             onClick={() => setMapTool("draw-circle")}
                           >
@@ -503,8 +503,8 @@ export function RiskMap() {
                       </Tooltip>
                       <Tooltip>
                         <TooltipTrigger asChild>
-                          <Button 
-                            variant={mapTool === "draw-rectangle" ? "default" : "ghost"} 
+                          <Button
+                            variant={mapTool === "draw-rectangle" ? "default" : "ghost"}
                             size="sm"
                             onClick={() => setMapTool("draw-rectangle")}
                           >
@@ -514,7 +514,7 @@ export function RiskMap() {
                         <TooltipContent>Draw Rectangle</TooltipContent>
                       </Tooltip>
                     </div>
-                    
+
                     <Select value={mapView} onValueChange={(value) => setMapView(value as any)}>
                       <SelectTrigger className="w-32">
                         <SelectValue />
@@ -525,7 +525,7 @@ export function RiskMap() {
                         <SelectItem value="street">Street</SelectItem>
                       </SelectContent>
                     </Select>
-                    
+
                     {/* Map Controls */}
                     <div className="flex items-center gap-1 border rounded-lg">
                       <Tooltip>
@@ -565,10 +565,10 @@ export function RiskMap() {
                 </div>
               </CardHeader>
               <CardContent>
-                <div 
+                <div
                   ref={mapRef}
                   className="relative w-full h-96 bg-gradient-to-br from-green-100 via-yellow-100 to-red-100 rounded-lg overflow-hidden border select-none"
-                  style={{ 
+                  style={{
                     cursor: mapTool === "pan" ? "grab" : mapTool.startsWith("draw-") ? "crosshair" : "default",
                     transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`
                   }}
@@ -805,8 +805,8 @@ export function RiskMap() {
                           {shape.type === "circle" ? <Circle className="h-4 w-4" /> : <Square className="h-4 w-4" />}
                           <span className="text-sm">Annotation {index + 1}</span>
                         </div>
-                        <Button 
-                          variant="ghost" 
+                        <Button
+                          variant="ghost"
                           size="sm"
                           onClick={() => setDrawingShapes(prev => prev.filter(s => s.id !== shape.id))}
                         >
@@ -1008,7 +1008,7 @@ export function RiskMap() {
               </div>
             </CardContent>
           </Card>
-          
+
           <Card>
             <CardContent className="pt-6">
               <div className="flex items-center gap-2">

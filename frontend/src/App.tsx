@@ -12,12 +12,17 @@ import { Dashboard } from "./components/dashboard";
 import { EvacuationRoutes } from "./components/evacuation-routes";
 import { FireNews } from "./components/fire-news";
 import { RiskMap } from "./components/risk-map";
+import { APIProvider, Map } from '@vis.gl/react-google-maps';
+
 
 type Page = "dashboard" | "evacuation-routes" | "news" | "risk-map" | "alerts" | "history";
 
 export default function App() {
   const [currentPage, setCurrentPage] = useState<Page>("dashboard");
+  //const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string;
+
   return (
+      <APIProvider apiKey={"AIzaSyAsnZD5qi1po5EM3zUnTqg114_s7WWfajI"} onLoad={() => console.log('Maps API loaded')}>
     <div className="min-h-screen bg-background">
       {/* Header */}
       <header className="border-b bg-white/95 backdrop-blur-sm sticky top-0 z-50">
@@ -173,5 +178,6 @@ export default function App() {
         </div>
       </footer>
     </div>
+    </APIProvider>
   );
 }

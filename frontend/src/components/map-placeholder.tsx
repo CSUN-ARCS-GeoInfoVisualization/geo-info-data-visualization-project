@@ -9,7 +9,7 @@ export function MapPlaceholder() {
       <CardHeader className="flex flex-row items-center justify-between">
         <CardTitle className="flex items-center gap-2">
           <MapPin className="h-5 w-5" />
-          Fire Risk Map
+          Fire Risk Maplol
         </CardTitle>
         <Button variant="outline" size="sm">
           <Layers className="h-4 w-4 mr-2" />
@@ -30,7 +30,7 @@ export function MapPlaceholder() {
               <MapPin className="h-12 w-12 mx-auto mb-2 opacity-60" />
               <p className="text-sm font-medium">Interactive Risk Map</p>
               <p className="text-xs text-muted-foreground">
-                Click to view detailed risk zones
+
               </p>
             </div>
           </div>

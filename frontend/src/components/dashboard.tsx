@@ -9,7 +9,9 @@ import { RiskLevelBadge } from "./risk-level-badge";
 import { ConditionCard } from "./condition-card";
 import { RiskChart } from "./risk-chart";
 import { ActiveAlerts } from "./active-alerts";
-import { MapPlaceholder } from "./map-placeholder";
+//import { MapPlaceholder } from "./map-placeholder";
+import { Map, Marker } from '@vis.gl/react-google-maps';
+import { GoogleRiskMap } from "./GoogleRiskMap";
 
 export function Dashboard() {
   return (
@@ -79,7 +81,7 @@ export function Dashboard() {
       {/* Charts and Map Grid */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
         <RiskChart title="7-Day Risk Forecast" type="area" />
-        <MapPlaceholder />
+        <GoogleRiskMap />
       </div>
 
       {/* Detailed Analysis */}
