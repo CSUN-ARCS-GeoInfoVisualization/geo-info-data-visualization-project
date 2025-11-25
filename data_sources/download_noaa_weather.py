@@ -68,7 +68,19 @@ def download_full_period(start_dt: date, end_dt: date):
     offset = 1  # NOAA CDO uses 1-based offset
 
     while True:
-        df, total_count = download_chunk(start_dt, end_dt, offset)
+        try:
+            df, total_count = download_chunk(start_dt, end_dt, offset)
+        except Exception as e:
+            print(f"  Error at offset {offset}: {e}")
+            # Save partial data before failing
+            if all_data:
+                combined_df = pd.concat(all_data, ignore_index=True)
+                start_str = start_dt.strftime("%Y-%m-%d")
+                out_name = f"noaa_weather_CA_{start_str}_partial.csv"
+                out_path = os.path.join(NOAA_DATA_DIR, out_name)
+                combined_df.to_csv(out_path, index=False)
+                print(f"  Saved {len(combined_df)} partial rows → {out_path}")
+            raise
 
         if df is None:
             break
@@ -81,7 +93,7 @@ def download_full_period(start_dt: date, end_dt: date):
             break
 
         offset += 1000
-        time.sleep(0.2)  # Rate limit pause between pagination requests
+        time.sleep(2.0)  # Increased delay to avoid rate limiting
 
     if all_data:
         combined_df = pd.concat(all_data, ignore_index=True)
@@ -95,18 +107,34 @@ def main():
     if not NOAA_API_KEY:
         raise SystemExit("Missing NOAA_API_KEY. Set it in .env or config.py.")
 
-    # Download full year 2020
-    start = date(2020, 1, 1)
-    end = date(2020, 12, 31)
+    # Download 2020 in monthly chunks to avoid rate limiting
+    year = 2020
+    for month in range(1, 13):
+        # Calculate start and end dates for each month
+        start = date(year, month, 1)
+        if month == 12:
+            end = date(year, 12, 31)
+        else:
+            end = date(year, month + 1, 1) - timedelta(days=1)
 
-    try:
-        download_full_period(start, end)
-    except Exception as e:
-        print(f"Error: {e}")
-        import traceback
-        traceback.print_exc()
+        print(f"\n{'='*60}")
+        print(f"Downloading month: {start.strftime('%B %Y')}")
+        print(f"{'='*60}")
 
-    print("\nDownload complete!")
+        try:
+            download_full_period(start, end)
+            # Longer pause between months to be extra safe with rate limiting
+            if month < 12:
+                print("  Pausing 3 seconds before next month...")
+                time.sleep(3.0)
+        except Exception as e:
+            print(f"Error downloading {start.strftime('%B %Y')}: {e}")
+            print("Continuing with next month...")
+            time.sleep(5.0)  # Wait longer after error
+
+    print("\n" + "="*60)
+    print("Download complete!")
+    print("="*60)
 
 if __name__ == "__main__":
     main()

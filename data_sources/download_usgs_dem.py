@@ -31,6 +31,15 @@ def download_dem_tile(bbox, resolution=30, output_name="california_dem.tif"):
     width = int((max_lon - min_lon) * 111000 / resolution)
     height = int((max_lat - min_lat) * 111000 / resolution)
 
+    # USGS API has a size limit - cap at 4096x4096 pixels
+    MAX_PIXELS = 4096
+    if width > MAX_PIXELS or height > MAX_PIXELS:
+        scale_factor = max(width / MAX_PIXELS, height / MAX_PIXELS)
+        width = int(width / scale_factor)
+        height = int(height / scale_factor)
+        actual_resolution = resolution * scale_factor
+        print(f"  (Auto-adjusted resolution to ~{actual_resolution:.0f}m to fit API limits)")
+
     params = {
         'bbox': f"{min_lon},{min_lat},{max_lon},{max_lat}",
         'bboxSR': 4326,  # WGS84
@@ -74,22 +83,43 @@ def download_dem_tile(bbox, resolution=30, output_name="california_dem.tif"):
 
 def download_california_dem_tiles():
     """
-    Download California DEM in smaller tiles (to avoid huge file sizes).
-    Split CA into North and South regions using config bbox.
+    Download California DEM in smaller tiles to avoid API size limits.
+    Split CA into a 4x3 grid (12 tiles) to keep each tile manageable.
     """
-    # Split California at 37°N latitude into North and South
-    mid_lat = 37.0
+    # Grid dimensions (4 columns x 3 rows = 12 tiles)
+    cols = 4
+    rows = 3
 
-    tiles = {
-        "california_north_dem.tif": (CA_BBOX_W, mid_lat, CA_BBOX_E, CA_BBOX_N),
-        "california_south_dem.tif": (CA_BBOX_W, CA_BBOX_S, CA_BBOX_E, mid_lat),
-    }
+    lon_step = (CA_BBOX_E - CA_BBOX_W) / cols
+    lat_step = (CA_BBOX_N - CA_BBOX_S) / rows
+
+    tiles = {}
+    for row in range(rows):
+        for col in range(cols):
+            min_lon = CA_BBOX_W + (col * lon_step)
+            max_lon = CA_BBOX_W + ((col + 1) * lon_step)
+            min_lat = CA_BBOX_S + (row * lat_step)
+            max_lat = CA_BBOX_S + ((row + 1) * lat_step)
+
+            filename = f"california_dem_r{row}_c{col}.tif"
+            tiles[filename] = (min_lon, min_lat, max_lon, max_lat)
+
+    successful = 0
+    failed = 0
 
     for filename, bbox in tiles.items():
         print(f"\n{'='*60}")
         print(f"Downloading: {filename}")
         print(f"{'='*60}")
-        download_dem_tile(bbox, resolution=RESOLUTION, output_name=filename)
+        result = download_dem_tile(bbox, resolution=RESOLUTION, output_name=filename)
+        if result:
+            successful += 1
+        else:
+            failed += 1
+
+    print(f"\n{'='*60}")
+    print(f"Tile download summary: {successful} successful, {failed} failed")
+    print(f"{'='*60}")
 
 def download_full_california_dem():
     """

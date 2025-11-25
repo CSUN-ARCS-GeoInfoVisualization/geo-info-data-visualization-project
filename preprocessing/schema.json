@@ -1,0 +1,105 @@
+{
+  "firms": {
+    "description": "NASA FIRMS fire detection data schema",
+    "source": "MODIS satellite",
+    "crs": "EPSG:4326",
+    "required_columns": [
+      "latitude",
+      "longitude",
+      "acq_date",
+      "acq_time",
+      "brightness",
+      "confidence",
+      "frp"
+    ],
+    "column_types": {
+      "latitude": "float64",
+      "longitude": "float64",
+      "acq_date": "datetime64[ns]",
+      "acq_time": "string",
+      "brightness": "float64",
+      "confidence": "string",
+      "frp": "float64"
+    },
+    "valid_ranges": {
+      "latitude": [32.0, 42.5],
+      "longitude": [-125.0, -113.0],
+      "brightness": [0, 500],
+      "frp": [0, 10000]
+    },
+    "confidence_levels": ["low", "nominal", "high"],
+    "date_format": "%Y-%m-%d",
+    "time_format": "%H%M"
+  },
+  "noaa": {
+    "description": "NOAA weather data schema",
+    "source": "GHCND daily observations",
+    "crs": "station-based",
+    "required_columns": [
+      "station",
+      "date",
+      "datatype",
+      "value"
+    ],
+    "column_types": {
+      "station": "string",
+      "date": "datetime64[ns]",
+      "datatype": "string",
+      "value": "float64"
+    },
+    "data_types": ["TMAX", "TMIN", "PRCP", "AWND", "WSF2", "WSF5"],
+    "valid_ranges": {
+      "TMAX": [-50, 60],
+      "TMIN": [-50, 60],
+      "PRCP": [0, 1000],
+      "AWND": [0, 100],
+      "WSF2": [0, 150],
+      "WSF5": [0, 150]
+    },
+    "units": {
+      "TMAX": "Celsius",
+      "TMIN": "Celsius",
+      "PRCP": "mm",
+      "AWND": "m/s",
+      "WSF2": "m/s",
+      "WSF5": "m/s"
+    }
+  },
+  "usgs": {
+    "description": "USGS DEM elevation data schema",
+    "source": "3DEP elevation tiles",
+    "crs": "EPSG:4326",
+    "format": "GeoTIFF",
+    "data_type": "float32",
+    "nodata_value": -9999,
+    "valid_ranges": {
+      "elevation": [-100, 4500]
+    },
+    "units": {
+      "elevation": "meters above sea level"
+    },
+    "california_bounds": {
+      "min_lon": -124.482003,
+      "max_lon": -114.131211,
+      "min_lat": 32.529508,
+      "max_lat": 42.009503
+    }
+  },
+  "target_crs": {
+    "epsg": 3310,
+    "name": "NAD83 / California Albers",
+    "proj4": "+proj=aea +lat_0=0 +lon_0=-120 +lat_1=34 +lat_2=40.5 +x_0=0 +y_0=-4000000 +datum=NAD83 +units=m +no_defs",
+    "units": "meters",
+    "reason": "Equal-area projection suitable for California-wide analysis"
+  },
+  "output_structure": {
+    "cleaned_data_dir": "data/cleaned",
+    "aligned_data_dir": "data/aligned",
+    "merged_data_dir": "data/merged",
+    "file_formats": {
+      "firms": "parquet",
+      "noaa": "parquet",
+      "usgs": "geotiff"
+    }
+  }
+}
