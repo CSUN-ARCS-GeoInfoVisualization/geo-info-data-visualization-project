@@ -1,11 +1,5 @@
 import { Map, Marker /* , Heatmap */ } from '@vis.gl/react-google-maps';
 
-type MapPlaceholderProps = {
-  center?: { lat: number; lng: number };
-  zoom?: number;
-  height?: string;   // tailwind height class, e.g., "h-[420px]"
-};
-
 export function GoogleRiskMap({
   center = { lat: 36.7783, lng: -119.4179 }, // California
   zoom = 6,
