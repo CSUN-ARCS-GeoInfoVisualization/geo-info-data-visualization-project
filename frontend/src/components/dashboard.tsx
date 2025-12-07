@@ -69,13 +69,15 @@ export function Dashboard() {
           trend="up"
           trendValue="Gusts up to 45 mph"
         />
-        <div className="bg-white rounded-xl p-6 shadow border flex flex-col justify-between">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-gray-700 font-medium"> Prediction</h3>
-            <Eye className="h-5 w-5 text-gray-400" />
-          </div>
-          <PredictionPanel />
-        </div>
+        <ConditionCard
+                  title="Visibility"
+                  value="8"
+                  unit="miles"
+                  icon={Eye}
+                  trend="stable"
+                  trendValue="Good conditions"
+                />
+        <PredictionPanel />
 
       </div>
 
