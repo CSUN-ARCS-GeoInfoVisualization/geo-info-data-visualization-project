@@ -14,6 +14,9 @@ import { Map, Marker } from '@vis.gl/react-google-maps';
 import { GoogleRiskMap } from "./GoogleRiskMap";
 import PredictionPanel from "./PredictionPanel";
 
+import PredictionConditionCard from "./PredictionConditionCard";
+
+
 export function Dashboard() {
   return (
     <div className="space-y-8">

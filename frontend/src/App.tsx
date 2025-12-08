@@ -13,13 +13,19 @@ import { EvacuationRoutes } from "./components/evacuation-routes";
 import { FireNews } from "./components/fire-news";
 import { RiskMap } from "./components/risk-map";
 import { APIProvider, Map } from '@vis.gl/react-google-maps';
-
+import { AuthPage } from "./components/auth-page";
 
 type Page = "dashboard" | "evacuation-routes" | "news" | "risk-map" | "alerts" | "history";
 
 export default function App() {
   const [currentPage, setCurrentPage] = useState<Page>("dashboard");
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   //const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string;
+
+  // Show auth page if not authenticated
+    if (!isAuthenticated) {
+      return <AuthPage onAuthSuccess={() => setIsAuthenticated(true)} />;
+    }
 
   return (
       <APIProvider apiKey={"AIzaSyAsnZD5qi1po5EM3zUnTqg114_s7WWfajI"} onLoad={() => console.log('Maps API loaded')}>

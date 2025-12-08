@@ -16,7 +16,8 @@ export function ConditionCard({
   unit, 
   icon: Icon, 
   trend, 
-  trendValue 
+  trendValue,
+  children
 }: ConditionCardProps) {
   const getTrendColor = () => {
     switch (trend) {
@@ -69,6 +70,7 @@ export function ConditionCard({
             {trendValue}
           </div>
         )}
+    {children && <div className="mt-4">{children}</div>}
       </CardContent>
     </Card>
   );
