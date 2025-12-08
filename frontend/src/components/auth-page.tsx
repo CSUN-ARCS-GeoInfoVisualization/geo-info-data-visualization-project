@@ -65,10 +65,10 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
         <div className="text-center mb-8">
           <div className="flex items-center justify-center space-x-2 mb-4">
             <Flame className="h-12 w-12 text-red-500" />
-            <span className="text-3xl font-bold">FireWatch</span>
+            <span className="text-3xl font-bold">Geo-Info-Data-Visualization-Project</span>
           </div>
           <p className="text-muted-foreground">
-            Advanced wildfire risk prediction and monitoring
+            Wildfire risk prediction and monitoring
           </p>
         </div>
 
@@ -359,7 +359,9 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
 
         {/* Additional Info */}
         <p className="text-center text-sm text-muted-foreground mt-6">
-          Protected by enterprise-grade security. Your data is safe with us.
+          Wildfire Prediction Senior Research Project conducted at California State University, Northridge Team Members: Ido Cohen, Alex Hernandez-Abrego, Sannia Jean, Ivan Lopez, Tony Song
+
+
         </p>
       </div>
     </div>
