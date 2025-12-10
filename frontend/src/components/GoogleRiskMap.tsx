@@ -1,7 +1,8 @@
-import { Map, Marker /* , Heatmap */ } from '@vis.gl/react-google-maps';
+import { Map, Marker } from '@vis.gl/react-google-maps';
+import { DeckOverlayManager } from './maps/DeckOverlayManager';
 
 export function GoogleRiskMap({
-  center = { lat: 36.7783, lng: -119.4179 }, // California
+  center = { lat: 36.7783, lng: -119.4179 },
   zoom = 6,
   height = "h-[420px]",
 }: MapPlaceholderProps) {
@@ -14,20 +15,9 @@ export function GoogleRiskMap({
         gestureHandling="greedy"
         disableDefaultUI
       >
-        {/* Example marker (Los Angeles). Remove or replace with your data */}
         <Marker position={{ lat: 34.0522, lng: -118.2437 }} />
-
-        {/*
-        // Optional heatmap (requires APIProvider libraries={['visualization']})
-        <Heatmap
-          data={[
-            { location: { lat: 34.05, lng: -118.24 }, weight: 1 },
-            { location: { lat: 37.77, lng: -122.42 }, weight: 2 },
-          ]}
-          options={{ radius: 20 }}
-        />
-        */}
       </Map>
+      <DeckOverlayManager />
     </div>
   );
 }

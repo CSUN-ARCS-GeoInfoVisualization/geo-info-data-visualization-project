@@ -65,10 +65,10 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
         <div className="text-center mb-8">
           <div className="flex items-center justify-center space-x-2 mb-4">
             <Flame className="h-12 w-12 text-red-500" />
-            <span className="text-3xl font-bold">Geo-Info-Data-Visualization-Project</span>
+            <span className="text-3xl font-bold">FireWatch</span>
           </div>
-          <p className="text-muted-foreground">
-            Wildfire risk prediction and monitoring
+          <p className="text-black">
+            Advanced wildfire risk prediction and monitoring
           </p>
         </div>
 
@@ -358,8 +358,8 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
         </Card>
 
         {/* Additional Info */}
-        <p className="text-center text-sm text-muted-foreground mt-6">
-          Wildfire Prediction Senior Research Project conducted at California State University, Northridge Team Members: Ido Cohen, Alex Hernandez-Abrego, Sannia Jean, Ivan Lopez, Tony Song
+        <p className="text-center text-sm text-black mt-6">
+          Protected by enterprise-grade security. Your data is safe with us.
         </p>
 
         {/* Continue without login */}
@@ -367,7 +367,7 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
           <Button
             variant="ghost"
             onClick={() => onAuthSuccess?.()}
-            className="text-muted-foreground hover:text-foreground"
+            className="text-black hover:text-foreground"
           >
             Continue without login
           </Button>
