@@ -360,9 +360,18 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
         {/* Additional Info */}
         <p className="text-center text-sm text-muted-foreground mt-6">
           Wildfire Prediction Senior Research Project conducted at California State University, Northridge Team Members: Ido Cohen, Alex Hernandez-Abrego, Sannia Jean, Ivan Lopez, Tony Song
-
-
         </p>
+
+        {/* Continue without login */}
+        <div className="text-center mt-4">
+          <Button
+            variant="ghost"
+            onClick={() => onAuthSuccess?.()}
+            className="text-muted-foreground hover:text-foreground"
+          >
+            Continue without login
+          </Button>
+        </div>
       </div>
     </div>
   );
