@@ -37,7 +37,7 @@ export function Dashboard({
               <div className="flex-1 text-center md:text-left">
                 <h3 className="font-semibold mb-1">Unlock Full Features</h3>
                 <p className="text-sm text-muted-foreground">
-                  Sign in to save custom alerts, track locations, and get personalized wildfire notifications
+                  Sign in for alerts, track locations, and get personalized wildfire notifications
                 </p>
               </div>
 
