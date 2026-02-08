@@ -7,15 +7,16 @@ import {
   Search,
   LogOut
 } from "lucide-react";
-
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
-
 import { Dashboard } from "./components/dashboard";
 import { EvacuationRoutes } from "./components/evacuation-routes";
 import { FireNews } from "./components/fire-news";
 import { RiskMap } from "./components/risk-map";
 import { AuthPage } from "./components/auth-page";
+import { NotificationSettings } from "./components/notification-settings";
+import { Toaster } from "sonner@2.0.3";
+
 
 import {
   APIProvider,
@@ -27,7 +28,8 @@ type Page =
   | "news"
   | "risk-map"
   | "alerts"
-  | "history";
+  | "history"
+  | "settings";
 
 export default function App() {
   const [currentPage, setCurrentPage] = useState<Page>("dashboard");
@@ -37,6 +39,7 @@ export default function App() {
   return (
     <APIProvider apiKey="AIzaSyAsnZD5qi1po5EM3zUnTqg114_s7WWfajI">
       <div className="min-h-screen bg-background">
+       <Toaster position="top-right" richColors />
 
         {/* ---------------- AUTH MODAL ---------------- */}
         {showAuthModal && (
@@ -156,16 +159,25 @@ export default function App() {
               <div className="flex items-center space-x-4">
                 <div className="relative hidden sm:block">
                   <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                  <Input placeholder="Search locations..." className="pl-10 w-64" />
+                  <Input
+                  placeholder="Search locations..."
+                  className="pl-10 w-64"
+                  />
                 </div>
 
                 <Button variant="ghost" size="sm">
                   <Bell className="h-4 w-4" />
                 </Button>
 
-                <Button variant="ghost" size="sm">
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => setCurrentPage("settings")}
+                  title="Settings"
+                >
                   <Settings className="h-4 w-4" />
                 </Button>
+
 
                 {isAuthenticated && (
                   <Button
@@ -221,6 +233,9 @@ export default function App() {
               <h2 className="text-2xl font-bold mb-4">History</h2>
               <p className="text-muted-foreground">Historical data coming soon</p>
             </div>
+          )}
+          {currentPage === "settings" && (
+                    <NotificationSettings />
           )}
         </main>
 
