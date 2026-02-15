@@ -1,0 +1,29 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}FireWatch Alert{% endblock %}</title>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.5; color: #333; margin: 0; padding: 0; background: #f5f5f5; }
+        .container { max-width: 600px; margin: 0 auto; background: #fff; padding: 24px; }
+        .header { background: #dc2626; color: white; padding: 16px 24px; font-size: 20px; font-weight: bold; }
+        .content { padding: 24px; }
+        .footer { padding: 16px 24px; font-size: 12px; color: #666; border-top: 1px solid #eee; }
+        .footer a { color: #dc2626; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">FireWatch Alerts</div>
+        <div class="content">
+            {% block content %}{% endblock %}
+        </div>
+        <div class="footer">
+            <p>You received this email because you subscribed to wildfire risk alerts.</p>
+            <p><a href="{{ unsubscribe_url }}">Unsubscribe</a> from future alerts.</p>
+            <p><em>This alert is for informational purposes. Follow local authorities for evacuation decisions.</em></p>
+        </div>
+    </div>
+</body>
+</html>
