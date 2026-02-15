@@ -18,7 +18,7 @@ def register():
     if len(password) < 8:
         return jsonify({'error': 'Password must be at least 8 characters'}), 400
     try:
-        validate_email(email)
+        validate_email(email, check_deliverability=False)
     except EmailNotValidError as e:
         return jsonify({'error': str(e)}), 400
 
@@ -47,5 +47,8 @@ def login():
     user = User.query.filter_by(email=email).join(Role).first()
     if not user or not user.verify_password(password):
         return jsonify({'error': 'Invalid credentials'}), 401
-    access_token = create_access_token(identity={'id': user.id, 'email': user.email, 'role': user.role.name})
+    access_token = create_access_token(
+        identity=str(user.id),
+        additional_claims={'email': user.email, 'role': user.role.name}
+    )
     return jsonify({'token': access_token})

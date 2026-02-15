@@ -1,5 +1,5 @@
 {
-      "name": "Wildfire Prediction Website GUI",
+      "name": "wildfire-prediction-website-gui",
       "version": "0.1.0",
       "private": true,
       "dependencies": {

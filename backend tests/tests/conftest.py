@@ -22,6 +22,12 @@ def app():
         db.session.commit()
     yield app
 
+
+@pytest.fixture(autouse=True)
+def app_context(app):
+    with app.app_context():
+        yield
+
 @pytest.fixture()
 def client(app):
     return app.test_client()

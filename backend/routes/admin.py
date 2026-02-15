@@ -1,13 +1,14 @@
 from flask import Blueprint, request, jsonify
-from flask_jwt_extended import jwt_required, get_jwt_identity
+from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
 from models import db, User, Role
 
 admin_bp = Blueprint('admin', __name__)
 
 
 def require_admin():
-    ident = get_jwt_identity()
-    if not ident or ident.get('role') != 'Admin':
+    identity = get_jwt_identity()
+    claims = get_jwt()
+    if not identity or claims.get('role') != 'Admin':
         return False
     return True
 
