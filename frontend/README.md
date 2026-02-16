@@ -9,3 +9,5 @@
 To see heatmaps:
 
     npm install "@deck.gl/core" "@deck.gl/layers" "@deck.gl/google-maps" "@deck.gl/aggregation-layers"
+
+npm install "@deck.gl/core" "@deck.gl/layers" "@deck.gl/google-maps"
