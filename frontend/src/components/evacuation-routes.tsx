@@ -18,6 +18,7 @@ import { Alert, AlertDescription } from "./ui/alert";
 import { Map, Marker, useMap } from '@vis.gl/react-google-maps';
 import { GoogleMapsOverlay } from '@deck.gl/google-maps';
 import { IconLayer } from '@deck.gl/layers';
+import Supercluster from 'supercluster';
 
 const evacuationZones = [
   {
@@ -84,12 +85,14 @@ const safetyChecklist = [
   "Download emergency apps"
 ];
 
-// Deck.gl overlay component
+// Deck.gl overlay component with clustering
 function FireFacilitiesOverlay() {
   const map = useMap();
   const [overlay, setOverlay] = useState<GoogleMapsOverlay | null>(null);
   const [tooltip, setTooltip] = useState<any>(null);
   const [facilitiesData, setFacilitiesData] = useState<any[]>([]);
+  const [clusteredData, setClusteredData] = useState<any[]>([]);
+  const [zoom, setZoom] = useState(8);
 
   // Facility type icons and colors
   const getFacilityStyle = (type: string) => {
@@ -132,9 +135,10 @@ function FireFacilitiesOverlay() {
       .then(response => response.json())
       .then(data => {
         console.log('Loaded facilities:', data.features.length);
-        setFacilitiesData(data.features.filter(
+        const activeFeatures = data.features.filter(
           (f: any) => f.properties.FACILITY_STATUS === 'Active'
-        ));
+        );
+        setFacilitiesData(activeFeatures);
       })
       .catch(error => {
         console.error('Error loading facilities:', error);
@@ -145,7 +149,6 @@ function FireFacilitiesOverlay() {
   useEffect(() => {
     const handleClickOutside = (e: MouseEvent) => {
       const target = e.target as HTMLElement;
-      // Close tooltip if click is not on a facility marker
       if (!target.closest('canvas')) {
         setTooltip(null);
       }
@@ -157,44 +160,138 @@ function FireFacilitiesOverlay() {
     }
   }, [tooltip]);
 
+  // Update clusters when zoom changes
   useEffect(() => {
     if (!map || facilitiesData.length === 0) return;
+
+    const updateClusters = () => {
+      const currentZoom = Math.floor(map.getZoom() || 8);
+      setZoom(currentZoom);
+
+      // Create supercluster index
+      const index = new Supercluster({
+        radius: 60,
+        maxZoom: 16
+      });
+
+      // Load points into supercluster
+      index.load(facilitiesData.map((f: any) => ({
+        type: 'Feature',
+        properties: f.properties,
+        geometry: f.geometry
+      })));
+
+      // Get clusters for current viewport
+      const bounds = map.getBounds();
+      if (bounds) {
+        const ne = bounds.getNorthEast();
+        const sw = bounds.getSouthWest();
+
+        const clusters = index.getClusters(
+          [sw.lng(), sw.lat(), ne.lng(), ne.lat()],
+          currentZoom
+        );
+
+        setClusteredData(clusters);
+      }
+    };
+
+    updateClusters();
+
+    // Listen for zoom changes
+    const listener = map.addListener('zoom_changed', updateClusters);
+    const dragListener = map.addListener('dragend', updateClusters);
+
+    return () => {
+      listener.remove();
+      dragListener.remove();
+    };
+  }, [map, facilitiesData]);
+
+  useEffect(() => {
+    if (!map || clusteredData.length === 0) return;
 
     // Create deck.gl overlay
     const deckOverlay = new GoogleMapsOverlay({
       layers: [
         new IconLayer({
-          id: 'fire-facilities',
-          data: facilitiesData,
+          id: 'fire-facilities-clustered',
+          data: clusteredData,
           pickable: true,
 
           getPosition: (d: any) => d.geometry.coordinates,
 
           getIcon: (d: any) => {
-            const style = getFacilityStyle(d.properties.TYPE);
-            return {
-              url: `data:image/svg+xml;utf8,${encodeURIComponent(`
-                <svg width="40" height="40" xmlns="http://www.w3.org/2000/svg">
-                  <circle cx="20" cy="20" r="16" fill="rgb(${style.color.join(',')})" stroke="white" stroke-width="2"/>
-                  <text x="20" y="27" font-size="18" text-anchor="middle" fill="white">${style.icon}</text>
-                </svg>
-              `)}`,
-              width: 40,
-              height: 40,
-              anchorY: 40
-            };
+            const isCluster = d.properties.cluster;
+            const pointCount = d.properties.point_count || 1;
+
+            if (isCluster) {
+              // Cluster icon with count
+              return {
+                url: `data:image/svg+xml;utf8,${encodeURIComponent(`
+                  <svg width="50" height="50" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="25" cy="25" r="22" fill="rgb(59, 130, 246)" stroke="white" stroke-width="3"/>
+                    <text x="25" y="32" font-size="16" font-weight="bold" text-anchor="middle" fill="white">${pointCount}</text>
+                  </svg>
+                `)}`,
+                width: 50,
+                height: 50,
+                anchorY: 50
+              };
+            } else {
+              // Individual facility icon
+              const style = getFacilityStyle(d.properties.TYPE);
+              return {
+                url: `data:image/svg+xml;utf8,${encodeURIComponent(`
+                  <svg width="40" height="40" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="20" cy="20" r="16" fill="rgb(${style.color.join(',')})" stroke="white" stroke-width="2"/>
+                    <text x="20" y="27" font-size="18" text-anchor="middle" fill="white">${style.icon}</text>
+                  </svg>
+                `)}`,
+                width: 40,
+                height: 40,
+                anchorY: 40
+              };
+            }
           },
 
-          getSize: 40,
+          getSize: (d: any) => {
+            const isCluster = d.properties.cluster;
+            const pointCount = d.properties.point_count || 1;
+
+            if (isCluster) {
+              // Scale cluster size based on point count
+              return Math.min(50 + (pointCount / 10), 80);
+            }
+            return 40;
+          },
 
           onClick: (info: any) => {
             if (info.object) {
-              const props = info.object.properties;
-              setTooltip({
-                x: info.x,
-                y: info.y,
-                content: props
-              });
+              const isCluster = info.object.properties.cluster;
+
+              if (isCluster) {
+                // Zoom into cluster
+                const clusterId = info.object.properties.cluster_id;
+                const expansionZoom = Math.min(
+                  map.getZoom()! + 2,
+                  16
+                );
+
+                map.setZoom(expansionZoom);
+                map.panTo({
+                  lat: info.object.geometry.coordinates[1],
+                  lng: info.object.geometry.coordinates[0]
+                });
+              } else {
+                // Show tooltip for individual facility
+                const props = info.object.properties;
+                setTooltip({
+                  x: info.x,
+                  y: info.y,
+                  content: props
+                });
+              }
             }
           }
         })
@@ -207,7 +304,7 @@ function FireFacilitiesOverlay() {
     return () => {
       deckOverlay.setMap(null);
     };
-  }, [map, facilitiesData]);
+  }, [map, clusteredData]);
 
   return (
     <>
@@ -367,7 +464,13 @@ export function EvacuationRoutes() {
           {/* Map Legend */}
           <div className="mt-4 bg-gray-50 rounded-lg p-3">
             <h4 className="font-semibold text-sm mb-3">Map Legend</h4>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs mb-3">
+              <div className="flex items-center gap-2">
+                <div className="w-6 h-6 bg-blue-500 rounded-full flex items-center justify-center text-white text-xs font-bold">
+                  5
+                </div>
+                <span>Facility Cluster</span>
+              </div>
               <div className="flex items-center gap-2">
                 <div className="w-3 h-3 bg-red-600 rounded-full"></div>
                 <span>Fire Stations</span>
@@ -380,13 +483,23 @@ export function EvacuationRoutes() {
                 <div className="w-3 h-3 bg-purple-600 rounded-full"></div>
                 <span>Communication Sites</span>
               </div>
+            </div>
+            <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
               <div className="flex items-center gap-2">
                 <div className="w-3 h-3 bg-pink-500 rounded-full"></div>
                 <span>Helibases</span>
               </div>
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 bg-amber-400 rounded-full"></div>
+                <span>Lookout Towers</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 bg-teal-500 rounded-full"></div>
+                <span>Training Centers</span>
+              </div>
             </div>
             <p className="text-xs text-muted-foreground mt-3">
-              💡 Click on facility markers to see details. Drag to pan, scroll to zoom.
+              💡 Click clusters (blue circles with numbers) to zoom in. Click individual facilities for details.
             </p>
           </div>
         </CardContent>
