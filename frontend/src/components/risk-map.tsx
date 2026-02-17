@@ -395,7 +395,7 @@ export function RiskMap() {
               </CardHeader>
               <CardContent>
                 {/* Google Map */}
-                <div className="w-full h-screen rounded-lg overflow-hidden border relative">
+                <div className="w-full h-96 rounded-lg overflow-hidden border relative">
                   <GoogleMap
                     style={{ width: '100%', height: '100%' }}
                     defaultCenter={{ lat: 36.7, lng: -119.8 }}
