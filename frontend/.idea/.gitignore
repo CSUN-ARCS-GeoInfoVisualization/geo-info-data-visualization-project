@@ -3,3 +3,5 @@
 /workspace.xml
 # Editor-based HTTP Client requests
 /httpRequests/
+# Large GIS datasets
+frontend/public/Data/National_Shelter_System_Facilities.geojson
