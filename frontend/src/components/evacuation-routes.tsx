@@ -74,16 +74,45 @@ const assemblyPoints = [
   }
 ];
 
-const safetyChecklist = [
-  "Create a family evacuation plan",
-  "Prepare emergency supply kit",
-  "Know your evacuation zone",
-  "Identify multiple evacuation routes",
-  "Plan for pets and livestock",
-  "Keep important documents accessible",
-  "Maintain full fuel tank",
-  "Download emergency apps"
-];
+const safetyChecklist = {
+  prepare: [
+    "Create a family evacuation plan",
+    "Register for local emergency alert notifications",
+    "Photograph home and belongings for insurance records",
+    "Clear dry vegetation within 30 feet of the home",
+    "Install spark arrestors and clean roof/gutters",
+    "Prepare a go-bag (medications, water, flashlight, chargers)",
+    "Scan and store important documents digitally",
+    "Plan evacuation meeting location outside the fire zone",
+    "Plan evacuation for pets and livestock"
+  ],
+  fireWatch: [
+    "Park vehicle facing outward in driveway",
+    "Keep fuel tank at least half full",
+    "Move flammable furniture away from windows",
+    "Bring pets indoors and prepare carriers",
+    "Charge phones and backup batteries",
+    "Place go-bags near exit",
+    "Monitor official fire updates"
+  ],
+  evacuationWarning: [
+    "Wear protective clothing (long sleeves, sturdy shoes)",
+    "Shut all windows and doors but leave unlocked",
+    "Turn off gas at the meter if instructed",
+    "Turn on exterior lights for visibility in smoke",
+    "Leave sprinklers off unless directed",
+    "Load family, pets, and essential items into vehicle",
+    "Notify family meeting contact you are leaving"
+  ],
+  evacuateNow: [
+    "Leave immediately — do not wait for belongings",
+    "Follow designated evacuation routes only",
+    "Do not drive toward smoke or flames",
+    "Keep headlights on while driving",
+    "Listen to emergency radio for updates",
+    "Check in as safe with emergency contact"
+  ]
+};
 
 // Deck.gl overlay component with clustering
 function FireFacilitiesOverlay() {
@@ -93,55 +122,43 @@ function FireFacilitiesOverlay() {
   const [facilitiesData, setFacilitiesData] = useState<any[]>([]);
   const [clusteredData, setClusteredData] = useState<any[]>([]);
   const [zoom, setZoom] = useState(8);
+  const [isClickDisabled, setIsClickDisabled] = useState(false);
 
-  // Facility type icons and colors
-  const getFacilityStyle = (type: string) => {
+  // Shelter facility type icons and colors based on usage code
+  const getFacilityStyle = (usageCode: string, facilityType: string) => {
+    // EVAC = Evacuation only, POST = Post-impact only, BOTH = Both uses
     const styles: { [key: string]: { icon: string; color: [number, number, number] } } = {
-      'FSB': { icon: '🚒', color: [220, 38, 38] },
-      'FSA': { icon: '🚒', color: [249, 115, 22] },
-      'FSAB': { icon: '🚒', color: [234, 179, 8] },
-      'HQ': { icon: '🏢', color: [59, 130, 246] },
-      'COM': { icon: '📡', color: [147, 51, 234] },
-      'HB': { icon: '🚁', color: [236, 72, 153] },
-      'AAB': { icon: '✈️', color: [14, 165, 233] },
-      'ECC': { icon: '🎯', color: [239, 68, 68] },
-      'LO': { icon: '👁️', color: [251, 191, 36] },
-      'TC': { icon: '🎓', color: [20, 184, 166] },
-      'CC': { icon: '⛺', color: [34, 197, 94] },
+      'EVAC': { icon: '🏃', color: [59, 130, 246] }, // Evacuation - Blue
+      'POST': { icon: '🏠', color: [34, 197, 94] }, // Post-Impact - Green
+      'BOTH': { icon: '🏛️', color: [147, 51, 234] }, // Both - Purple
     };
-    return styles[type] || { icon: '📍', color: [156, 163, 175] };
+    return styles[usageCode] || { icon: '🏢', color: [156, 163, 175] }; // Default gray
   };
 
-  const getFacilityTypeName = (type: string) => {
+  const getFacilityTypeName = (usageCode: string) => {
     const names: { [key: string]: string } = {
-      'FSB': 'Fire Station (State)',
-      'FSA': 'Fire Station (Amador)',
-      'FSAB': 'Fire Station (Assisted)',
-      'HQ': 'Headquarters',
-      'COM': 'Communication Site',
-      'HB': 'Helibase',
-      'AAB': 'Air Attack Base',
-      'ECC': 'Emergency Command Center',
-      'LO': 'Lookout Tower',
-      'TC': 'Training Center',
-      'CC': 'Conservation Camp',
+      'EVAC': 'Evacuation Shelter',
+      'POST': 'Post-Impact Shelter',
+      'BOTH': 'Evacuation & Post-Impact',
     };
-    return names[type] || type;
+    return names[usageCode] || 'Shelter';
   };
 
   // Load GeoJSON data
   useEffect(() => {
-    fetch('/Data/Facilities_for_Wildland_Fire_Protection.geojson')
+    fetch('/Data/National_Shelter_System_Facilities.geojson')
       .then(response => response.json())
       .then(data => {
-        console.log('Loaded facilities:', data.features.length);
-        const activeFeatures = data.features.filter(
-          (f: any) => f.properties.FACILITY_STATUS === 'Active'
+        console.log('Loaded shelters:', data.features.length);
+        // Filter for California only
+        const californiaFeatures = data.features.filter(
+          (f: any) => f.properties.state === 'CA' && f.properties.shelter_status_code !== 'DECOMMISSIONED'
         );
-        setFacilitiesData(activeFeatures);
+        console.log('California shelters:', californiaFeatures.length);
+        setFacilitiesData(californiaFeatures);
       })
       .catch(error => {
-        console.error('Error loading facilities:', error);
+        console.error('Error loading shelter data:', error);
       });
   }, []);
 
@@ -211,7 +228,13 @@ function FireFacilitiesOverlay() {
   useEffect(() => {
     if (!map || clusteredData.length === 0) return;
 
-    // Create deck.gl overlay
+    // Clean up old overlay first
+    if (overlay) {
+      overlay.setMap(null);
+      overlay.finalize();
+    }
+
+    // Create new deck.gl overlay
     const deckOverlay = new GoogleMapsOverlay({
       layers: [
         new IconLayer({
@@ -239,8 +262,8 @@ function FireFacilitiesOverlay() {
                 anchorY: 50
               };
             } else {
-              // Individual facility icon
-              const style = getFacilityStyle(d.properties.TYPE);
+              // Individual shelter icon
+              const style = getFacilityStyle(d.properties.facility_usage_code, d.properties.facility_type);
               return {
                 url: `data:image/svg+xml;utf8,${encodeURIComponent(`
                   <svg width="40" height="40" xmlns="http://www.w3.org/2000/svg">
@@ -267,12 +290,15 @@ function FireFacilitiesOverlay() {
           },
 
           onClick: (info: any) => {
-            if (info.object) {
+            if (info.object && !isClickDisabled) {
+              // Disable clicks temporarily
+              setIsClickDisabled(true);
+              setTimeout(() => setIsClickDisabled(false), 300);
+
               const isCluster = info.object.properties.cluster;
 
               if (isCluster) {
                 // Zoom into cluster
-                const clusterId = info.object.properties.cluster_id;
                 const expansionZoom = Math.min(
                   map.getZoom()! + 2,
                   16
@@ -284,7 +310,7 @@ function FireFacilitiesOverlay() {
                   lng: info.object.geometry.coordinates[0]
                 });
               } else {
-                // Show tooltip for individual facility
+                // Show tooltip for individual shelter
                 const props = info.object.properties;
                 setTooltip({
                   x: info.x,
@@ -302,7 +328,10 @@ function FireFacilitiesOverlay() {
     setOverlay(deckOverlay);
 
     return () => {
-      deckOverlay.setMap(null);
+      if (deckOverlay) {
+        deckOverlay.setMap(null);
+        deckOverlay.finalize();
+      }
     };
   }, [map, clusteredData]);
 
@@ -349,28 +378,34 @@ function FireFacilitiesOverlay() {
 
           <div style={{ marginBottom: '8px', paddingBottom: '8px', borderBottom: '1px solid #e5e7eb' }}>
             <div style={{ fontWeight: 'bold', fontSize: '14px', marginBottom: '4px', paddingRight: '20px' }}>
-              {tooltip.content.NAME}
+              {tooltip.content.shelter_name}
             </div>
             <div style={{ fontSize: '12px', color: '#6b7280' }}>
-              {getFacilityTypeName(tooltip.content.TYPE)}
+              {getFacilityTypeName(tooltip.content.facility_usage_code)}
             </div>
           </div>
 
           <div style={{ fontSize: '12px', lineHeight: '1.6' }}>
-            {tooltip.content.COUNTY && (
-              <div><strong>County:</strong> {tooltip.content.COUNTY}</div>
+            {tooltip.content.address_1 && (
+              <div><strong>Address:</strong> {tooltip.content.address_1}</div>
             )}
-            {tooltip.content.ADDRESS && (
-              <div><strong>Address:</strong> {tooltip.content.ADDRESS}</div>
+            {tooltip.content.city && (
+              <div><strong>City:</strong> {tooltip.content.city}, {tooltip.content.state} {tooltip.content.zip}</div>
             )}
-            {tooltip.content.CITY && (
-              <div><strong>City:</strong> {tooltip.content.CITY} {tooltip.content.ZIP}</div>
+            {tooltip.content.county_parish && (
+              <div><strong>County:</strong> {tooltip.content.county_parish}</div>
             )}
-            {tooltip.content.PHONE_NUM && (
-              <div><strong>Phone:</strong> {tooltip.content.PHONE_NUM}</div>
+            {tooltip.content.evacuation_capacity > 0 && (
+              <div><strong>Evac Capacity:</strong> {tooltip.content.evacuation_capacity} people</div>
             )}
-            {tooltip.content.OWNER && (
-              <div><strong>Owner:</strong> {tooltip.content.OWNER}</div>
+            {tooltip.content.post_impact_capacity > 0 && (
+              <div><strong>Post-Impact Capacity:</strong> {tooltip.content.post_impact_capacity} people</div>
+            )}
+            {tooltip.content.wheelchair_accessible === 'YES' && (
+              <div style={{color: '#16a34a'}}>♿ Wheelchair Accessible</div>
+            )}
+            {tooltip.content.generator_onsite === 'YES' && (
+              <div style={{color: '#16a34a'}}>⚡ Generator On-Site</div>
             )}
           </div>
         </div>
@@ -381,6 +416,22 @@ function FireFacilitiesOverlay() {
 
 export function EvacuationRoutes() {
   const [selectedZone, setSelectedZone] = useState<string | null>(null);
+  const [checklistLevel, setChecklistLevel] = useState<'prepare' | 'fireWatch' | 'evacuationWarning' | 'evacuateNow'>('prepare');
+  const [checkedItems, setCheckedItems] = useState<{[key: string]: boolean}>({});
+
+  const toggleCheckbox = (level: string, index: number) => {
+    const key = `${level}-${index}`;
+    setCheckedItems(prev => ({
+      ...prev,
+      [key]: !prev[key]
+    }));
+  };
+
+  const getCompletionCount = (level: 'prepare' | 'fireWatch' | 'evacuationWarning' | 'evacuateNow') => {
+    const items = safetyChecklist[level];
+    const checked = items.filter((_, index) => checkedItems[`${level}-${index}`]).length;
+    return `${checked}/${items.length}`;
+  };
 
   const getStatusBadge = (status: string) => {
     switch (status) {
@@ -462,53 +513,77 @@ export function EvacuationRoutes() {
           </div>
 
           {/* Map Legend */}
-          <div className="mt-4 bg-gray-50 rounded-lg p-3">
-            <h4 className="font-semibold text-sm mb-3">Map Legend</h4>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs mb-3">
-              <div className="flex items-center gap-2">
-                <div className="w-6 h-6 bg-blue-500 rounded-full flex items-center justify-center text-white text-xs font-bold">
-                  5
+          <div className="mt-4 bg-gray-50 rounded-lg p-4">
+            <h4 className="font-semibold text-base mb-3">Map Legend</h4>
+
+            {/* Clustering explanation */}
+            <div className="mb-4 pb-4 border-b border-gray-200">
+              <div className="flex items-center gap-3 mb-2">
+                <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center text-white text-xs font-bold shadow-sm">
+                  25
                 </div>
-                <span>Facility Cluster</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-3 h-3 bg-red-600 rounded-full"></div>
-                <span>Fire Stations</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-3 h-3 bg-blue-500 rounded-full"></div>
-                <span>Headquarters</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-3 h-3 bg-purple-600 rounded-full"></div>
-                <span>Communication Sites</span>
+                <div className="text-sm">
+                  <div className="font-semibold">Shelter Cluster</div>
+                  <div className="text-muted-foreground">Click to zoom in and expand</div>
+                </div>
               </div>
             </div>
-            <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-xs">
-              <div className="flex items-center gap-2">
-                <div className="w-3 h-3 bg-pink-500 rounded-full"></div>
-                <span>Helibases</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-3 h-3 bg-amber-400 rounded-full"></div>
-                <span>Lookout Towers</span>
-              </div>
-              <div className="flex items-center gap-2">
-                <div className="w-3 h-3 bg-teal-500 rounded-full"></div>
-                <span>Training Centers</span>
+
+            {/* Shelter types */}
+            <div className="space-y-2">
+              <div className="text-sm font-semibold text-muted-foreground mb-2">Emergency Shelter Types:</div>
+
+              <div className="grid grid-cols-1 gap-2 text-sm">
+                {/* Evacuation Shelters */}
+                <div className="flex items-center gap-2 p-2 rounded hover:bg-gray-100">
+                  <div className="w-6 h-6 rounded-full flex items-center justify-center" style={{backgroundColor: 'rgb(59, 130, 246)'}}>
+                    <span className="text-sm">🏃</span>
+                  </div>
+                  <div>
+                    <div><strong>Evacuation Shelter</strong></div>
+                    <div className="text-xs text-muted-foreground">Pre-disaster evacuation only</div>
+                  </div>
+                </div>
+
+                {/* Post-Impact Shelters */}
+                <div className="flex items-center gap-2 p-2 rounded hover:bg-gray-100">
+                  <div className="w-6 h-6 rounded-full flex items-center justify-center" style={{backgroundColor: 'rgb(34, 197, 94)'}}>
+                    <span className="text-sm">🏠</span>
+                  </div>
+                  <div>
+                    <div><strong>Post-Impact Shelter</strong></div>
+                    <div className="text-xs text-muted-foreground">After disaster relief</div>
+                  </div>
+                </div>
+
+                {/* Both */}
+                <div className="flex items-center gap-2 p-2 rounded hover:bg-gray-100">
+                  <div className="w-6 h-6 rounded-full flex items-center justify-center" style={{backgroundColor: 'rgb(147, 51, 234)'}}>
+                    <span className="text-sm">🏛️</span>
+                  </div>
+                  <div>
+                    <div><strong>Dual-Purpose Shelter</strong></div>
+                    <div className="text-xs text-muted-foreground">Both evacuation & post-impact</div>
+                  </div>
+                </div>
               </div>
             </div>
-            <p className="text-xs text-muted-foreground mt-3">
-              💡 Click clusters (blue circles with numbers) to zoom in. Click individual facilities for details.
-            </p>
+
+            {/* Instructions */}
+            <div className="mt-4 pt-4 border-t border-gray-200">
+              <p className="text-sm text-muted-foreground">
+                💡 <strong>How to use:</strong> Click blue clusters to zoom in. Click individual shelters to see capacity, accessibility, and amenities. Drag to pan, scroll to zoom.
+              </p>
+            </div>
           </div>
         </CardContent>
       </Card>
 
       {/* Evacuation Zones and Assembly Points Grid */}
+      {/* COMMENTED OUT - Uncomment when ready to use
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Evacuation Zones */}
-        <Card>
+        {/* <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Shield className="h-5 w-5" />
@@ -570,10 +645,10 @@ export function EvacuationRoutes() {
               </div>
             ))}
           </CardContent>
-        </Card>
+        </Card> */}
 
         {/* Assembly Points */}
-        <Card>
+        {/* <Card>
           <CardHeader>
             <CardTitle className="flex items-center gap-2">
               <Users className="h-5 w-5" />
@@ -615,8 +690,9 @@ export function EvacuationRoutes() {
               </div>
             ))}
           </CardContent>
-        </Card>
-      </div>
+        </Card> */}
+      {/* </div> */}
+      {/* END COMMENTED OUT SECTION */}
 
       {/* Safety Checklist and Emergency Contacts */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
@@ -629,16 +705,102 @@ export function EvacuationRoutes() {
             </CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="space-y-3">
-              {safetyChecklist.map((item, index) => (
-                <div key={index} className="flex items-center gap-3 p-2 rounded hover:bg-muted/50">
-                  <div className="w-5 h-5 rounded border-2 border-muted-foreground flex items-center justify-center">
-                    <div className="w-2 h-2 rounded-full bg-muted-foreground opacity-0 hover:opacity-100 transition-opacity"></div>
-                  </div>
-                  <span className="text-sm">{item}</span>
+            {/* Level Selector */}
+            <div className="grid grid-cols-2 gap-2 mb-4">
+              <Button
+                variant={checklistLevel === 'prepare' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setChecklistLevel('prepare')}
+                className="text-xs flex flex-col items-center py-3 h-auto"
+              >
+                <div className="flex items-center gap-1">
+                  <span>📋</span>
+                  <span>Prepare</span>
                 </div>
-              ))}
+                <span className="text-[10px] opacity-75 mt-0.5">{getCompletionCount('prepare')}</span>
+              </Button>
+              <Button
+                variant={checklistLevel === 'fireWatch' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setChecklistLevel('fireWatch')}
+                className="text-xs flex flex-col items-center py-3 h-auto bg-yellow-50 hover:bg-yellow-100 text-yellow-800 border-yellow-300"
+                style={checklistLevel === 'fireWatch' ? {backgroundColor: '#fbbf24', color: 'white'} : {}}
+              >
+                <div className="flex items-center gap-1">
+                  <span>⚠️</span>
+                  <span>Fire Watch</span>
+                </div>
+                <span className="text-[10px] opacity-75 mt-0.5">{getCompletionCount('fireWatch')}</span>
+              </Button>
+              <Button
+                variant={checklistLevel === 'evacuationWarning' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setChecklistLevel('evacuationWarning')}
+                className="text-xs flex flex-col items-center py-3 h-auto bg-orange-50 hover:bg-orange-100 text-orange-800 border-orange-300"
+                style={checklistLevel === 'evacuationWarning' ? {backgroundColor: '#f97316', color: 'white'} : {}}
+              >
+                <div className="flex items-center gap-1">
+                  <span>🚨</span>
+                  <span>Warning</span>
+                </div>
+                <span className="text-[10px] opacity-75 mt-0.5">{getCompletionCount('evacuationWarning')}</span>
+              </Button>
+              <Button
+                variant={checklistLevel === 'evacuateNow' ? 'default' : 'outline'}
+                size="sm"
+                onClick={() => setChecklistLevel('evacuateNow')}
+                className="text-xs flex flex-col items-center py-3 h-auto bg-red-50 hover:bg-red-100 text-red-800 border-red-300"
+                style={checklistLevel === 'evacuateNow' ? {backgroundColor: '#dc2626', color: 'white'} : {}}
+              >
+                <div className="flex items-center gap-1">
+                  <span>🔥</span>
+                  <span>Evacuate Now</span>
+                </div>
+                <span className="text-[10px] opacity-75 mt-0.5">{getCompletionCount('evacuateNow')}</span>
+              </Button>
             </div>
+
+            {/* Checklist Items */}
+            <div className="space-y-2">
+              {safetyChecklist[checklistLevel].map((item, index) => {
+                const key = `${checklistLevel}-${index}`;
+                const isChecked = checkedItems[key];
+
+                return (
+                  <div
+                    key={index}
+                    className="flex items-start gap-3 p-2 rounded hover:bg-muted/50 cursor-pointer transition-all"
+                    onClick={() => toggleCheckbox(checklistLevel, index)}
+                  >
+                    <div
+                      className={`w-5 h-5 mt-0.5 rounded border-2 flex items-center justify-center flex-shrink-0 transition-all ${
+                        isChecked
+                          ? 'bg-green-500 border-green-500'
+                          : 'border-muted-foreground'
+                      }`}
+                    >
+                      {isChecked && (
+                        <svg
+                          className="w-3 h-3 text-white"
+                          fill="none"
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth="3"
+                          viewBox="0 0 24 24"
+                          stroke="currentColor"
+                        >
+                          <path d="M5 13l4 4L19 7"></path>
+                        </svg>
+                      )}
+                    </div>
+                    <span className={`text-sm ${isChecked ? 'line-through text-muted-foreground' : ''}`}>
+                      {item}
+                    </span>
+                  </div>
+                );
+              })}
+            </div>
+
             <Button className="w-full mt-4" variant="outline">
               Download Full Emergency Plan
             </Button>
