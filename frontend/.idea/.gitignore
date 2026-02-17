@@ -5,3 +5,5 @@
 /httpRequests/
 # Large GIS datasets
 frontend/public/Data/National_Shelter_System_Facilities.geojson
+# GIS datasets
+frontend/public/Data/
