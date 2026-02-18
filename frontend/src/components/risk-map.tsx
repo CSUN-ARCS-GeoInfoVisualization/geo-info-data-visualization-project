@@ -76,137 +76,7 @@ interface WeatherStation {
 
 // No mock data - will load from real sources
 
-// Fire Perimeters Overlay Component
-function FirePerimetersOverlay({ enabled, opacity }: { enabled: boolean; opacity: number }) {
-  const map = useMap();
-  const [overlay, setOverlay] = useState<GoogleMapsOverlay | null>(null);
-  const [fireData, setFireData] = useState<any>(null);
-  const [selectedFire, setSelectedFire] = useState<any>(null);
-
-  // Load fire perimeter GeoJSON
-  useEffect(() => {
-    fetch('/Data/California_Fire_Perimeters.geojson')
-      .then(response => response.json())
-      .then(data => {
-        console.log('Loaded fire perimeters:', data.features.length);
-        setFireData(data);
-      })
-      .catch(error => {
-        console.error('Error loading fire perimeters:', error);
-      });
-  }, []);
-
-  useEffect(() => {
-    if (!map || !fireData || !enabled) {
-      if (overlay) {
-        overlay.setMap(null);
-        overlay.finalize();
-        setOverlay(null);
-      }
-      return;
-    }
-
-    // Clean up old overlay
-    if (overlay) {
-      overlay.setMap(null);
-      overlay.finalize();
-    }
-
-    // Create new overlay with GeoJsonLayer
-    const deckOverlay = new GoogleMapsOverlay({
-      layers: [
-        new GeoJsonLayer({
-          id: 'fire-perimeters',
-          data: fireData,
-          pickable: true,
-          stroked: true,
-          filled: true,
-
-          // Polygon fill
-          getFillColor: (d: any) => {
-            // Color by fire status or year
-            const year = d.properties.YEAR_;
-            if (year >= 2025) return [220, 38, 38, opacity * 1.5]; // Bright red - 2025 fires
-            if (year >= 2024) return [249, 115, 22, opacity * 1.5]; // Orange - 2024
-            if (year >= 2023) return [234, 179, 8, opacity * 1.2]; // Yellow - 2023
-            return [156, 163, 175, opacity * 0.8]; // Gray - older
-          },
-
-          // Outline
-          getLineColor: [255, 255, 255, 200],
-          getLineWidth: 2,
-          lineWidthMinPixels: 1,
-
-          // Tooltip on hover/click
-          onClick: (info: any) => {
-            if (info.object) {
-              setSelectedFire(info.object.properties);
-            }
-          },
-
-          // Update triggers
-          updateTriggers: {
-            getFillColor: [opacity]
-          }
-        })
-      ]
-    });
-
-    deckOverlay.setMap(map);
-    setOverlay(deckOverlay);
-
-    return () => {
-      if (deckOverlay) {
-        deckOverlay.setMap(null);
-        deckOverlay.finalize();
-      }
-    };
-  }, [map, fireData, enabled, opacity]);
-
-  // Render tooltip if fire is selected
-  if (selectedFire) {
-    return (
-      <div
-        style={{
-          position: 'absolute',
-          top: '10px',
-          right: '10px',
-          backgroundColor: 'white',
-          padding: '16px',
-          borderRadius: '8px',
-          boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
-          maxWidth: '300px',
-          zIndex: 1000,
-          pointerEvents: 'auto'
-        }}
-      >
-        <div className="flex justify-between items-start mb-2">
-          <h3 className="font-bold text-lg">{selectedFire.FIRE_NAME}</h3>
-          <button
-            onClick={() => setSelectedFire(null)}
-            className="text-gray-500 hover:text-gray-700"
-          >
-            ×
-          </button>
-        </div>
-        <div className="space-y-1 text-sm">
-          <div><strong>Incident:</strong> {selectedFire.INC_NUM}</div>
-          <div><strong>Year:</strong> {selectedFire.YEAR_}</div>
-          <div><strong>Acres:</strong> {selectedFire.GIS_ACRES?.toLocaleString()}</div>
-          <div><strong>Agency:</strong> {selectedFire.AGENCY}</div>
-          {selectedFire.ALARM_DATE && (
-            <div><strong>Start:</strong> {new Date(selectedFire.ALARM_DATE).toLocaleDateString()}</div>
-          )}
-          {selectedFire.CONT_DATE && (
-            <div><strong>Contained:</strong> {new Date(selectedFire.CONT_DATE).toLocaleDateString()}</div>
-          )}
-        </div>
-      </div>
-    );
-  }
-
-  return null;
-}
+// Fire Perimeters component removed - use History tab for perimeter data
 
 // Fire incident marker component
 function FireIncidentMarker({ incident, selected, onClick }: { incident: FireIncident; selected: boolean; onClick: () => void }) {
@@ -288,7 +158,6 @@ export function RiskMap() {
   const [searchQuery, setSearchQuery] = useState("");
 
   const [layers, setLayers] = useState<MapLayer[]>([
-    { id: "fire-perimeters", name: "Fire Perimeters", icon: Flame, enabled: true, opacity: 60, color: "red" },
     { id: "fire-incidents", name: "Fire Incidents", icon: Flame, enabled: true, opacity: 100, color: "red" },
     { id: "weather-stations", name: "Weather Stations", icon: Thermometer, enabled: true, opacity: 100, color: "blue" },
     { id: "temperature", name: "Temperature", icon: Thermometer, enabled: false, opacity: 50, color: "orange" },
@@ -311,8 +180,6 @@ export function RiskMap() {
   const selectedIncidentData = null; // Will be populated with real data
   const selectedStationData = null; // Will be populated with real data
 
-  const firePerimetersLayer = layers.find(l => l.id === "fire-perimeters");
-
   return (
     <TooltipProvider>
       <div className="space-y-6">
@@ -321,7 +188,7 @@ export function RiskMap() {
           <div>
             <h1 className="text-3xl font-bold mb-2">Risk Assessment Map</h1>
             <p className="text-muted-foreground">
-              Real-time wildfire risk zones, active incidents, and fire perimeters
+              Real-time wildfire risk zones and active incident monitoring
             </p>
           </div>
           <div className="flex gap-2">
@@ -404,11 +271,7 @@ export function RiskMap() {
                     gestureHandling="greedy"
                     disableDefaultUI={false}
                   >
-                    {/* Fire Perimeters Layer */}
-                    <FirePerimetersOverlay
-                      enabled={firePerimetersLayer?.enabled || false}
-                      opacity={firePerimetersLayer?.opacity || 60}
-                    />
+                    {/* Fire Perimeters removed - use History tab for perimeter data */}
 
                     {/* Fire Incidents - removed mock data */}
                     {/* Add real fire incident data source here */}
@@ -423,18 +286,6 @@ export function RiskMap() {
                   <h4 className="font-semibold text-sm mb-3">Map Legend</h4>
                   <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
                     <div className="flex items-center gap-2">
-                      <div className="w-6 h-4 bg-red-600 border border-white rounded"></div>
-                      <span>2025 Fires</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="w-6 h-4 bg-orange-500 border border-white rounded"></div>
-                      <span>2024 Fires</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="w-6 h-4 bg-yellow-500 border border-white rounded"></div>
-                      <span>2023 Fires</span>
-                    </div>
-                    <div className="flex items-center gap-2">
                       <div className="w-4 h-4 bg-red-600 rounded-full border-2 border-white"></div>
                       <span>Active Fire</span>
                     </div>
@@ -444,7 +295,7 @@ export function RiskMap() {
                     </div>
                   </div>
                   <p className="text-xs text-muted-foreground mt-3">
-                    💡 Click fire perimeters for details. Toggle layers in the sidebar.
+                    💡 Real-time risk assessment data. View historical fire perimeters in the History tab.
                   </p>
                 </div>
               </CardContent>

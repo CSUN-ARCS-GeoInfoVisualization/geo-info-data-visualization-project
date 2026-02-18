@@ -16,6 +16,8 @@ import { RiskMap } from "./components/risk-map";
 import { AuthPage } from "./components/auth-page";
 import { NotificationSettings } from "./components/notification-settings";
 import { Toaster } from "sonner@2.0.3";
+import { History } from "./components/history";
+
 
 
 import {
@@ -228,12 +230,7 @@ export default function App() {
             </div>
           )}
 
-          {currentPage === "history" && (
-            <div className="text-center py-16">
-              <h2 className="text-2xl font-bold mb-4">History</h2>
-              <p className="text-muted-foreground">Historical data coming soon</p>
-            </div>
-          )}
+          {currentPage === "history" && <History />}
           {currentPage === "settings" && (
                     <NotificationSettings />
           )}
