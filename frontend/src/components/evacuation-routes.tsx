@@ -492,10 +492,10 @@ export function EvacuationRoutes() {
             Interactive Evacuation Zone Map
           </CardTitle>
           <div className="flex gap-2">
-            <Button variant="outline" size="sm">
+            {/*<Button variant="outline" size="sm">
               <ExternalLink className="h-4 w-4 mr-2" />
               Full Screen
-            </Button>
+            </Button>*/}
           </div>
         </CardHeader>
         <CardContent>
@@ -531,13 +531,13 @@ export function EvacuationRoutes() {
 
             {/* Shelter types */}
             <div className="space-y-2">
-              <div className="text-sm font-semibold text-muted-foreground mb-2">Emergency Shelter Types:</div>
+              <div className="text-base font-semibold text-muted-foreground mb-2">Emergency Shelter Types:</div>
 
-              <div className="grid grid-cols-1 gap-2 text-sm">
+              <div className="grid grid-cols-1 gap-2 text-base">
                 {/* Evacuation Shelters */}
                 <div className="flex items-center gap-2 p-2 rounded hover:bg-gray-100">
                   <div className="w-6 h-6 rounded-full flex items-center justify-center" style={{backgroundColor: 'rgb(59, 130, 246)'}}>
-                    <span className="text-sm">🏃</span>
+                    <span className="text-base">🏃</span>
                   </div>
                   <div>
                     <div><strong>Evacuation Shelter</strong></div>
@@ -548,7 +548,7 @@ export function EvacuationRoutes() {
                 {/* Post-Impact Shelters */}
                 <div className="flex items-center gap-2 p-2 rounded hover:bg-gray-100">
                   <div className="w-6 h-6 rounded-full flex items-center justify-center" style={{backgroundColor: 'rgb(34, 197, 94)'}}>
-                    <span className="text-sm">🏠</span>
+                    <span className="text-base">🏠</span>
                   </div>
                   <div>
                     <div><strong>Post-Impact Shelter</strong></div>
@@ -559,7 +559,7 @@ export function EvacuationRoutes() {
                 {/* Both */}
                 <div className="flex items-center gap-2 p-2 rounded hover:bg-gray-100">
                   <div className="w-6 h-6 rounded-full flex items-center justify-center" style={{backgroundColor: 'rgb(147, 51, 234)'}}>
-                    <span className="text-sm">🏛️</span>
+                    <span className="text-base">🏛️</span>
                   </div>
                   <div>
                     <div><strong>Dual-Purpose Shelter</strong></div>
@@ -572,7 +572,7 @@ export function EvacuationRoutes() {
             {/* Instructions */}
             <div className="mt-4 pt-4 border-t border-gray-200">
               <p className="text-sm text-muted-foreground">
-                💡 <strong>How to use:</strong> Click blue clusters to zoom in. Click individual shelters to see capacity, accessibility, and amenities. Drag to pan, scroll to zoom.
+                💡 <strong>How to use:</strong> Click blue clusters to zoom in. Click individual shelters to see capacity, accessibility, and amenities. Drag to pan, scroll to zoom. FEMA - National Shelter System Facilities
               </p>
             </div>
           </div>
@@ -801,9 +801,9 @@ export function EvacuationRoutes() {
               })}
             </div>
 
-            <Button className="w-full mt-4" variant="outline">
+            {/*<Button className="w-full mt-4" variant="outline">
               Download Full Emergency Plan
-            </Button>
+            </Button>*/}
           </CardContent>
         </Card>
 

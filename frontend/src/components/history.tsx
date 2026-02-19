@@ -534,8 +534,8 @@ export function History() {
 
               {/* Map Legend */}
               <div className="mt-4 bg-gray-50 rounded-lg p-4">
-                <h4 className="font-semibold text-sm mb-3">Fire Size Legend</h4>
-                <div className="grid grid-cols-2 md:grid-cols-2 gap-3 text-sm">
+                <h4 className="font-semibold text-base mb-3">Fire Size Legend</h4>
+                <div className="grid grid-cols-2 md:grid-cols-2 gap-3 text-base">
                   <div className="flex items-center gap-2">
                     <div className="w-6 h-4 border border-white rounded" style={{ backgroundColor: 'rgb(234, 179, 8)' }}></div>
                     <span>&lt;100 acres</span>
@@ -553,7 +553,7 @@ export function History() {
                     <span>10k+ acres</span>
                   </div>
                 </div>
-                <p className="text-xs text-muted-foreground mt-3">
+                <p className="text-sm text-muted-foreground mt-3">
                   💡 Hover for fire name. Click for details. Cyan outline = hovered fire.
                 </p>
               </div>
