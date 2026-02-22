@@ -12,7 +12,7 @@ import { RiskLevelBadge } from "./risk-level-badge";
 import { ConditionCard } from "./condition-card";
 import { RiskChart } from "./risk-chart";
 import { ActiveAlerts } from "./active-alerts";
-import { GoogleRiskMap } from "./GoogleRiskMap";
+import { FIRMSMap } from "./FIRMSMap";
 import PredictionPanel from "./PredictionPanel";
 import PredictionConditionCard from "./PredictionConditionCard";
 import { Button } from "./ui/button";
@@ -128,10 +128,10 @@ export function Dashboard({
         <PredictionPanel />
       </div>
 
-      {/* --- CHART + MAP GRID --- */}
+      {/* --- CHART + ACTIVE FIRES MAP GRID --- */}
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
         <RiskChart title="7-Day Risk Forecast" type="area" />
-        <GoogleRiskMap />
+        <FIRMSMap />
       </div>
 
       {/* --- DETAILED ANALYSIS --- */}
