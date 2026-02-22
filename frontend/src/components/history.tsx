@@ -743,7 +743,7 @@ export function History() {
                   </div>
                 </div>
                 <p className="text-sm text-muted-foreground mt-3">
-                  💡 Hover for fire name. Click for details. Cyan outline = hovered fire.
+                   Hover for fire name. Click for details. Cyan outline = hovered fire.
                 </p>
 
                 {/* DINS Damage Legend - show when enabled */}
@@ -773,7 +773,7 @@ export function History() {
                       </div>
                     </div>
                     <p className="text-xs text-muted-foreground mt-2">
-                      💡 Hover structure for details. Data: CAL FIRE DINS inspections
+                       Hover structure for details. Data: CAL FIRE DINS inspections
                     </p>
                   </div>
                 )}
