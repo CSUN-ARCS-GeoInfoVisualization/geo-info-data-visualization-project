@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   Calendar,
   Filter,
@@ -36,12 +36,13 @@ function HistoricalFirePerimetersOverlay({
   selectedYears: number[];
 }) {
   const map = useMap();
-  const [overlay, setOverlay] = useState<GoogleMapsOverlay | null>(null);
+  // Ref so the overlay is created once — no new WebGL context on re-renders
+  const overlayRef = useRef<GoogleMapsOverlay | null>(null);
   const [fireData, setFireData] = useState<any>(null);
   const [selectedFire, setSelectedFire] = useState<any>(null);
   const [hoveredFire, setHoveredFire] = useState<any>(null);
 
-  // Load fire perimeter GeoJSON
+  // Load fire perimeter GeoJSON — runs once
   useEffect(() => {
     fetch('/Data/California_Fire_Perimeters.geojson')
       .then(response => response.json())
@@ -54,23 +55,28 @@ function HistoricalFirePerimetersOverlay({
       });
   }, []);
 
+  // Create the overlay ONCE when the map is ready, destroy only on unmount
   useEffect(() => {
-    if (!map || !fireData || !enabled) {
-      if (overlay) {
-        overlay.setMap(null);
-        overlay.finalize();
-        setOverlay(null);
-      }
+    if (!map) return;
+    const deckOverlay = new GoogleMapsOverlay({ layers: [] });
+    deckOverlay.setMap(map);
+    overlayRef.current = deckOverlay;
+    return () => {
+      deckOverlay.setMap(null);
+      deckOverlay.finalize();
+      overlayRef.current = null;
+    };
+  }, [map]);
+
+  // Update layers via setProps — reuses the same WebGL context, no leak
+  useEffect(() => {
+    if (!overlayRef.current) return;
+
+    if (!fireData || !enabled) {
+      overlayRef.current.setProps({ layers: [] });
       return;
     }
 
-    // Clean up old overlay
-    if (overlay) {
-      overlay.setMap(null);
-      overlay.finalize();
-    }
-
-    // Filter data by selected years
     let filteredData = fireData;
     if (selectedYears.length > 0 && selectedYears.length < fireData.features.length) {
       filteredData = {
@@ -79,8 +85,7 @@ function HistoricalFirePerimetersOverlay({
       };
     }
 
-    // Create new overlay with GeoJsonLayer
-    const deckOverlay = new GoogleMapsOverlay({
+    overlayRef.current.setProps({
       layers: [
         new GeoJsonLayer({
           id: 'historical-fire-perimeters',
@@ -90,51 +95,36 @@ function HistoricalFirePerimetersOverlay({
           filled: true,
           autoHighlight: true,
 
-          // Polygon fill - color by fire size (acres)
           getFillColor: (d: any) => {
             const acres = d.properties.GIS_ACRES || 0;
             const baseOpacity = opacity * 1.5;
-
-            // Color ramp by acres
-            if (acres >= 10000) return [139, 0, 0, baseOpacity];     // Dark red - 10k+
-            if (acres >= 1000) return [220, 38, 38, baseOpacity];    // Red - 1k-10k
-            if (acres >= 100) return [249, 115, 22, baseOpacity];    // Orange - 100-1k
-            return [234, 179, 8, baseOpacity];                       // Yellow - <100
+            if (acres >= 10000) return [139, 0, 0, baseOpacity];
+            if (acres >= 1000)  return [220, 38, 38, baseOpacity];
+            if (acres >= 100)   return [249, 115, 22, baseOpacity];
+            return [234, 179, 8, baseOpacity];
           },
 
-          // Outline - white normally, bright on hover
           getLineColor: (d: any) => {
             if (hoveredFire && d.properties.OBJECTID === hoveredFire.OBJECTID) {
-              return [0, 255, 255, 255]; // Cyan highlight on hover
+              return [0, 255, 255, 255];
             }
-            return [255, 255, 255, 200]; // White normally
+            return [255, 255, 255, 200];
           },
 
           getLineWidth: (d: any) => {
-            if (hoveredFire && d.properties.OBJECTID === hoveredFire.OBJECTID) {
-              return 4; // Thicker on hover
-            }
+            if (hoveredFire && d.properties.OBJECTID === hoveredFire.OBJECTID) return 4;
             return 2;
           },
           lineWidthMinPixels: 1,
 
-          // Hover handler
           onHover: (info: any) => {
-            if (info.object) {
-              setHoveredFire(info.object.properties);
-            } else {
-              setHoveredFire(null);
-            }
+            setHoveredFire(info.object ? info.object.properties : null);
           },
 
-          // Click handler
           onClick: (info: any) => {
-            if (info.object) {
-              setSelectedFire(info.object.properties);
-            }
+            if (info.object) setSelectedFire(info.object.properties);
           },
 
-          // Update triggers
           updateTriggers: {
             getFillColor: [opacity, selectedYears],
             getLineColor: [hoveredFire],
@@ -143,17 +133,7 @@ function HistoricalFirePerimetersOverlay({
         })
       ]
     });
-
-    deckOverlay.setMap(map);
-    setOverlay(deckOverlay);
-
-    return () => {
-      if (deckOverlay) {
-        deckOverlay.setMap(null);
-        deckOverlay.finalize();
-      }
-    };
-  }, [map, fireData, enabled, opacity, selectedYears, hoveredFire]);
+  }, [fireData, enabled, opacity, selectedYears, hoveredFire]);
 
   // Render tooltips
   return (
@@ -233,18 +213,20 @@ function HistoricalFirePerimetersOverlay({
 // DINS Damage Overlay Component
 function DINSDamageOverlay({
   enabled,
-  opacity
+  opacity,
+  radius
 }: {
   enabled: boolean;
   opacity: number;
+  radius: number;
 }) {
   const map = useMap();
-  const [overlay, setOverlay] = useState<GoogleMapsOverlay | null>(null);
+  // Ref so the overlay is created once — no new WebGL context on re-renders
+  const overlayRef = useRef<GoogleMapsOverlay | null>(null);
   const [dinsData, setDinsData] = useState<any[]>([]);
   const [hoveredStructure, setHoveredStructure] = useState<any>(null);
   const [selectedStructure, setSelectedStructure] = useState<any>(null);
 
-  // Damage color mapping — accepts opacityVal explicitly to avoid stale closure in useEffect
   const getDamageColor = (damage: string, opacityVal: number): [number, number, number, number] => {
     const alpha = opacityVal * 255;
     if (damage?.includes('Destroyed')) return [220, 38, 38, alpha];
@@ -255,7 +237,7 @@ function DINSDamageOverlay({
     return [156, 163, 175, alpha];
   };
 
-  // Load DINS data
+  // Load DINS data — runs once
   useEffect(() => {
     fetch('/Data/POSTFIRE_MASTER_DATA.geojson')
       .then(response => response.json())
@@ -268,23 +250,29 @@ function DINSDamageOverlay({
       });
   }, []);
 
-  // Update overlay
+  // Create the overlay ONCE when the map is ready, destroy only on unmount
   useEffect(() => {
-    if (!map || !enabled || dinsData.length === 0) {
-      if (overlay) {
-        overlay.setMap(null);
-        overlay.finalize();
-        setOverlay(null);
-      }
+    if (!map) return;
+    const deckOverlay = new GoogleMapsOverlay({ layers: [] });
+    deckOverlay.setMap(map);
+    overlayRef.current = deckOverlay;
+    return () => {
+      deckOverlay.setMap(null);
+      deckOverlay.finalize();
+      overlayRef.current = null;
+    };
+  }, [map]);
+
+  // Update layers via setProps — reuses the same WebGL context, no leak
+  useEffect(() => {
+    if (!overlayRef.current) return;
+
+    if (!enabled || dinsData.length === 0) {
+      overlayRef.current.setProps({ layers: [] });
       return;
     }
 
-    if (overlay) {
-      overlay.setMap(null);
-      overlay.finalize();
-    }
-
-    const deckOverlay = new GoogleMapsOverlay({
+    overlayRef.current.setProps({
       layers: [
         new ScatterplotLayer({
           id: 'dins-damage',
@@ -293,19 +281,19 @@ function DINSDamageOverlay({
           stroked: true,
           filled: true,
           radiusScale: 1,
-          radiusMinPixels: 3,
-          radiusMaxPixels: 15,
+          radiusMinPixels: 2,
+          radiusMaxPixels: 50,
           lineWidthMinPixels: 1,
 
           getPosition: (d: any) => [d.properties.LONGITUDE, d.properties.LATITUDE],
 
           getRadius: (d: any) => {
             const damage = d.properties?.DAMAGE || '';
-            if (damage.includes('Destroyed')) return 10;
-            if (damage.includes('Major')) return 8;
-            if (damage.includes('Minor')) return 6;
-            if (damage.includes('Affected')) return 5;
-            return 4;
+            if (damage.includes('Destroyed')) return radius * 2.5;
+            if (damage.includes('Major'))     return radius * 2;
+            if (damage.includes('Minor'))     return radius * 1.5;
+            if (damage.includes('Affected'))  return radius * 1.25;
+            return radius;
           },
 
           getFillColor: (d: any) => getDamageColor(d.properties?.DAMAGE || '', opacity),
@@ -318,45 +306,28 @@ function DINSDamageOverlay({
           },
 
           getLineWidth: (d: any) => {
-            if (hoveredStructure && d.properties?.OBJECTID === hoveredStructure.OBJECTID) {
-              return 3;
-            }
+            if (hoveredStructure && d.properties?.OBJECTID === hoveredStructure.OBJECTID) return 3;
             return 1;
           },
 
           onHover: (info: any) => {
-            if (info.object) {
-              setHoveredStructure(info.object.properties);
-            } else {
-              setHoveredStructure(null);
-            }
+            setHoveredStructure(info.object ? info.object.properties : null);
           },
 
           onClick: (info: any) => {
-            if (info.object) {
-              setSelectedStructure(info.object.properties);
-            }
+            if (info.object) setSelectedStructure(info.object.properties);
           },
 
           updateTriggers: {
             getFillColor: [opacity],
+            getRadius: [radius],
             getLineColor: [hoveredStructure],
             getLineWidth: [hoveredStructure]
           }
         })
       ]
     });
-
-    deckOverlay.setMap(map);
-    setOverlay(deckOverlay);
-
-    return () => {
-      if (deckOverlay) {
-        deckOverlay.setMap(null);
-        deckOverlay.finalize();
-      }
-    };
-  }, [map, dinsData, enabled, opacity, hoveredStructure]);
+  }, [dinsData, enabled, opacity, radius, hoveredStructure]);
 
   return (
     <>
@@ -380,6 +351,9 @@ function DINSDamageOverlay({
           <div className="text-xs">
             <div><strong>Damage:</strong> {hoveredStructure.DAMAGE}</div>
             <div><strong>Fire:</strong> {hoveredStructure.FIRENAME}</div>
+            {hoveredStructure.INCIDENTSTARTDATE && (
+              <div><strong>Year:</strong> {new Date(hoveredStructure.INCIDENTSTARTDATE).getFullYear()}</div>
+            )}
           </div>
         </div>
       )}
@@ -421,6 +395,9 @@ function DINSDamageOverlay({
               </span>
             </div>
             <div><strong>Fire:</strong> {selectedStructure.FIRENAME}</div>
+            {selectedStructure.INCIDENTSTARTDATE && (
+              <div><strong>Year:</strong> {new Date(selectedStructure.INCIDENTSTARTDATE).getFullYear()}</div>
+            )}
             <div><strong>Type:</strong> {selectedStructure.STRUCTURETYPE}</div>
             <div><strong>Year Built:</strong> {selectedStructure.YEARBUILT || 'N/A'}</div>
             {selectedStructure.ASSESSEDIMPROVEDVALUE && (
@@ -440,6 +417,7 @@ export function History() {
   const [opacity, setOpacity] = useState(60);
   const [showPerimeters, setShowPerimeters] = useState(true);
   const [showDINS, setShowDINS] = useState(false); // DINS damage layer toggle
+  const [dinsRadius, setDinsRadius] = useState(4); // DINS dot base radius
   const [fireData, setFireData] = useState<any>(null); // Store full dataset
   const [availableYears, setAvailableYears] = useState<number[]>([]); // All years in dataset
   const [showYearDropdown, setShowYearDropdown] = useState(false); // Year filter dropdown visibility
@@ -738,6 +716,7 @@ export function History() {
                   <DINSDamageOverlay
                     enabled={showDINS}
                     opacity={1}
+                    radius={dinsRadius}
                   />
                 </GoogleMap>
               </div>
@@ -852,6 +831,22 @@ export function History() {
                     onCheckedChange={setShowDINS}
                   />
                 </div>
+                {showDINS && (
+                  <div className="ml-6">
+                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
+                      <span>Radius</span>
+                      <Slider
+                        value={[dinsRadius]}
+                        onValueChange={(value) => setDinsRadius(value[0])}
+                        min={1}
+                        max={20}
+                        step={1}
+                        className="flex-1"
+                      />
+                      <span>{dinsRadius}px</span>
+                    </div>
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>
