@@ -23,7 +23,7 @@ import { Switch } from "./ui/switch";
 import { Checkbox } from "./ui/checkbox";
 import { Map as GoogleMap, useMap } from '@vis.gl/react-google-maps';
 import { GoogleMapsOverlay } from '@deck.gl/google-maps';
-import { GeoJsonLayer } from '@deck.gl/layers';
+import { GeoJsonLayer, ScatterplotLayer } from '@deck.gl/layers';
 
 // Fire Perimeters Overlay Component
 function HistoricalFirePerimetersOverlay({
@@ -230,12 +230,216 @@ function HistoricalFirePerimetersOverlay({
   );
 }
 
+// DINS Damage Overlay Component
+function DINSDamageOverlay({
+  enabled,
+  opacity
+}: {
+  enabled: boolean;
+  opacity: number;
+}) {
+  const map = useMap();
+  const [overlay, setOverlay] = useState<GoogleMapsOverlay | null>(null);
+  const [dinsData, setDinsData] = useState<any[]>([]);
+  const [hoveredStructure, setHoveredStructure] = useState<any>(null);
+  const [selectedStructure, setSelectedStructure] = useState<any>(null);
+
+  // Damage color mapping — accepts opacityVal explicitly to avoid stale closure in useEffect
+  const getDamageColor = (damage: string, opacityVal: number): [number, number, number, number] => {
+    const alpha = opacityVal * 255;
+    if (damage?.includes('Destroyed')) return [220, 38, 38, alpha];
+    if (damage?.includes('Major'))     return [249, 115, 22, alpha];
+    if (damage?.includes('Minor'))     return [234, 179, 8,  alpha];
+    if (damage?.includes('Affected'))  return [34, 197, 94,  alpha];
+    if (damage?.includes('No Damage')) return [59, 130, 246, alpha];
+    return [156, 163, 175, alpha];
+  };
+
+  // Load DINS data
+  useEffect(() => {
+    fetch('/Data/POSTFIRE_MASTER_DATA.geojson')
+      .then(response => response.json())
+      .then(data => {
+        console.log('Loaded DINS structures:', data.features?.length || 0);
+        setDinsData(data.features || []);
+      })
+      .catch(error => {
+        console.error('Error loading DINS data:', error);
+      });
+  }, []);
+
+  // Update overlay
+  useEffect(() => {
+    if (!map || !enabled || dinsData.length === 0) {
+      if (overlay) {
+        overlay.setMap(null);
+        overlay.finalize();
+        setOverlay(null);
+      }
+      return;
+    }
+
+    if (overlay) {
+      overlay.setMap(null);
+      overlay.finalize();
+    }
+
+    const deckOverlay = new GoogleMapsOverlay({
+      layers: [
+        new ScatterplotLayer({
+          id: 'dins-damage',
+          data: dinsData,
+          pickable: true,
+          stroked: true,
+          filled: true,
+          radiusScale: 1,
+          radiusMinPixels: 3,
+          radiusMaxPixels: 15,
+          lineWidthMinPixels: 1,
+
+          getPosition: (d: any) => [d.properties.LONGITUDE, d.properties.LATITUDE],
+
+          getRadius: (d: any) => {
+            const damage = d.properties?.DAMAGE || '';
+            if (damage.includes('Destroyed')) return 10;
+            if (damage.includes('Major')) return 8;
+            if (damage.includes('Minor')) return 6;
+            if (damage.includes('Affected')) return 5;
+            return 4;
+          },
+
+          getFillColor: (d: any) => getDamageColor(d.properties?.DAMAGE || '', opacity),
+
+          getLineColor: (d: any) => {
+            if (hoveredStructure && d.properties?.OBJECTID === hoveredStructure.OBJECTID) {
+              return [0, 255, 255, 255];
+            }
+            return [255, 255, 255, 200];
+          },
+
+          getLineWidth: (d: any) => {
+            if (hoveredStructure && d.properties?.OBJECTID === hoveredStructure.OBJECTID) {
+              return 3;
+            }
+            return 1;
+          },
+
+          onHover: (info: any) => {
+            if (info.object) {
+              setHoveredStructure(info.object.properties);
+            } else {
+              setHoveredStructure(null);
+            }
+          },
+
+          onClick: (info: any) => {
+            if (info.object) {
+              setSelectedStructure(info.object.properties);
+            }
+          },
+
+          updateTriggers: {
+            getFillColor: [opacity],
+            getLineColor: [hoveredStructure],
+            getLineWidth: [hoveredStructure]
+          }
+        })
+      ]
+    });
+
+    deckOverlay.setMap(map);
+    setOverlay(deckOverlay);
+
+    return () => {
+      if (deckOverlay) {
+        deckOverlay.setMap(null);
+        deckOverlay.finalize();
+      }
+    };
+  }, [map, dinsData, enabled, opacity, hoveredStructure]);
+
+  return (
+    <>
+      {hoveredStructure && !selectedStructure && (
+        <div
+          style={{
+            position: 'absolute',
+            top: '10px',
+            left: '10px',
+            backgroundColor: 'rgba(0, 0, 0, 0.85)',
+            color: 'white',
+            padding: '10px 14px',
+            borderRadius: '6px',
+            fontSize: '13px',
+            zIndex: 1000,
+            pointerEvents: 'none',
+            maxWidth: '280px'
+          }}
+        >
+          <div className="font-bold mb-1">{hoveredStructure.SITEADDRESS}</div>
+          <div className="text-xs">
+            <div><strong>Damage:</strong> {hoveredStructure.DAMAGE}</div>
+            <div><strong>Fire:</strong> {hoveredStructure.FIRENAME}</div>
+          </div>
+        </div>
+      )}
+
+      {selectedStructure && (
+        <div
+          style={{
+            position: 'absolute',
+            top: '10px',
+            right: '10px',
+            zIndex: 1000,
+            pointerEvents: 'auto',
+            backgroundColor: 'white',
+            padding: '16px',
+            borderRadius: '8px',
+            boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+            maxWidth: '350px',
+            maxHeight: '500px',
+            overflowY: 'auto'
+          }}
+        >
+          <button
+            onClick={() => setSelectedStructure(null)}
+            className="absolute top-2 right-2 text-gray-500 hover:text-gray-700 text-xl"
+          >
+            ×
+          </button>
+          <h3 className="font-bold text-base mb-3 pr-6">{selectedStructure.SITEADDRESS}</h3>
+          <div className="space-y-2 text-sm">
+            <div>
+              <strong>Damage:</strong>{' '}
+              <span className={
+                selectedStructure.DAMAGE?.includes('Destroyed') ? 'text-red-600 font-semibold' :
+                selectedStructure.DAMAGE?.includes('Major') ? 'text-orange-600 font-semibold' :
+                selectedStructure.DAMAGE?.includes('Minor') ? 'text-yellow-600 font-semibold' :
+                'text-green-600 font-semibold'
+              }>
+                {selectedStructure.DAMAGE}
+              </span>
+            </div>
+            <div><strong>Fire:</strong> {selectedStructure.FIRENAME}</div>
+            <div><strong>Type:</strong> {selectedStructure.STRUCTURETYPE}</div>
+            <div><strong>Year Built:</strong> {selectedStructure.YEARBUILT || 'N/A'}</div>
+            {selectedStructure.ASSESSEDIMPROVEDVALUE && (
+              <div><strong>Value:</strong> ${selectedStructure.ASSESSEDIMPROVEDVALUE.toLocaleString()}</div>
+            )}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 export function History() {
   const [selectedYears, setSelectedYears] = useState<number[]>([2025]); // Start with 2025 selected
   const [mapTypeId, setMapTypeId] = useState<'roadmap' | 'satellite' | 'hybrid' | 'terrain'>('satellite');
   const [searchQuery, setSearchQuery] = useState("");
   const [opacity, setOpacity] = useState(60);
   const [showPerimeters, setShowPerimeters] = useState(true);
+  const [showDINS, setShowDINS] = useState(false); // DINS damage layer toggle
   const [fireData, setFireData] = useState<any>(null); // Store full dataset
   const [availableYears, setAvailableYears] = useState<number[]>([]); // All years in dataset
   const [showYearDropdown, setShowYearDropdown] = useState(false); // Year filter dropdown visibility
@@ -529,6 +733,12 @@ export function History() {
                     opacity={opacity}
                     selectedYears={selectedYears}
                   />
+
+                  {/* DINS Damage Layer */}
+                  <DINSDamageOverlay
+                    enabled={showDINS}
+                    opacity={1}
+                  />
                 </GoogleMap>
               </div>
 
@@ -556,6 +766,38 @@ export function History() {
                 <p className="text-sm text-muted-foreground mt-3">
                   💡 Hover for fire name. Click for details. Cyan outline = hovered fire.
                 </p>
+
+                {/* DINS Damage Legend - show when enabled */}
+                {showDINS && (
+                  <div className="mt-4 pt-4 border-t">
+                    <h4 className="font-semibold text-base mb-3">Structure Damage Levels</h4>
+                    <div className="grid grid-cols-2 gap-2 text-sm">
+                      <div className="flex items-center gap-2">
+                        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: 'rgb(220, 38, 38)' }}></div>
+                        <span>Destroyed (&gt;50%)</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: 'rgb(249, 115, 22)' }}></div>
+                        <span>Major (26-50%)</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: 'rgb(234, 179, 8)' }}></div>
+                        <span>Minor (11-25%)</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: 'rgb(34, 197, 94)' }}></div>
+                        <span>Affected (&lt;10%)</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: 'rgb(59, 130, 246)' }}></div>
+                        <span>No Damage</span>
+                      </div>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-2">
+                      💡 Hover structure for details. Data: CAL FIRE DINS inspections
+                    </p>
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -598,6 +840,18 @@ export function History() {
                     </div>
                   </div>
                 )}
+
+                {/* DINS Damage Layer Toggle */}
+                <div className="flex items-center justify-between pt-2 border-t">
+                  <div className="flex items-center gap-2">
+                    <AlertTriangle className="h-4 w-4 text-red-500" />
+                    <span className="text-sm">Show Structure Damage</span>
+                  </div>
+                  <Switch
+                    checked={showDINS}
+                    onCheckedChange={setShowDINS}
+                  />
+                </div>
               </div>
             </CardContent>
           </Card>

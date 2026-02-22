@@ -1,10 +1,10 @@
 import { useState, useEffect } from "react";
-import { 
-  MapPin, 
-  Navigation, 
-  Shield, 
-  Phone, 
-  AlertTriangle, 
+import {
+  MapPin,
+  Navigation,
+  Shield,
+  Phone,
+  AlertTriangle,
   Car,
   Users,
   Clock,
@@ -115,10 +115,11 @@ const safetyChecklist = {
 };
 
 // Deck.gl overlay component with clustering
-function FireFacilitiesOverlay() {
+function FireFacilitiesOverlay({ smallDots = false }: { smallDots?: boolean }) {
   const map = useMap();
   const [overlay, setOverlay] = useState<GoogleMapsOverlay | null>(null);
   const [tooltip, setTooltip] = useState<any>(null);
+  const [hoveredShelter, setHoveredShelter] = useState<any>(null);
   const [facilitiesData, setFacilitiesData] = useState<any[]>([]);
   const [clusteredData, setClusteredData] = useState<any[]>([]);
   const [zoom, setZoom] = useState(8);
@@ -185,6 +186,16 @@ function FireFacilitiesOverlay() {
       const currentZoom = Math.floor(map.getZoom() || 8);
       setZoom(currentZoom);
 
+      // If small dots mode, disable clustering - show all individual shelters
+      if (smallDots) {
+        setClusteredData(facilitiesData.map((f: any) => ({
+          type: 'Feature',
+          properties: { ...f.properties, cluster: false },
+          geometry: f.geometry
+        })));
+        return;
+      }
+
       // Create supercluster index
       const index = new Supercluster({
         radius: 60,
@@ -223,7 +234,7 @@ function FireFacilitiesOverlay() {
       listener.remove();
       dragListener.remove();
     };
-  }, [map, facilitiesData]);
+  }, [map, facilitiesData, smallDots]);
 
   useEffect(() => {
     if (!map || clusteredData.length === 0) return;
@@ -250,30 +261,36 @@ function FireFacilitiesOverlay() {
 
             if (isCluster) {
               // Cluster icon with count
+              const size = smallDots ? 25 : 50;
+              const radius = smallDots ? 11 : 22;
+              const fontSize = smallDots ? 10 : 16;
               return {
                 url: `data:image/svg+xml;utf8,${encodeURIComponent(`
-                  <svg width="50" height="50" xmlns="http://www.w3.org/2000/svg">
-                    <circle cx="25" cy="25" r="22" fill="rgb(59, 130, 246)" stroke="white" stroke-width="3"/>
-                    <text x="25" y="32" font-size="16" font-weight="bold" text-anchor="middle" fill="white">${pointCount}</text>
+                  <svg width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="${size/2}" cy="${size/2}" r="${radius}" fill="rgb(59, 130, 246)" stroke="white" stroke-width="${smallDots ? 2 : 3}"/>
+                    <text x="${size/2}" y="${size/2 + fontSize/2.5}" font-size="${fontSize}" font-weight="bold" text-anchor="middle" fill="white">${pointCount}</text>
                   </svg>
                 `)}`,
-                width: 50,
-                height: 50,
-                anchorY: 50
+                width: size,
+                height: size,
+                anchorY: size
               };
             } else {
               // Individual shelter icon
               const style = getFacilityStyle(d.properties.facility_usage_code, d.properties.facility_type);
+              const size = smallDots ? 20 : 40;
+              const radius = smallDots ? 8 : 16;
+              const fontSize = smallDots ? 12 : 18;
               return {
                 url: `data:image/svg+xml;utf8,${encodeURIComponent(`
-                  <svg width="40" height="40" xmlns="http://www.w3.org/2000/svg">
-                    <circle cx="20" cy="20" r="16" fill="rgb(${style.color.join(',')})" stroke="white" stroke-width="2"/>
-                    <text x="20" y="27" font-size="18" text-anchor="middle" fill="white">${style.icon}</text>
+                  <svg width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">
+                    <circle cx="${size/2}" cy="${size/2}" r="${radius}" fill="rgb(${style.color.join(',')})" stroke="white" stroke-width="${smallDots ? 1 : 2}"/>
+                    <text x="${size/2}" y="${size/2 + fontSize/2.5}" font-size="${fontSize}" text-anchor="middle" fill="white">${style.icon}</text>
                   </svg>
                 `)}`,
-                width: 40,
-                height: 40,
-                anchorY: 40
+                width: size,
+                height: size,
+                anchorY: size
               };
             }
           },
@@ -284,9 +301,21 @@ function FireFacilitiesOverlay() {
 
             if (isCluster) {
               // Scale cluster size based on point count
+              if (smallDots) {
+                return Math.min(25 + (pointCount / 20), 40);
+              }
               return Math.min(50 + (pointCount / 10), 80);
             }
-            return 40;
+            return smallDots ? 20 : 40;
+          },
+
+          // Add hover handler
+          onHover: (info: any) => {
+            if (info.object) {
+              setHoveredShelter(info.object.properties);
+            } else {
+              setHoveredShelter(null);
+            }
           },
 
           onClick: (info: any) => {
@@ -410,6 +439,53 @@ function FireFacilitiesOverlay() {
           </div>
         </div>
       )}
+
+      {/* Hover Tooltip - small tooltip on hover */}
+      {hoveredShelter && !hoveredShelter.cluster && !tooltip && (
+        <div
+          style={{
+            position: 'absolute',
+            top: '10px',
+            left: '10px',
+            backgroundColor: 'rgba(0, 0, 0, 0.85)',
+            color: 'white',
+            padding: '8px 12px',
+            borderRadius: '4px',
+            fontSize: '13px',
+            zIndex: 999,
+            pointerEvents: 'none',
+            maxWidth: '250px'
+          }}
+        >
+          <div className="font-bold">{hoveredShelter.shelter_name || hoveredShelter.facility_name || 'Shelter'}</div>
+          <div className="text-xs mt-1">
+            {hoveredShelter.city && `${hoveredShelter.city}, ${hoveredShelter.state || 'CA'}`}
+          </div>
+          {hoveredShelter.evacuation_capacity > 0 && (
+            <div className="text-xs">Capacity: {hoveredShelter.evacuation_capacity}</div>
+          )}
+        </div>
+      )}
+
+      {/* Cluster hover tooltip */}
+      {hoveredShelter && hoveredShelter.cluster && !tooltip && (
+        <div
+          style={{
+            position: 'absolute',
+            top: '10px',
+            left: '10px',
+            backgroundColor: 'rgba(59, 130, 246, 0.9)',
+            color: 'white',
+            padding: '6px 10px',
+            borderRadius: '4px',
+            fontSize: '12px',
+            zIndex: 999,
+            pointerEvents: 'none'
+          }}
+        >
+          {hoveredShelter.point_count} shelters
+        </div>
+      )}
     </>
   );
 }
@@ -418,6 +494,7 @@ export function EvacuationRoutes() {
   const [selectedZone, setSelectedZone] = useState<string | null>(null);
   const [checklistLevel, setChecklistLevel] = useState<'prepare' | 'fireWatch' | 'evacuationWarning' | 'evacuateNow'>('prepare');
   const [checkedItems, setCheckedItems] = useState<{[key: string]: boolean}>({});
+  const [smallDots, setSmallDots] = useState(false); // Small dots toggle
 
   const toggleCheckbox = (level: string, index: number) => {
     const key = `${level}-${index}`;
@@ -491,12 +568,17 @@ export function EvacuationRoutes() {
             <MapPin className="h-5 w-5" />
             Interactive Evacuation Zone Map
           </CardTitle>
-          <div className="flex gap-2">
-            {/*<Button variant="outline" size="sm">
-              <ExternalLink className="h-4 w-4 mr-2" />
-              Full Screen
-            </Button>*/}
-          </div>
+
+          {/* Small Dots Toggle */}
+          <label className="flex items-center gap-2 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={smallDots}
+              onChange={(e) => setSmallDots(e.target.checked)}
+              className="w-4 h-4 cursor-pointer"
+            />
+            <span className="text-sm font-medium">Small Icons</span>
+          </label>
         </CardHeader>
         <CardContent>
           {/* Google Map with Deck.gl Overlay */}
@@ -508,7 +590,7 @@ export function EvacuationRoutes() {
               gestureHandling="greedy"
               disableDefaultUI={false}
             >
-              <FireFacilitiesOverlay />
+              <FireFacilitiesOverlay smallDots={smallDots} />
             </Map>
           </div>
 
