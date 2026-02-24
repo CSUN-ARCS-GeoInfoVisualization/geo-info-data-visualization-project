@@ -123,7 +123,6 @@ function FireFacilitiesOverlay({ smallDots = false }: { smallDots?: boolean }) {
   const [facilitiesData, setFacilitiesData] = useState<any[]>([]);
   const [clusteredData, setClusteredData] = useState<any[]>([]);
   const [zoom, setZoom] = useState(8);
-  const [isClickDisabled, setIsClickDisabled] = useState(false);
 
   // Shelter facility type icons and colors based on usage code
   const getFacilityStyle = (usageCode: string, facilityType: string) => {
@@ -173,8 +172,15 @@ function FireFacilitiesOverlay({ smallDots = false }: { smallDots?: boolean }) {
     };
 
     if (tooltip) {
-      document.addEventListener('click', handleClickOutside);
-      return () => document.removeEventListener('click', handleClickOutside);
+      // setTimeout defers listener registration by one tick so the opening
+      // click doesn't immediately trigger handleClickOutside and close the tooltip
+      const timer = setTimeout(() => {
+        document.addEventListener('click', handleClickOutside);
+      }, 0);
+      return () => {
+        clearTimeout(timer);
+        document.removeEventListener('click', handleClickOutside);
+      };
     }
   }, [tooltip]);
 
@@ -260,14 +266,14 @@ function FireFacilitiesOverlay({ smallDots = false }: { smallDots?: boolean }) {
             const pointCount = d.properties.point_count || 1;
 
             if (isCluster) {
-              // Cluster icon with count
-              const size = smallDots ? 25 : 50;
-              const radius = smallDots ? 11 : 22;
-              const fontSize = smallDots ? 10 : 16;
+              // Cluster: keep count label, smaller in smallDots mode
+              const size = smallDots ? 18 : 50;
+              const radius = smallDots ? 8 : 22;
+              const fontSize = smallDots ? 8 : 16;
               return {
                 url: `data:image/svg+xml;utf8,${encodeURIComponent(`
                   <svg width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">
-                    <circle cx="${size/2}" cy="${size/2}" r="${radius}" fill="rgb(59, 130, 246)" stroke="white" stroke-width="${smallDots ? 2 : 3}"/>
+                    <circle cx="${size/2}" cy="${size/2}" r="${radius}" fill="rgb(59, 130, 246)" stroke="white" stroke-width="${smallDots ? 1.5 : 3}"/>
                     <text x="${size/2}" y="${size/2 + fontSize/2.5}" font-size="${fontSize}" font-weight="bold" text-anchor="middle" fill="white">${pointCount}</text>
                   </svg>
                 `)}`,
@@ -276,15 +282,30 @@ function FireFacilitiesOverlay({ smallDots = false }: { smallDots?: boolean }) {
                 anchorY: size
               };
             } else {
-              // Individual shelter icon
               const style = getFacilityStyle(d.properties.facility_usage_code, d.properties.facility_type);
-              const size = smallDots ? 20 : 40;
-              const radius = smallDots ? 8 : 16;
-              const fontSize = smallDots ? 12 : 18;
+              if (smallDots) {
+                // Small mode: plain colored dot, no emoji
+                const size = 10;
+                const radius = 4;
+                return {
+                  url: `data:image/svg+xml;utf8,${encodeURIComponent(`
+                    <svg width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">
+                      <circle cx="${size/2}" cy="${size/2}" r="${radius}" fill="rgb(${style.color.join(',')})" stroke="white" stroke-width="1"/>
+                    </svg>
+                  `)}`,
+                  width: size,
+                  height: size,
+                  anchorY: size
+                };
+              }
+              // Normal mode: circle with emoji
+              const size = 40;
+              const radius = 16;
+              const fontSize = 18;
               return {
                 url: `data:image/svg+xml;utf8,${encodeURIComponent(`
                   <svg width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">
-                    <circle cx="${size/2}" cy="${size/2}" r="${radius}" fill="rgb(${style.color.join(',')})" stroke="white" stroke-width="${smallDots ? 1 : 2}"/>
+                    <circle cx="${size/2}" cy="${size/2}" r="${radius}" fill="rgb(${style.color.join(',')})" stroke="white" stroke-width="2"/>
                     <text x="${size/2}" y="${size/2 + fontSize/2.5}" font-size="${fontSize}" text-anchor="middle" fill="white">${style.icon}</text>
                   </svg>
                 `)}`,
@@ -298,15 +319,11 @@ function FireFacilitiesOverlay({ smallDots = false }: { smallDots?: boolean }) {
           getSize: (d: any) => {
             const isCluster = d.properties.cluster;
             const pointCount = d.properties.point_count || 1;
-
             if (isCluster) {
-              // Scale cluster size based on point count
-              if (smallDots) {
-                return Math.min(25 + (pointCount / 20), 40);
-              }
+              if (smallDots) return Math.min(18 + (pointCount / 30), 28);
               return Math.min(50 + (pointCount / 10), 80);
             }
-            return smallDots ? 20 : 40;
+            return smallDots ? 10 : 40;
           },
 
           // Add hover handler
@@ -319,11 +336,7 @@ function FireFacilitiesOverlay({ smallDots = false }: { smallDots?: boolean }) {
           },
 
           onClick: (info: any) => {
-            if (info.object && !isClickDisabled) {
-              // Disable clicks temporarily
-              setIsClickDisabled(true);
-              setTimeout(() => setIsClickDisabled(false), 300);
-
+            if (info.object) {
               const isCluster = info.object.properties.cluster;
 
               if (isCluster) {
@@ -585,7 +598,7 @@ export function EvacuationRoutes() {
           <div className="w-full h-96 rounded-lg overflow-hidden border">
             <Map
               style={{ width: '100%', height: '100%' }}
-              defaultCenter={{ lat: 38.7, lng: -120.8 }}
+              defaultCenter={{ lat: 34.0549, lng: -118.2426 }}
               defaultZoom={8}
               gestureHandling="greedy"
               disableDefaultUI={false}

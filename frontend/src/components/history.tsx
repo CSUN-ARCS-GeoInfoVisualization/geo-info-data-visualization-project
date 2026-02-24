@@ -722,29 +722,34 @@ export function History() {
               </div>
 
               {/* Map Legend */}
+              {(showPerimeters || showDINS) && (
               <div className="mt-4 bg-gray-50 rounded-lg p-4">
-                <h4 className="font-semibold text-base mb-3">Fire Size Legend</h4>
-                <div className="grid grid-cols-2 md:grid-cols-2 gap-3 text-base">
-                  <div className="flex items-center gap-2">
-                    <div className="w-6 h-4 border border-white rounded" style={{ backgroundColor: 'rgb(234, 179, 8)' }}></div>
-                    <span>&lt;100 acres</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-6 h-4 border border-white rounded" style={{ backgroundColor: 'rgb(249, 115, 22)' }}></div>
-                    <span>100–1k acres</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-6 h-4 border border-white rounded" style={{ backgroundColor: 'rgb(220, 38, 38)' }}></div>
-                    <span>1k–10k acres</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <div className="w-6 h-4 border border-white rounded" style={{ backgroundColor: 'rgb(139, 0, 0)' }}></div>
-                    <span>10k+ acres</span>
-                  </div>
-                </div>
-                <p className="text-sm text-muted-foreground mt-3">
-                   Hover for fire name. Click for details. Cyan outline = hovered fire.
-                </p>
+                {showPerimeters && (
+                  <>
+                    <h4 className="font-semibold text-base mb-3">Fire Size Legend</h4>
+                    <div className="grid grid-cols-2 md:grid-cols-2 gap-3 text-base">
+                      <div className="flex items-center gap-2">
+                        <div className="w-6 h-4 border border-white rounded" style={{ backgroundColor: 'rgb(234, 179, 8)' }}></div>
+                        <span>&lt;100 acres</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-6 h-4 border border-white rounded" style={{ backgroundColor: 'rgb(249, 115, 22)' }}></div>
+                        <span>100–1k acres</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-6 h-4 border border-white rounded" style={{ backgroundColor: 'rgb(220, 38, 38)' }}></div>
+                        <span>1k–10k acres</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-6 h-4 border border-white rounded" style={{ backgroundColor: 'rgb(139, 0, 0)' }}></div>
+                        <span>10k+ acres</span>
+                      </div>
+                    </div>
+                    <p className="text-sm text-muted-foreground mt-3">
+                       Hover for fire name. Click for details. Cyan outline = hovered fire.
+                    </p>
+                  </>
+                )}
 
                 {/* DINS Damage Legend - show when enabled */}
                 {showDINS && (
@@ -778,6 +783,7 @@ export function History() {
                   </div>
                 )}
               </div>
+              )}
             </CardContent>
           </Card>
         </div>

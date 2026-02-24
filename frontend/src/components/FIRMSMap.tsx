@@ -34,14 +34,14 @@ interface ActiveFire {
 function parseCSV(csv: string): ActiveFire[] {
   const lines = csv.trim().split('\n');
   if (lines.length < 2) return [];
-  
+
   const headers = lines[0].split(',');
   const fires: ActiveFire[] = [];
-  
+
   for (let i = 1; i < lines.length; i++) {
     const values = lines[i].split(',');
     if (values.length < headers.length) continue;
-    
+
     const fire: any = {};
     headers.forEach((header, index) => {
       const value = values[index];
@@ -52,19 +52,19 @@ function parseCSV(csv: string): ActiveFire[] {
         fire[header] = value;
       }
     });
-    
+
     fires.push(fire as ActiveFire);
   }
-  
+
   return fires;
 }
 
 // Active Fires Overlay Component
-function ActiveFiresOverlay({ 
-  fires, 
-  enabled 
-}: { 
-  fires: ActiveFire[]; 
+function ActiveFiresOverlay({
+  fires,
+  enabled
+}: {
+  fires: ActiveFire[];
   enabled: boolean;
 }) {
   const map = useMap();
@@ -101,19 +101,19 @@ function ActiveFiresOverlay({
           radiusMinPixels: 3,
           radiusMaxPixels: 30,
           lineWidthMinPixels: 1,
-          
+
           getPosition: (d: ActiveFire) => [d.longitude, d.latitude],
-          
+
           // Size based on Fire Radiative Power (FRP)
           getRadius: (d: ActiveFire) => Math.sqrt(d.frp) * 500,
-          
+
           // Color based on confidence level
           getFillColor: (d: ActiveFire) => {
             if (d.confidence >= 80) return [220, 38, 38, 200]; // High confidence - bright red
             if (d.confidence >= 50) return [249, 115, 22, 200]; // Medium confidence - orange
             return [234, 179, 8, 200]; // Low confidence - yellow
           },
-          
+
           getLineColor: [255, 255, 255, 255],
           getLineWidth: 2,
 
@@ -383,19 +383,19 @@ export function FIRMSMap() {
           <div className="grid grid-cols-3 gap-2 text-xs">
             <div className="flex items-center gap-2">
               <div className="w-3 h-3 bg-red-600 rounded-full"></div>
-              <span>High (80%+)</span>
+              <span>H = High (80%+)</span>
             </div>
             <div className="flex items-center gap-2">
               <div className="w-3 h-3 bg-orange-500 rounded-full"></div>
-              <span>Medium (50-80%)</span>
+              <span>N = Nominal (50-80%)</span>
             </div>
             <div className="flex items-center gap-2">
               <div className="w-3 h-3 bg-yellow-500 rounded-full"></div>
-              <span>Low (&lt;50%)</span>
+              <span>L = Low (&lt;50%)</span>
             </div>
           </div>
           <p className="text-xs text-muted-foreground mt-2">
-            💡 Hover fires for details. Size = Fire Radiative Power. Data from NASA VIIRS satellite.
+            💡 Hover fires for details. Data from NASA VIIRS satellite. Active fire/thermal anomalies may be from fire, hot smoke, agriculture or other sources
           </p>
         </div>
       </CardContent>
