@@ -2,17 +2,6 @@
 
 Wildfire prediction and geospatial visualization senior research project at California State University, Northridge.
 
-## Overview
-
-This project aims to help residents and researchers understand wildfire risk across California by combining:
-
-- geospatial data ingestion and preprocessing,
-- machine learning risk prediction,
-- map-based visualization,
-- alerts and notifications.
-
-The system is documented in `software-requirements-specification.md` and is currently in active development.
-
 ## Team
 
 - Ido Cohen
@@ -21,43 +10,86 @@ The system is documented in `software-requirements-specification.md` and is curr
 - Tony Song
 - Sannia Jean
 
-## Repository Structure
+---
 
-Current top-level folders:
+## Overview
 
-- `frontend/` - Web UI (map visualization, user workflows, reusable UI components)
-- `backend/` - API routes and backend service logic
-- `api-framework/` - API framework/app scaffolding
+This project helps residents and researchers understand wildfire risk across California by combining:
 
-Supporting docs:
+- geospatial data ingestion and preprocessing
+- machine learning risk prediction
+- map-based visualization
+- alerts and notifications
 
-- `software-requirements-specification.md` - Full SRS (features, requirements, constraints)
-- `README.md` - Project entry point and contribution guide
+---
 
-## Planned Core Features
+## Getting Started
 
-- Risk map visualization with date filters and GIS layer toggles
-- Prediction API for single and batch wildfire risk requests
-- Alerts/notifications based on user-defined risk thresholds
-- Data ingestion pipeline for weather, vegetation, elevation, and fire history data
-- Admin workflows for refresh schedules and configuration
+The project has two parts that run separately — a **frontend** (React) and a **backend** (Flask). Both need to be running for the full app to work.
 
-## Current Status
+### Prerequisites
 
-This repository currently contains project scaffolding and requirements documentation.
+- Node.js 18+
+- Python 3.10+
+- PostgreSQL 14+ (or SQLite for local development)
 
-Implementation of frontend/backend modules is in progress.
+### Frontend
 
-## Getting Started (Development)
+```bash
+cd frontend
+npm install
+cp .env.example .env
+# Fill in VITE_GOOGLE_MAPS_API_KEY and VITE_API_URL in .env
+npm run dev
+```
 
-Because this repository is still being scaffolded, there is not yet a single runnable startup command.
+App will be available at **http://localhost:3000**
 
-Recommended initial setup:
+### Backend
 
-1. Clone the repository.
-2. Create and activate a Python virtual environment.
-3. Add dependencies as the backend and API modules are implemented.
-4. Add frontend package setup once the frontend app bootstrap is committed.
+**Linux / macOS**
+```bash
+cd backend
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+cp .env.example .env
+# Fill in SECRET_KEY, JWT_SECRET_KEY, and DATABASE_URL in .env
+python seed.py
+python app.py
+```
+
+**Windows (PowerShell)**
+```powershell
+cd backend
+python -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install -r requirements.txt
+Copy-Item .env.example .env
+# Fill in SECRET_KEY, JWT_SECRET_KEY, and DATABASE_URL in .env
+python seed.py
+python app.py
+```
+
+API will be available at **http://localhost:5000**
+
+> For local development without PostgreSQL, set `DATABASE_URL=sqlite:///dev.db` in `.env`
+
+---
+
+## Project Structure
+
+```
+├── frontend/        # React + TypeScript web app (Vite)
+├── backend/         # Flask REST API
+│   ├── routes/      # API endpoints (auth, predict, notifications, admin)
+│   ├── ml/          # Wildfire risk ML model and inference module
+│   ├── data/        # Hardcoded sample location feature data
+│   └── tests/       # pytest test suite
+└── software-requirements-specification.md
+```
+
+---
 
 ## Workflow Guidelines
 
@@ -66,22 +98,10 @@ Recommended initial setup:
 - Update documentation when requirements or architecture change.
 - Keep code aligned with the SRS feature definitions.
 
-## Documentation
+---
 
-- Software requirements: `software-requirements-specification.md`
-- UI planning and workflow links are documented in the SRS.
+## Docs
 
-## Roadmap (MVP Focus)
-
-1. Establish backend API contracts for prediction and map layer data.
-2. Build map visualization UI and connect API integration.
-3. Implement model inference pipeline and baseline prediction service.
-4. Add alerts/notification preferences and delivery flow.
-5. Expand test coverage for core user and API paths.
-
-## License
-
-No license has been declared yet.
-
-If this project will be shared publicly, add a license file before release.
-
+- [Backend setup and API reference](backend/README.md)
+- [ML model details](backend/ml/README.md)
+- [Software Requirements Specification](software-requirements-specification.md)
