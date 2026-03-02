@@ -2,6 +2,17 @@
 
 Wildfire prediction and geospatial visualization senior research project at California State University, Northridge.
 
+## Overview
+
+This project aims to help residents and researchers understand wildfire risk across California by combining:
+
+- geospatial data ingestion and preprocessing,
+- machine learning risk prediction,
+- map-based visualization,
+- alerts and notifications.
+
+The system is documented in `software-requirements-specification.md` and is currently in active development.
+
 ## Team
 
 - Ido Cohen
@@ -10,18 +21,33 @@ Wildfire prediction and geospatial visualization senior research project at Cali
 - Tony Song
 - Sannia Jean
 
----
+## Repository Structure
 
-## Overview
+Current top-level folders:
 
-This project helps residents and researchers understand wildfire risk across California by combining:
+- `frontend/` - Web UI (map visualization, user workflows, reusable UI components)
+- `backend/` - API routes, ML inference module, and backend service logic
+  - `routes/` - API endpoints (auth, predict, notifications, admin)
+  - `ml/` - Wildfire risk ML model and inference module
+  - `data/` - Hardcoded sample location feature data
+  - `tests/` - pytest test suite
 
-- geospatial data ingestion and preprocessing
-- machine learning risk prediction
-- map-based visualization
-- alerts and notifications
+Supporting docs:
 
----
+- `software-requirements-specification.md` - Full SRS (features, requirements, constraints)
+- `README.md` - Project entry point and contribution guide
+
+## Planned Core Features
+
+- Risk map visualization with date filters and GIS layer toggles
+- Prediction API for single and batch wildfire risk requests
+- Alerts/notifications based on user-defined risk thresholds
+- Data ingestion pipeline for weather, vegetation, elevation, and fire history data
+- Admin workflows for refresh schedules and configuration
+
+## Current Status
+
+This repository contains a working frontend (React + TypeScript) and backend (Flask) with a live wildfire risk prediction endpoint powered by a trained ML model.
 
 ## Getting Started
 
@@ -75,21 +101,33 @@ API will be available at **http://localhost:5000**
 
 > For local development without PostgreSQL, set `DATABASE_URL=sqlite:///dev.db` in `.env`
 
----
+### Running the App
 
-## Project Structure
+After completing setup, use these commands each time you want to start the app. Open two separate terminals:
 
+**Terminal 1 — Start the backend:**
+
+Linux / macOS:
+```bash
+cd backend
+source .venv/bin/activate
+python app.py
 ```
-├── frontend/        # React + TypeScript web app (Vite)
-├── backend/         # Flask REST API
-│   ├── routes/      # API endpoints (auth, predict, notifications, admin)
-│   ├── ml/          # Wildfire risk ML model and inference module
-│   ├── data/        # Hardcoded sample location feature data
-│   └── tests/       # pytest test suite
-└── software-requirements-specification.md
+
+Windows (PowerShell):
+```powershell
+cd backend
+.\.venv\Scripts\Activate.ps1
+python app.py
 ```
 
----
+**Terminal 2 — Start the frontend:**
+```bash
+cd frontend
+npm run dev
+```
+
+Then open **http://localhost:3000** in your browser.
 
 ## Workflow Guidelines
 
@@ -98,10 +136,22 @@ API will be available at **http://localhost:5000**
 - Update documentation when requirements or architecture change.
 - Keep code aligned with the SRS feature definitions.
 
----
-
-## Docs
+## Documentation
 
 - [Backend setup and API reference](backend/README.md)
 - [ML model details](backend/ml/README.md)
 - [Software Requirements Specification](software-requirements-specification.md)
+
+## Roadmap (MVP Focus)
+
+1. Establish backend API contracts for prediction and map layer data.
+2. Build map visualization UI and connect API integration.
+3. Implement model inference pipeline and baseline prediction service.
+4. Add alerts/notification preferences and delivery flow.
+5. Expand test coverage for core user and API paths.
+
+## License
+
+No license has been declared yet.
+
+If this project will be shared publicly, add a license file before release.
