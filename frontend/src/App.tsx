@@ -20,7 +20,7 @@ type Page = "dashboard" | "evacuation-routes" | "news" | "risk-map" | "alerts" |
 export default function App() {
   const [currentPage, setCurrentPage] = useState<Page>("dashboard");
   const [isAuthenticated, setIsAuthenticated] = useState(false);
-  //const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string;
+  const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string;
 
   // Show auth page if not authenticated
     if (!isAuthenticated) {
@@ -28,7 +28,7 @@ export default function App() {
     }
 
   return (
-      <APIProvider apiKey={"AIzaSyAsnZD5qi1po5EM3zUnTqg114_s7WWfajI"} onLoad={() => console.log('Maps API loaded')}>
+      <APIProvider apiKey={apiKey} onLoad={() => console.log('Maps API loaded')}>
     <div className="min-h-screen bg-background">
       {/* Header */}
       <header className="border-b bg-white/95 backdrop-blur-sm sticky top-0 z-50">
