@@ -98,4 +98,14 @@ SAMPLE_LOCATIONS = [
         "elevation": 800.0,
         "note": "High wind, warm, exposed ridge",
     },
+    {
+        "name": "Ventura — Thomas Fire Area",
+        "lat": 34.3500,
+        "lon": -119.2000,
+        "evi": 0,
+        "lst": 15200,    # ≈ 30.85°C — peak summer heat
+        "wind": 10.0,    # sustained fire-season wind
+        "elevation": 500.0,
+        "note": "High-risk: hot and dry summer conditions → model score ~0.62",
+    },
 ]
