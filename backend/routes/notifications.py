@@ -59,6 +59,8 @@ def _serialize_preference(pref):
     return {
         'user_id': pref.user_id,
         'opted_in': pref.opted_in,
+        'email_enabled': pref.email_enabled,
+        'sms_enabled': pref.sms_enabled,
         'frequency': pref.frequency,
         'risk_threshold': pref.risk_threshold,
         'paused_until': _format_datetime(pref.paused_until),
@@ -93,6 +95,15 @@ def should_send_alert(pref, risk_level, now=None):
 
 
 def _apply_preference_updates(pref, data):
+    if 'email_enabled' in data:
+        if not isinstance(data['email_enabled'], bool):
+            return {'error': 'email_enabled must be a boolean'}, 400
+        pref.email_enabled = data['email_enabled']
+    
+    if 'sms_enabled' in data:
+        if not isinstance(data['sms_enabled'], bool):
+            return {'error': 'sms_enabled must be a boolean'}, 400
+        pref.sms_enabled = data['sms_enabled']
     if 'frequency' in data:
         frequency = data['frequency']
         if frequency not in FREQUENCY_OPTIONS:

@@ -109,3 +109,28 @@ def test_should_send_alert_frequency_and_threshold():
     db.session.commit()
 
     assert should_send_alert(pref, risk_level=50, now=now) is True
+
+def test_default_channel_preferences(client):
+    client.post('/api/register', json={'email': 'channels@example.com', 'password': 'Password123!'})
+    token = login_token(client, 'channels@example.com', 'Password123!')
+
+    resp = client.get('/api/me/notifications', headers={'Authorization': f'Bearer {token}'})
+    data = resp.get_json()
+
+    assert resp.status_code == 200
+    assert data['email_enabled'] is False
+    assert data['sms_enabled'] is False
+
+def test_update_channel_preferences(client):
+    create_user('chan2@example.com', 'Password123!')
+    token = login_token(client, 'chan2@example.com', 'Password123!')
+
+    resp = client.put('/api/notifications/preferences', json={'email_enabled': True, 'sms_enabled': True}, headers={'Authorization': f'Bearer {token}'})
+    data = resp.get_json()
+    assert resp.status_code == 200
+    assert data['email_enabled'] is True
+    assert data['sms_enabled'] is True
+
+    resp = client.put('/api/notifications/preferences', json={'email_enabled': 'yes'}, headers={'Authorization': f'Bearer {token}'})
+    assert resp.status_code == 400
+

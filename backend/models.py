@@ -36,6 +36,8 @@ class NotificationPreference(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), unique=True, nullable=False)
     opted_in = db.Column(db.Boolean, default=False, nullable=False)
+    email_enabled = db.Column(db.Boolean, default=False, nullable=False)
+    sms_enabled = db.Column(db.Boolean, default=False, nullable=False)
     frequency = db.Column(db.String(16), default='daily', nullable=False)
     risk_threshold = db.Column(db.Integer, default=0, nullable=False)
     paused_until = db.Column(db.DateTime, nullable=True)
