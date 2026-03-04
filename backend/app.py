@@ -1,3 +1,5 @@
+import os
+
 from flask import Flask, jsonify
 from flask_cors import CORS
 from flask_jwt_extended import JWTManager
@@ -15,7 +17,9 @@ def create_app(config_class=Config):
     app.config.from_object(config_class)
 
     db.init_app(app)
-    migrate.init_app(app, db)
+    repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    migrations_dir = os.path.join(repo_root, 'migrations')
+    migrate.init_app(app, db, directory=migrations_dir)
     CORS(app)
     JWTManager(app)
 
