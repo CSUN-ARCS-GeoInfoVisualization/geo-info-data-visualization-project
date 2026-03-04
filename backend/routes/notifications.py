@@ -3,7 +3,7 @@ from datetime import datetime, timedelta, timezone
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
 
-from models import db, NotificationPreference
+from models import db, User, NotificationPreference, AlertActivity
 
 
 notifications_bp = Blueprint('notifications', __name__)
@@ -69,27 +69,36 @@ def _serialize_preference(pref):
     }
 
 
-def should_send_alert(pref, risk_level, now=None):
+def evaluate_alert_eligibility(pref, risk_level, now=None):
     check_time = now or _now()
     if not pref.opted_in:
-        return False
+        return False, 'unsubscribed'
     if pref.paused_until and check_time < pref.paused_until:
-        return False
+        return False, 'paused'
     if pref.blackout_start and pref.blackout_end:
         if pref.blackout_start <= check_time <= pref.blackout_end:
-            return False
+            return False, 'blackout'
     if risk_level < pref.risk_threshold:
-        return False
+        return False, 'below_risk_threshold'
     if pref.frequency == 'instant':
-        return True
+        return True, 'eligible'
     if not pref.last_sent_at:
-        return True
+        return True, 'eligible'
     delta = check_time - pref.last_sent_at
     if pref.frequency == 'daily':
-        return delta >= timedelta(days=1)
+        if delta >= timedelta(days=1):
+            return True, 'eligible'
+        return False, 'frequency_not_elapsed'
     if pref.frequency == 'weekly':
-        return delta >= timedelta(days=7)
-    return False
+        if delta >= timedelta(days=7):
+            return True, 'eligible'
+        return False, 'frequency_not_elapsed'
+    return False, 'invalid_frequency'
+
+
+def should_send_alert(pref, risk_level, now=None):
+    eligible, _ = evaluate_alert_eligibility(pref, risk_level, now=now)
+    return eligible
 
 
 def _apply_preference_updates(pref, data):
@@ -214,3 +223,47 @@ def admin_update_notifications(user_id):
         return jsonify(error), status
     db.session.commit()
     return jsonify(_serialize_preference(pref))
+
+
+@notifications_bp.route('/admin/notifications/dispatch/<int:user_id>', methods=['POST'])
+@jwt_required()
+def admin_dispatch_notification(user_id):
+    claims = get_jwt()
+    if claims.get('role') != 'Admin':
+        return jsonify({'error': 'Admin access required'}), 403
+
+    target_user = db.session.get(User, user_id)
+    if not target_user:
+        return jsonify({'error': 'User not found'}), 404
+
+    data = request.get_json() or {}
+    risk_level = data.get('risk_level')
+    if not isinstance(risk_level, int):
+        return jsonify({'error': 'risk_level must be an integer'}), 400
+    if risk_level < RISK_MIN or risk_level > RISK_MAX:
+        return jsonify({'error': f'risk_level must be between {RISK_MIN} and {RISK_MAX}'}), 400
+
+    pref = _get_or_create_preference(user_id)
+    eligible, reason = evaluate_alert_eligibility(pref, risk_level, now=_now())
+
+    requester_id = _coerce_user_id()
+    if eligible:
+        pref.last_sent_at = _now()
+
+    activity = AlertActivity(
+        user_id=user_id,
+        risk_level=risk_level,
+        delivery_status='sent' if eligible else 'skipped',
+        reason=reason,
+        triggered_by_user_id=requester_id,
+    )
+    db.session.add(activity)
+    db.session.commit()
+
+    return jsonify({
+        'user_id': user_id,
+        'delivery_status': activity.delivery_status,
+        'reason': activity.reason,
+        'activity_id': activity.id,
+        'preference': _serialize_preference(pref),
+    })

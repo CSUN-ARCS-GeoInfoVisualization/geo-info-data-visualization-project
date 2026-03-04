@@ -47,3 +47,17 @@ class NotificationPreference(db.Model):
     updated_at = db.Column(db.DateTime, server_default=func.now(), onupdate=func.now())
 
     user = db.relationship('User')
+
+
+class AlertActivity(db.Model):
+    __tablename__ = 'alert_activity'
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
+    risk_level = db.Column(db.Integer, nullable=False)
+    delivery_status = db.Column(db.String(16), nullable=False)
+    reason = db.Column(db.String(64), nullable=True)
+    triggered_by_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    created_at = db.Column(db.DateTime, server_default=func.now(), nullable=False, index=True)
+
+    user = db.relationship('User', foreign_keys=[user_id])
+    triggered_by_user = db.relationship('User', foreign_keys=[triggered_by_user_id])

@@ -146,6 +146,7 @@ The API will be available at `http://localhost:5000`.
 | POST | `/api/admin/assign-role` | `{ userId, role }` — cannot demote last admin |
 | GET | `/api/admin/notifications` | List all notification preferences |
 | PUT | `/api/admin/notifications/:userId` | Update any user's preferences |
+| POST | `/api/admin/notifications/dispatch/:userId` | Attempt send with eligibility checks and audit logging (`{ risk_level }`) |
 
 ### Health check
 
