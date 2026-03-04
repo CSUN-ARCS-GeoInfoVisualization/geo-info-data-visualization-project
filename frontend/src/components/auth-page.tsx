@@ -5,9 +5,10 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "./ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
+import { login, register } from "../services/AuthService";
 
 interface AuthPageProps {
-  onAuthSuccess?: () => void;
+  onAuthSuccess?: (token: string) => void;
 }
 
 export function AuthPage({ onAuthSuccess }: AuthPageProps) {
@@ -23,17 +24,21 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
   const [signupEmail, setSignupEmail] = useState("");
   const [signupPassword, setSignupPassword] = useState("");
   const [signupConfirmPassword, setSignupConfirmPassword] = useState("");
+  const [authError, setAuthError] = useState<string | null>(null);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    setAuthError(null);
     setIsLoading(true);
 
-    // Simulate API call
-    setTimeout(() => {
+    try {
+      const result = await login(loginEmail, loginPassword);
+      onAuthSuccess?.(result.token);
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : "Login failed");
+    } finally {
       setIsLoading(false);
-      console.log("Login:", { email: loginEmail, password: loginPassword });
-      onAuthSuccess?.();
-    }, 1500);
+    }
   };
 
   const handleSignup = async (e: React.FormEvent) => {
@@ -44,18 +49,18 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
       return;
     }
 
+    setAuthError(null);
     setIsLoading(true);
 
-    // Simulate API call
-    setTimeout(() => {
+    try {
+      await register(signupEmail, signupPassword);
+      const result = await login(signupEmail, signupPassword);
+      onAuthSuccess?.(result.token);
+    } catch (error) {
+      setAuthError(error instanceof Error ? error.message : "Signup failed");
+    } finally {
       setIsLoading(false);
-      console.log("Signup:", {
-        name: signupName,
-        email: signupEmail,
-        password: signupPassword
-      });
-      onAuthSuccess?.();
-    }, 1500);
+    }
   };
 
   return (
@@ -90,6 +95,7 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
                   <CardDescription>
                     Enter your credentials to access your dashboard
                   </CardDescription>
+                  {authError ? <p className="text-sm text-red-600">{authError}</p> : null}
 
                   <div className="space-y-2">
                     <Label htmlFor="login-email">Email</Label>
@@ -209,6 +215,7 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
                   <CardDescription>
                     Get started with wildfire monitoring and alerts
                   </CardDescription>
+                  {authError ? <p className="text-sm text-red-600">{authError}</p> : null}
 
                   <div className="space-y-2">
                     <Label htmlFor="signup-name">Full Name</Label>

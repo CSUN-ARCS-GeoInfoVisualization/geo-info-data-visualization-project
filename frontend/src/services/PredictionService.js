@@ -1,4 +1,7 @@
-const API_URL = import.meta.env.VITE_API_URL;
+const rawApiUrl = import.meta.env.VITE_API_URL || "http://localhost:5000";
+const API_URL = rawApiUrl.endsWith("/api")
+  ? rawApiUrl
+  : `${rawApiUrl.replace(/\/$/, "")}/api`;
 console.log("Loaded API_URL =", API_URL);
 
 export async function predictSingle(lat, lon, date) {
