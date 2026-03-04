@@ -3,6 +3,10 @@ from flask import Blueprint, request, jsonify
 from ml.inference import predict_from_features
 from data.sample_locations import SAMPLE_LOCATIONS
 
+from data.live_weather import get_weather
+from data.live_elevation import get_elevation
+from data.live_evi import get_evi
+
 predict_bp = Blueprint('predict', __name__)
 
 MODEL_VERSION = "predictive-v1"
@@ -18,11 +22,36 @@ def _nearest_location(lat: float, lon: float) -> dict:
 
 def _run(lat: float, lon: float) -> dict:
     loc = _nearest_location(lat, lon)
+
+    try:
+        weather = get_weather(lat, lon)
+        wind = weather["wind_speed"]
+        lst = (weather["temperature_celsius"] + 273.15) / 0.02
+        weather_source = "live"
+    except Exception:
+        wind = loc["wind"]
+        lst = loc["lst"]
+        weather_source = "fallback"
+
+    try:
+        elevation = get_elevation(lat, lon)
+        elevation_source = "live"
+    except Exception:
+        elevation = loc["elevation"]
+        elevation_source = "fallback"
+
+    try:
+        evi = get_evi(lat, lon)
+        evi_source = "live"
+    except Exception:
+        evi = loc["evi"]
+        evi_source = "fallback"
+
     result = predict_from_features(
-        evi=loc["evi"],
-        lst=loc["lst"],
-        wind=loc["wind"],
-        elevation=loc["elevation"],
+        evi=evi,
+        lst=lst,
+        wind=wind,
+        elevation=elevation,
     )
     return {
         "prediction": {
@@ -41,9 +70,13 @@ def _run(lat: float, lon: float) -> dict:
         },
         "features": {
             "evi": result["evi"],
+            "evi_source": evi_source,
             "lst": result["lst"],
+            "lst_source": weather_source,
             "wind": result["wind"],
+            "wind_source": weather_source,
             "elevation": result["elevation"],
+            "elevation_source": elevation_source,
         },
     }
 
