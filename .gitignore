@@ -10,3 +10,12 @@ node_modules/
 dist/
 build/
 .env
+
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+backend/instance/*.db
+migrations/__pycache__/
+migrations/versions/__pycache__/

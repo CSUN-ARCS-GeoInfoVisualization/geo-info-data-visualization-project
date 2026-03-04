@@ -68,6 +68,21 @@ This creates all tables and inserts the three roles (Resident, Researcher, Admin
 python seed.py
 ```
 
+### 5a. Real PostgreSQL migration flow (recommended for team/dev)
+
+After `.env` is configured with a PostgreSQL `DATABASE_URL`, run migrations and seed:
+
+```bash
+python -m flask --app app.py db upgrade
+python seed.py
+```
+
+Verify migration state:
+
+```bash
+python -m flask --app app.py db current
+```
+
 ### 6. Start the server
 
 ```bash
