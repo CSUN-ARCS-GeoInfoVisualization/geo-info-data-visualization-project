@@ -32,6 +32,7 @@ Current top-level folders:
   - `ml/` - Wildfire risk ML model and inference module
   - `data/` - Hardcoded sample location feature data
   - `tests/` - pytest test suite
+- `migrations/` - Alembic database migrations
 
 Supporting docs:
 
@@ -52,27 +53,67 @@ This repository contains a working frontend (React + TypeScript) and backend (Fl
 
 ## Getting Started
 
-The project has two parts that run separately — a **frontend** (React) and a **backend** (Flask). Both need to be running for the full app to work.
+### Option 1 — Docker (Recommended)
 
-### Prerequisites
+The easiest way to run the full stack. Requires [Docker Desktop](https://www.docker.com/products/docker-desktop/).
+
+**1. Create a `.env` file in the project root:**
+
+```bash
+cp .env.example .env
+# Fill in your values
+```
+
+Required variables:
+
+| Variable | Description |
+|---|---|
+| `SECRET_KEY` | Flask session secret (any long random string) |
+| `JWT_SECRET_KEY` | JWT signing secret (any long random string, different from above) |
+| `INITIAL_ADMIN_EMAIL` | Email for the seeded admin account |
+| `INITIAL_ADMIN_PASSWORD` | Password for the seeded admin account |
+| `VITE_GOOGLE_MAPS_API_KEY` | Google Maps API key |
+
+**2. Build and start everything:**
+
+```bash
+docker-compose up --build
+```
+
+Docker will start Postgres, run database migrations, seed the admin account, and start both the backend and frontend automatically.
+
+- Frontend → **http://localhost**
+- Backend API → **http://localhost:5000/api**
+
+**Subsequent starts (no code changes):**
+```bash
+docker-compose up
+```
+
+**Stop everything:**
+```bash
+docker-compose down
+```
+
+**Wipe the database and start fresh:**
+```bash
+docker-compose down -v
+docker-compose up --build
+```
+
+---
+
+### Option 2 — Manual Setup
+
+Run the frontend and backend separately without Docker.
+
+#### Prerequisites
 
 - Node.js 18+
 - Python 3.10+
-- PostgreSQL 14+ (or SQLite for local development)
+- PostgreSQL 14+ (or use `DATABASE_URL=sqlite:///dev.db` for local development)
 
-### Frontend
-
-```bash
-cd frontend
-npm install
-cp .env.example .env
-# Fill in VITE_GOOGLE_MAPS_API_KEY and VITE_API_URL in .env
-npm run dev
-```
-
-App will be available at **http://localhost:3000**
-
-### Backend
+#### Backend
 
 **Linux / macOS**
 ```bash
@@ -81,7 +122,8 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
-# Fill in SECRET_KEY, JWT_SECRET_KEY, and DATABASE_URL in .env
+# Fill in SECRET_KEY, JWT_SECRET_KEY, DATABASE_URL, and admin credentials in .env
+flask db upgrade
 python seed.py
 python app.py
 ```
@@ -93,42 +135,25 @@ python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
 Copy-Item .env.example .env
-# Fill in SECRET_KEY, JWT_SECRET_KEY, and DATABASE_URL in .env
+# Fill in SECRET_KEY, JWT_SECRET_KEY, DATABASE_URL, and admin credentials in .env
+flask db upgrade
 python seed.py
 python app.py
 ```
 
 API will be available at **http://localhost:5000**
 
-> For local development without PostgreSQL, set `DATABASE_URL=sqlite:///dev.db` in `.env`
+#### Frontend
 
-### Running the App
-
-After completing setup, use these commands each time you want to start the app. Open two separate terminals:
-
-**Terminal 1 — Start the backend:**
-
-Linux / macOS:
-```bash
-cd backend
-source .venv/bin/activate
-python app.py
-```
-
-Windows (PowerShell):
-```powershell
-cd backend
-.\.venv\Scripts\Activate.ps1
-python app.py
-```
-
-**Terminal 2 — Start the frontend:**
 ```bash
 cd frontend
+npm install
+cp .env.example .env
+# Fill in VITE_GOOGLE_MAPS_API_KEY and VITE_API_URL in .env
 npm run dev
 ```
 
-Then open **http://localhost:3000** in your browser.
+App will be available at **http://localhost:3000**
 
 ## Workflow Guidelines
 

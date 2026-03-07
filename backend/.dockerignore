@@ -1,0 +1,8 @@
+.venv
+.venvcd
+__pycache__
+*.pyc
+*.pyo
+.env
+instance/
+.idea/
