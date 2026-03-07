@@ -30,6 +30,14 @@ def create_app(config_class=Config):
     app.register_blueprint(notifications_bp, url_prefix='/api')
     app.register_blueprint(predict_bp, url_prefix='/api')
 
+    # Initialize email service if RESEND_API_KEY is configured
+    if os.getenv('RESEND_API_KEY'):
+        try:
+            from services.email import init_email_service
+            init_email_service(app)
+        except Exception as e:
+            app.logger.warning(f"Email service not initialized: {e}")
+
     @app.route('/health')
     def health():
         return jsonify({'status': 'ok'})

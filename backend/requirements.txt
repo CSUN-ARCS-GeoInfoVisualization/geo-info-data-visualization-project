@@ -11,3 +11,5 @@ requests
 numpy
 scikit-learn
 joblib
+resend>=2.0.0
+APScheduler>=3.10.0
