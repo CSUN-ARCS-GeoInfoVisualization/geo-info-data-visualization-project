@@ -12,19 +12,31 @@ import { Dashboard } from "./components/dashboard";
 import { EvacuationRoutes } from "./components/evacuation-routes";
 import { FireNews } from "./components/fire-news";
 import { RiskMap } from "./components/risk-map";
-import { APIProvider, Map } from '@vis.gl/react-google-maps';
+import { APIProvider } from '@vis.gl/react-google-maps';
 import { AuthPage } from "./components/auth-page";
+import { NotificationSettings } from "./components/notification-settings";
 
 type Page = "dashboard" | "evacuation-routes" | "news" | "risk-map" | "alerts" | "history";
 
 export default function App() {
   const [currentPage, setCurrentPage] = useState<Page>("dashboard");
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [authToken, setAuthToken] = useState<string | null>(() => localStorage.getItem("authToken"));
   const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string;
+  const isAuthenticated = Boolean(authToken);
+
+  const onAuthSuccess = (token: string) => {
+    localStorage.setItem("authToken", token);
+    setAuthToken(token);
+  };
+
+  const onSignOut = () => {
+    localStorage.removeItem("authToken");
+    setAuthToken(null);
+  };
 
   // Show auth page if not authenticated
     if (!isAuthenticated) {
-      return <AuthPage onAuthSuccess={() => setIsAuthenticated(true)} />;
+      return <AuthPage onAuthSuccess={onAuthSuccess} />;
     }
 
   return (
@@ -105,6 +117,9 @@ export default function App() {
               <Button variant="ghost" size="sm">
                 <Settings className="h-4 w-4" />
               </Button>
+              <Button variant="outline" size="sm" onClick={onSignOut}>
+                Sign Out
+              </Button>
               <Button variant="ghost" size="sm" className="md:hidden">
                 <Menu className="h-4 w-4" />
               </Button>
@@ -120,10 +135,7 @@ export default function App() {
         {currentPage === "news" && <FireNews />}
         {currentPage === "risk-map" && <RiskMap />}
         {currentPage === "alerts" && (
-          <div className="text-center py-16">
-            <h2 className="text-2xl font-bold mb-4">Alerts</h2>
-            <p className="text-muted-foreground">Alert management coming soon</p>
-          </div>
+          <NotificationSettings token={authToken as string} />
         )}
         {currentPage === "history" && (
           <div className="text-center py-16">

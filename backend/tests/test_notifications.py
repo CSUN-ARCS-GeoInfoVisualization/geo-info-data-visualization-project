@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta, timezone
 
-from models import db, User, Role, NotificationPreference
+from models import db, User, Role, NotificationPreference, AlertActivity
 from routes.notifications import should_send_alert
 
 
@@ -134,3 +134,71 @@ def test_update_channel_preferences(client):
     resp = client.put('/api/notifications/preferences', json={'email_enabled': 'yes'}, headers={'Authorization': f'Bearer {token}'})
     assert resp.status_code == 400
 
+
+def test_admin_dispatch_notification_sent_creates_activity(client):
+    admin = create_user('notify-admin@example.com', 'Password123!', 'Admin')
+    user = create_user('dispatch-target@example.com', 'Password123!')
+
+    pref = NotificationPreference(user_id=user.id, opted_in=True, frequency='instant', risk_threshold=20)
+    db.session.add(pref)
+    db.session.commit()
+
+    token = login_token(client, 'notify-admin@example.com', 'Password123!')
+    resp = client.post(
+        f'/api/admin/notifications/dispatch/{user.id}',
+        json={'risk_level': 70},
+        headers={'Authorization': f'Bearer {token}'},
+    )
+
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data['delivery_status'] == 'sent'
+    assert data['reason'] == 'eligible'
+    assert data['preference']['last_sent_at'] is not None
+
+    activity = AlertActivity.query.filter_by(user_id=user.id).order_by(AlertActivity.id.desc()).first()
+    assert activity is not None
+    assert activity.delivery_status == 'sent'
+    assert activity.reason == 'eligible'
+    assert activity.triggered_by_user_id == admin.id
+
+
+def test_admin_dispatch_notification_skipped_records_reason(client):
+    create_user('skip-admin@example.com', 'Password123!', 'Admin')
+    user = create_user('skip-target@example.com', 'Password123!')
+
+    pref = NotificationPreference(user_id=user.id, opted_in=False, frequency='instant', risk_threshold=0)
+    db.session.add(pref)
+    db.session.commit()
+
+    token = login_token(client, 'skip-admin@example.com', 'Password123!')
+    resp = client.post(
+        f'/api/admin/notifications/dispatch/{user.id}',
+        json={'risk_level': 90},
+        headers={'Authorization': f'Bearer {token}'},
+    )
+
+    assert resp.status_code == 200
+    data = resp.get_json()
+    assert data['delivery_status'] == 'skipped'
+    assert data['reason'] == 'unsubscribed'
+    assert data['preference']['last_sent_at'] is None
+
+    activity = AlertActivity.query.filter_by(user_id=user.id).order_by(AlertActivity.id.desc()).first()
+    assert activity is not None
+    assert activity.delivery_status == 'skipped'
+    assert activity.reason == 'unsubscribed'
+
+
+def test_admin_dispatch_notification_requires_admin(client):
+    create_user('resident@example.com', 'Password123!')
+    target = create_user('target@example.com', 'Password123!')
+    token = login_token(client, 'resident@example.com', 'Password123!')
+
+    resp = client.post(
+        f'/api/admin/notifications/dispatch/{target.id}',
+        json={'risk_level': 60},
+        headers={'Authorization': f'Bearer {token}'},
+    )
+
+    assert resp.status_code == 403

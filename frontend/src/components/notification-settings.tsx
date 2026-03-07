@@ -1,489 +1,285 @@
-import { useState } from "react";
-import {
-  Bell,
-  Mail,
-  MessageSquare,
-  Clock,
-  AlertCircle,
-  CheckCircle2,
-  Pause,
-  Play,
-  Trash2,
-  Save
-} from "lucide-react";
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
+import { useEffect, useMemo, useState } from "react";
+import { Bell, PauseCircle, RotateCcw, Save, ShieldAlert } from "lucide-react";
 import { Button } from "./ui/button";
-import { Switch } from "./ui/switch";
-import { Label } from "./ui/label";
-import { RadioGroup, RadioGroupItem } from "./ui/radio-group";
-import { Separator } from "./ui/separator";
-import { Badge } from "./ui/badge";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Input } from "./ui/input";
-import { toast } from "sonner@2.0.3";
+import {
+  getMyNotifications,
+  subscribeNotifications,
+  unsubscribeNotifications,
+  updateMyNotifications,
+  type NotificationPreference,
+} from "../services/AuthService";
 
-type RiskThreshold = "low" | "medium" | "high" | "extreme";
-type Frequency = "instant" | "daily" | "weekly";
+type NotificationSettingsProps = {
+  token: string;
+};
 
-export function NotificationSettings() {
-  const [emailEnabled, setEmailEnabled] = useState(true);
-  const [smsEnabled, setSmsEnabled] = useState(false);
-  const [pushEnabled, setPushEnabled] = useState(true);
-  const [isPaused, setIsPaused] = useState(false);
-  const [frequency, setFrequency] = useState<Frequency>("instant");
-  const [riskThreshold, setRiskThreshold] = useState<RiskThreshold>("medium");
-  const [email, setEmail] = useState("user@example.com");
-  const [phone, setPhone] = useState("+1 (555) 123-4567");
-  const [hasUnsavedChanges, setHasUnsavedChanges] = useState(false);
+type DraftPreference = {
+  frequency: "instant" | "daily" | "weekly";
+  riskThreshold: number;
+  pausedUntilLocal: string;
+  blackoutStartLocal: string;
+  blackoutEndLocal: string;
+};
 
-  const handleSave = () => {
-    // Simulate saving settings
-    toast.success("Notification settings saved successfully!");
-    setHasUnsavedChanges(false);
+function isoToLocalDateTime(value: string | null): string {
+  if (!value) return "";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "";
+  const pad = (n: number) => `${n}`.padStart(2, "0");
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
+}
+
+function localDateTimeToIso(value: string): string | null {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toISOString();
+}
+
+function buildDraft(pref: NotificationPreference): DraftPreference {
+  return {
+    frequency: pref.frequency,
+    riskThreshold: pref.risk_threshold,
+    pausedUntilLocal: isoToLocalDateTime(pref.paused_until),
+    blackoutStartLocal: isoToLocalDateTime(pref.blackout_start),
+    blackoutEndLocal: isoToLocalDateTime(pref.blackout_end),
   };
+}
 
-  const handleReset = () => {
-    // Reset to defaults
-    setEmailEnabled(true);
-    setSmsEnabled(false);
-    setPushEnabled(true);
-    setIsPaused(false);
-    setFrequency("instant");
-    setRiskThreshold("medium");
-    toast.info("Settings reset to defaults");
-    setHasUnsavedChanges(false);
-  };
+export function NotificationSettings({ token }: NotificationSettingsProps) {
+  const [preference, setPreference] = useState<NotificationPreference | null>(null);
+  const [draft, setDraft] = useState<DraftPreference | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [message, setMessage] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
 
-  const handleTogglePause = () => {
-    setIsPaused(!isPaused);
-    if (!isPaused) {
-      toast.info("Notifications paused");
-    } else {
-      toast.success("Notifications resumed");
+  const isDirty = useMemo(() => {
+    if (!preference || !draft) return false;
+    return (
+      draft.frequency !== preference.frequency ||
+      draft.riskThreshold !== preference.risk_threshold ||
+      localDateTimeToIso(draft.pausedUntilLocal) !== (preference.paused_until ? new Date(preference.paused_until).toISOString() : null) ||
+      localDateTimeToIso(draft.blackoutStartLocal) !== (preference.blackout_start ? new Date(preference.blackout_start).toISOString() : null) ||
+      localDateTimeToIso(draft.blackoutEndLocal) !== (preference.blackout_end ? new Date(preference.blackout_end).toISOString() : null)
+    );
+  }, [preference, draft]);
+
+  const loadPreference = async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const pref = await getMyNotifications(token);
+      setPreference(pref);
+      setDraft(buildDraft(pref));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to load notification settings");
+    } finally {
+      setLoading(false);
     }
-    setHasUnsavedChanges(true);
   };
 
-  const handleUnsubscribe = () => {
-    // Disable all notifications
-    setEmailEnabled(false);
-    setSmsEnabled(false);
-    setPushEnabled(false);
-    toast.warning("Unsubscribed from all notifications");
-    setHasUnsavedChanges(true);
-  };
+  useEffect(() => {
+    loadPreference();
+  }, [token]);
 
-  const getRiskBadgeColor = (level: RiskThreshold) => {
-    switch (level) {
-      case "low":
-        return "bg-green-100 text-green-800 hover:bg-green-100";
-      case "medium":
-        return "bg-yellow-100 text-yellow-800 hover:bg-yellow-100";
-      case "high":
-        return "bg-orange-100 text-orange-800 hover:bg-orange-100";
-      case "extreme":
-        return "bg-red-100 text-red-800 hover:bg-red-100";
+  const onSave = async () => {
+    if (!draft) return;
+    setSaving(true);
+    setMessage(null);
+    setError(null);
+    try {
+      const updated = await updateMyNotifications(token, {
+        frequency: draft.frequency,
+        risk_threshold: draft.riskThreshold,
+        paused_until: localDateTimeToIso(draft.pausedUntilLocal),
+        blackout_start: localDateTimeToIso(draft.blackoutStartLocal),
+        blackout_end: localDateTimeToIso(draft.blackoutEndLocal),
+      });
+      setPreference(updated);
+      setDraft(buildDraft(updated));
+      setMessage("Notification settings saved.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to save settings");
+    } finally {
+      setSaving(false);
     }
   };
+
+  const onSubscribe = async () => {
+    setSaving(true);
+    setMessage(null);
+    setError(null);
+    try {
+      const updated = await subscribeNotifications(token);
+      setPreference(updated);
+      setDraft(buildDraft(updated));
+      setMessage("Alerts subscribed.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to subscribe");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const onUnsubscribe = async () => {
+    setSaving(true);
+    setMessage(null);
+    setError(null);
+    try {
+      const updated = await unsubscribeNotifications(token);
+      setPreference(updated);
+      setDraft(buildDraft(updated));
+      setMessage("Alerts unsubscribed.");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to unsubscribe");
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const onPause24Hours = () => {
+    if (!draft) return;
+    const pauseUntil = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    setDraft({ ...draft, pausedUntilLocal: isoToLocalDateTime(pauseUntil.toISOString()) });
+    setMessage("Pause set for 24 hours. Save to apply.");
+  };
+
+  const onResetSchedule = () => {
+    if (!draft) return;
+    setDraft({
+      ...draft,
+      pausedUntilLocal: "",
+      blackoutStartLocal: "",
+      blackoutEndLocal: "",
+    });
+    setMessage("Pause/blackout cleared. Save to apply.");
+  };
+
+  if (loading || !draft || !preference) {
+    return <p className="text-muted-foreground">Loading notification settings...</p>;
+  }
 
   return (
-    <div className="space-y-6 max-w-4xl mx-auto">
-      {/* Header */}
-      <div>
-        <h1 className="text-3xl font-bold mb-2">Notification Settings</h1>
-        <p className="text-muted-foreground">
-          Customize how and when you receive wildfire alerts and updates
-        </p>
-      </div>
-
-      {/* Status Banner */}
-      {isPaused && (
-        <Card className="bg-amber-50 border-amber-200">
-          <CardContent className="pt-6">
-            <div className="flex items-center gap-3">
-              <AlertCircle className="h-5 w-5 text-amber-600" />
-              <div className="flex-1">
-                <p className="font-medium text-amber-900">Notifications Paused</p>
-                <p className="text-sm text-amber-700">
-                  You won't receive any alerts until you resume notifications
-                </p>
-              </div>
-              <Button
-                size="sm"
-                onClick={handleTogglePause}
-                className="bg-amber-600 hover:bg-amber-700"
-              >
-                <Play className="h-4 w-4 mr-2" />
-                Resume
-              </Button>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Alert Channels */}
+    <div className="space-y-6">
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
             <Bell className="h-5 w-5 text-red-500" />
-            Alert Channels
+            Notification Settings
           </CardTitle>
           <CardDescription>
-            Choose how you want to receive wildfire alerts and notifications
+            Configure alert frequency, risk sensitivity, and temporary pause windows.
           </CardDescription>
         </CardHeader>
-        <CardContent className="space-y-6">
-          {/* Email Notifications */}
-          <div className="flex items-start justify-between space-x-4">
-            <div className="flex items-start space-x-4 flex-1">
-              <Mail className="h-5 w-5 text-muted-foreground mt-0.5" />
-              <div className="flex-1">
-                <div className="flex items-center gap-2 mb-1">
-                  <Label htmlFor="email-toggle" className="cursor-pointer">Email Notifications</Label>
-                  {emailEnabled && (
-                    <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
-                      <CheckCircle2 className="h-3 w-3 mr-1" />
-                      Active
-                    </Badge>
-                  )}
-                </div>
-                <p className="text-sm text-muted-foreground mb-3">
-                  Receive detailed alerts and reports via email
-                </p>
-                {emailEnabled && (
-                  <Input
-                    type="email"
-                    value={email}
-                    onChange={(e) => {
-                      setEmail(e.target.value);
-                      setHasUnsavedChanges(true);
-                    }}
-                    placeholder="Enter your email"
-                    className="max-w-sm"
-                  />
-                )}
-              </div>
+        <CardContent className="space-y-5">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Frequency</label>
+              <select
+                className="w-full h-9 rounded-md border border-input bg-input-background px-3 text-sm"
+                value={draft.frequency}
+                onChange={(e) => setDraft({ ...draft, frequency: e.target.value as DraftPreference["frequency"] })}
+              >
+                <option value="instant">Instant</option>
+                <option value="daily">Daily digest</option>
+                <option value="weekly">Weekly digest</option>
+              </select>
             </div>
-            <Switch
-              id="email-toggle"
-              checked={emailEnabled}
-              onCheckedChange={(checked) => {
-                setEmailEnabled(checked);
-                setHasUnsavedChanges(true);
-              }}
-            />
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Risk Threshold (0-100)</label>
+              <Input
+                type="number"
+                min={0}
+                max={100}
+                value={draft.riskThreshold}
+                onChange={(e) => setDraft({ ...draft, riskThreshold: Number(e.target.value) })}
+              />
+            </div>
           </div>
 
-          <Separator />
-
-          {/* SMS Notifications */}
-          <div className="flex items-start justify-between space-x-4">
-            <div className="flex items-start space-x-4 flex-1">
-              <MessageSquare className="h-5 w-5 text-muted-foreground mt-0.5" />
-              <div className="flex-1">
-                <div className="flex items-center gap-2 mb-1">
-                  <Label htmlFor="sms-toggle" className="cursor-pointer">SMS Notifications</Label>
-                  {smsEnabled && (
-                    <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
-                      <CheckCircle2 className="h-3 w-3 mr-1" />
-                      Active
-                    </Badge>
-                  )}
-                </div>
-                <p className="text-sm text-muted-foreground mb-3">
-                  Get urgent alerts sent directly to your mobile phone
-                </p>
-                {smsEnabled && (
-                  <Input
-                    type="tel"
-                    value={phone}
-                    onChange={(e) => {
-                      setPhone(e.target.value);
-                      setHasUnsavedChanges(true);
-                    }}
-                    placeholder="Enter your phone number"
-                    className="max-w-sm"
-                  />
-                )}
-              </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Pause Until</label>
+              <Input
+                type="datetime-local"
+                value={draft.pausedUntilLocal}
+                onChange={(e) => setDraft({ ...draft, pausedUntilLocal: e.target.value })}
+              />
             </div>
-            <Switch
-              id="sms-toggle"
-              checked={smsEnabled}
-              onCheckedChange={(checked) => {
-                setSmsEnabled(checked);
-                setHasUnsavedChanges(true);
-              }}
-            />
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Blackout Start</label>
+              <Input
+                type="datetime-local"
+                value={draft.blackoutStartLocal}
+                onChange={(e) => setDraft({ ...draft, blackoutStartLocal: e.target.value })}
+              />
+            </div>
+            <div className="space-y-2">
+              <label className="text-sm font-medium">Blackout End</label>
+              <Input
+                type="datetime-local"
+                value={draft.blackoutEndLocal}
+                onChange={(e) => setDraft({ ...draft, blackoutEndLocal: e.target.value })}
+              />
+            </div>
           </div>
 
-          <Separator />
+          <div className="text-sm text-muted-foreground">
+            Status: {preference.opted_in ? "Subscribed" : "Unsubscribed"}
+          </div>
 
-          {/* Push Notifications */}
-          <div className="flex items-start justify-between space-x-4">
-            <div className="flex items-start space-x-4 flex-1">
-              <Bell className="h-5 w-5 text-muted-foreground mt-0.5" />
-              <div className="flex-1">
-                <div className="flex items-center gap-2 mb-1">
-                  <Label htmlFor="push-toggle" className="cursor-pointer">Push Notifications</Label>
-                  {pushEnabled && (
-                    <Badge variant="outline" className="bg-green-50 text-green-700 border-green-200">
-                      <CheckCircle2 className="h-3 w-3 mr-1" />
-                      Active
-                    </Badge>
-                  )}
-                </div>
-                <p className="text-sm text-muted-foreground">
-                  Instant browser notifications for critical alerts
-                </p>
-              </div>
-            </div>
-            <Switch
-              id="push-toggle"
-              checked={pushEnabled}
-              onCheckedChange={(checked) => {
-                setPushEnabled(checked);
-                setHasUnsavedChanges(true);
-              }}
-            />
+          {message ? <p className="text-sm text-emerald-600">{message}</p> : null}
+          {error ? <p className="text-sm text-red-600">{error}</p> : null}
+
+          <div className="flex flex-wrap gap-3">
+            <Button onClick={onSave} disabled={saving || !isDirty}>
+              <Save className="h-4 w-4" />
+              {saving ? "Saving..." : "Save Changes"}
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => preference && setDraft(buildDraft(preference))}
+              disabled={saving || !isDirty}
+            >
+              Discard
+            </Button>
+            <Button variant="outline" onClick={onSubscribe} disabled={saving || preference.opted_in}>
+              Subscribe
+            </Button>
+            <Button variant="outline" onClick={onUnsubscribe} disabled={saving || !preference.opted_in}>
+              Unsubscribe
+            </Button>
+          </div>
+
+          <div className="flex flex-wrap gap-3">
+            <Button variant="secondary" onClick={onPause24Hours} disabled={saving}>
+              <PauseCircle className="h-4 w-4" />
+              Pause 24 Hours
+            </Button>
+            <Button variant="secondary" onClick={onResetSchedule} disabled={saving}>
+              <RotateCcw className="h-4 w-4" />
+              Reset Pause/Blackout
+            </Button>
           </div>
         </CardContent>
       </Card>
 
-      {/* Alert Frequency */}
-      <Card>
+      <Card className="border-orange-200 bg-orange-50/50">
         <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <Clock className="h-5 w-5 text-red-500" />
-            Alert Frequency
+          <CardTitle className="flex items-center gap-2 text-orange-900">
+            <ShieldAlert className="h-5 w-5" />
+            Emergency Alert Notice
           </CardTitle>
-          <CardDescription>
-            Control how often you receive notification updates
-          </CardDescription>
         </CardHeader>
         <CardContent>
-          <RadioGroup
-            value={frequency}
-            onValueChange={(value: Frequency) => {
-              setFrequency(value);
-              setHasUnsavedChanges(true);
-            }}
-            className="space-y-4"
-          >
-            <div className="flex items-start space-x-3 p-4 rounded-lg border hover:bg-accent/50 transition-colors">
-              <RadioGroupItem value="instant" id="instant" className="mt-0.5" />
-              <div className="flex-1">
-                <Label htmlFor="instant" className="cursor-pointer">
-                  Instant Alerts
-                </Label>
-                <p className="text-sm text-muted-foreground mt-1">
-                  Receive notifications immediately as conditions change (recommended for high-risk areas)
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-start space-x-3 p-4 rounded-lg border hover:bg-accent/50 transition-colors">
-              <RadioGroupItem value="daily" id="daily" className="mt-0.5" />
-              <div className="flex-1">
-                <Label htmlFor="daily" className="cursor-pointer">
-                  Daily Digest
-                </Label>
-                <p className="text-sm text-muted-foreground mt-1">
-                  Get a summary of risk updates once per day at 8:00 AM
-                </p>
-              </div>
-            </div>
-
-            <div className="flex items-start space-x-3 p-4 rounded-lg border hover:bg-accent/50 transition-colors">
-              <RadioGroupItem value="weekly" id="weekly" className="mt-0.5" />
-              <div className="flex-1">
-                <Label htmlFor="weekly" className="cursor-pointer">
-                  Weekly Summary
-                </Label>
-                <p className="text-sm text-muted-foreground mt-1">
-                  Receive a comprehensive weekly report every Monday morning
-                </p>
-              </div>
-            </div>
-          </RadioGroup>
+          <p className="text-sm text-orange-900">
+            Emergency alerts may still be delivered even when regular alerts are paused or unsubscribed.
+          </p>
         </CardContent>
       </Card>
-
-      {/* Risk Threshold */}
-      <Card>
-        <CardHeader>
-          <CardTitle className="flex items-center gap-2">
-            <AlertCircle className="h-5 w-5 text-red-500" />
-            Risk Threshold
-          </CardTitle>
-          <CardDescription>
-            Set the minimum risk level that triggers an alert
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-4">
-            <p className="text-sm text-muted-foreground">
-              You'll only receive notifications when the wildfire risk reaches or exceeds this level:
-            </p>
-
-            <RadioGroup
-              value={riskThreshold}
-              onValueChange={(value: RiskThreshold) => {
-                setRiskThreshold(value);
-                setHasUnsavedChanges(true);
-              }}
-              className="grid grid-cols-1 sm:grid-cols-2 gap-4"
-            >
-              <div className="flex items-center space-x-3 p-4 rounded-lg border hover:bg-accent/50 transition-colors">
-                <RadioGroupItem value="low" id="low" />
-                <div className="flex-1">
-                  <Label htmlFor="low" className="cursor-pointer flex items-center gap-2">
-                    Low Risk
-                    <Badge className={getRiskBadgeColor("low")}>Low</Badge>
-                  </Label>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    Get all alerts
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex items-center space-x-3 p-4 rounded-lg border hover:bg-accent/50 transition-colors">
-                <RadioGroupItem value="medium" id="medium" />
-                <div className="flex-1">
-                  <Label htmlFor="medium" className="cursor-pointer flex items-center gap-2">
-                    Medium Risk
-                    <Badge className={getRiskBadgeColor("medium")}>Medium</Badge>
-                  </Label>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    Balanced alerts
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex items-center space-x-3 p-4 rounded-lg border hover:bg-accent/50 transition-colors">
-                <RadioGroupItem value="high" id="high" />
-                <div className="flex-1">
-                  <Label htmlFor="high" className="cursor-pointer flex items-center gap-2">
-                    High Risk
-                    <Badge className={getRiskBadgeColor("high")}>High</Badge>
-                  </Label>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    Only urgent alerts
-                  </p>
-                </div>
-              </div>
-
-              <div className="flex items-center space-x-3 p-4 rounded-lg border hover:bg-accent/50 transition-colors">
-                <RadioGroupItem value="extreme" id="extreme" />
-                <div className="flex-1">
-                  <Label htmlFor="extreme" className="cursor-pointer flex items-center gap-2">
-                    Extreme Risk
-                    <Badge className={getRiskBadgeColor("extreme")}>Extreme</Badge>
-                  </Label>
-                  <p className="text-sm text-muted-foreground mt-1">
-                    Critical only
-                  </p>
-                </div>
-              </div>
-            </RadioGroup>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Quick Actions */}
-      <Card>
-        <CardHeader>
-          <CardTitle>Quick Actions</CardTitle>
-          <CardDescription>
-            Manage your notification preferences
-          </CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="flex flex-col sm:flex-row gap-3">
-            <Button
-              variant="outline"
-              onClick={handleTogglePause}
-              className="flex-1"
-            >
-              {isPaused ? (
-                <>
-                  <Play className="h-4 w-4 mr-2" />
-                  Resume Notifications
-                </>
-              ) : (
-                <>
-                  <Pause className="h-4 w-4 mr-2" />
-                  Pause Notifications
-                </>
-              )}
-            </Button>
-
-            <Button
-              variant="outline"
-              onClick={handleReset}
-              className="flex-1"
-            >
-              Reset to Defaults
-            </Button>
-
-            <Button
-              variant="outline"
-              onClick={handleUnsubscribe}
-              className="flex-1 border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700"
-            >
-              <Trash2 className="h-4 w-4 mr-2" />
-              Unsubscribe All
-            </Button>
-          </div>
-
-          <Separator />
-
-          <div className="bg-muted/30 rounded-lg p-4">
-            <div className="flex items-start gap-3">
-              <AlertCircle className="h-5 w-5 text-muted-foreground mt-0.5" />
-              <div className="flex-1 text-sm text-muted-foreground">
-                <p className="mb-2">
-                  <strong>Note:</strong> Emergency evacuation alerts will always be sent regardless of your settings.
-                </p>
-                <p>
-                  For technical support or to permanently delete your notification preferences, contact us at{" "}
-                  <a href="mailto:support@firewatch.com" className="text-red-600 hover:underline">
-                    support@firewatch.com
-                  </a>
-                </p>
-              </div>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Save Actions */}
-      <div className="flex items-center justify-between gap-4 sticky bottom-4 bg-background/95 backdrop-blur-sm border rounded-lg p-4 shadow-lg">
-        <div className="text-sm text-muted-foreground">
-          {hasUnsavedChanges && (
-            <span className="flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-orange-500 animate-pulse"></span>
-              You have unsaved changes
-            </span>
-          )}
-        </div>
-        <div className="flex gap-3">
-          <Button
-            variant="outline"
-            onClick={handleReset}
-            disabled={!hasUnsavedChanges}
-          >
-            Discard Changes
-          </Button>
-          <Button
-            onClick={handleSave}
-            disabled={!hasUnsavedChanges}
-            className="bg-red-500 hover:bg-red-600"
-          >
-            <Save className="h-4 w-4 mr-2" />
-            Save Settings
-          </Button>
-        </div>
-      </div>
     </div>
   );
 }

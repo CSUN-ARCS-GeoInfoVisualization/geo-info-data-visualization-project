@@ -1,6 +1,7 @@
-# Geo Info Data Visualization Project
+# geo-info-data-visualization-project
+Wildfire  Prediction Senior Research Project conducted at California State University, Northridge
 
-Wildfire prediction and geospatial visualization senior research project at California State University, Northridge.
+Team Members:
 
 ## Overview
 

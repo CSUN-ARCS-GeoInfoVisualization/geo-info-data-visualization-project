@@ -68,6 +68,21 @@ This creates all tables and inserts the three roles (Resident, Researcher, Admin
 python seed.py
 ```
 
+### 5a. Real PostgreSQL migration flow (recommended for team/dev)
+
+After `.env` is configured with a PostgreSQL `DATABASE_URL`, run migrations and seed:
+
+```bash
+python -m flask --app app.py db upgrade
+python seed.py
+```
+
+Verify migration state:
+
+```bash
+python -m flask --app app.py db current
+```
+
 ### 6. Start the server
 
 ```bash
@@ -146,6 +161,7 @@ The API will be available at `http://localhost:5000`.
 | POST | `/api/admin/assign-role` | `{ userId, role }` — cannot demote last admin |
 | GET | `/api/admin/notifications` | List all notification preferences |
 | PUT | `/api/admin/notifications/:userId` | Update any user's preferences |
+| POST | `/api/admin/notifications/dispatch/:userId` | Attempt send with eligibility checks and audit logging (`{ risk_level }`) |
 
 ### Health check
 
