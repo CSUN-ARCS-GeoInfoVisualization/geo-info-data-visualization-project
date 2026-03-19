@@ -1,10 +1,10 @@
-import { useState } from "react";
-import { 
-  MapPin, 
-  Navigation, 
-  Shield, 
-  Phone, 
-  AlertTriangle, 
+import { useState, useEffect } from "react";
+import {
+  MapPin,
+  Navigation,
+  Shield,
+  Phone,
+  AlertTriangle,
   Car,
   Users,
   Clock,
@@ -15,7 +15,9 @@ import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { Alert, AlertDescription } from "./ui/alert";
-import { ImageWithFallback } from "./figma/ImageWithFallback";
+import { Map, Marker, useMap } from '@vis.gl/react-google-maps';
+import { GoogleMapsOverlay } from '@deck.gl/google-maps';
+import { IconLayer } from '@deck.gl/layers';
 
 const evacuationZones = [
   {
@@ -28,7 +30,7 @@ const evacuationZones = [
     routes: ["Highway 101 North", "Mountain View Road"]
   },
   {
-    id: "zone-b", 
+    id: "zone-b",
     name: "Zone B - Moderate Risk",
     status: "voluntary",
     color: "bg-orange-500",
@@ -82,6 +84,204 @@ const safetyChecklist = [
   "Download emergency apps"
 ];
 
+// Deck.gl overlay component
+function FireFacilitiesOverlay() {
+  const map = useMap();
+  const [overlay, setOverlay] = useState<GoogleMapsOverlay | null>(null);
+  const [tooltip, setTooltip] = useState<any>(null);
+  const [facilitiesData, setFacilitiesData] = useState<any[]>([]);
+
+  // Facility type icons and colors
+  const getFacilityStyle = (type: string) => {
+    const styles: { [key: string]: { icon: string; color: [number, number, number] } } = {
+      'FSB': { icon: '🚒', color: [220, 38, 38] },
+      'FSA': { icon: '🚒', color: [249, 115, 22] },
+      'FSAB': { icon: '🚒', color: [234, 179, 8] },
+      'HQ': { icon: '🏢', color: [59, 130, 246] },
+      'COM': { icon: '📡', color: [147, 51, 234] },
+      'HB': { icon: '🚁', color: [236, 72, 153] },
+      'AAB': { icon: '✈️', color: [14, 165, 233] },
+      'ECC': { icon: '🎯', color: [239, 68, 68] },
+      'LO': { icon: '👁️', color: [251, 191, 36] },
+      'TC': { icon: '🎓', color: [20, 184, 166] },
+      'CC': { icon: '⛺', color: [34, 197, 94] },
+    };
+    return styles[type] || { icon: '📍', color: [156, 163, 175] };
+  };
+
+  const getFacilityTypeName = (type: string) => {
+    const names: { [key: string]: string } = {
+      'FSB': 'Fire Station (State)',
+      'FSA': 'Fire Station (Amador)',
+      'FSAB': 'Fire Station (Assisted)',
+      'HQ': 'Headquarters',
+      'COM': 'Communication Site',
+      'HB': 'Helibase',
+      'AAB': 'Air Attack Base',
+      'ECC': 'Emergency Command Center',
+      'LO': 'Lookout Tower',
+      'TC': 'Training Center',
+      'CC': 'Conservation Camp',
+    };
+    return names[type] || type;
+  };
+
+  // Load GeoJSON data
+  useEffect(() => {
+    fetch('/Data/Facilities_for_Wildland_Fire_Protection.geojson')
+      .then(response => response.json())
+      .then(data => {
+        console.log('Loaded facilities:', data.features.length);
+        setFacilitiesData(data.features.filter(
+          (f: any) => f.properties.FACILITY_STATUS === 'Active'
+        ));
+      })
+      .catch(error => {
+        console.error('Error loading facilities:', error);
+      });
+  }, []);
+
+  // Close tooltip when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      // Close tooltip if click is not on a facility marker
+      if (!target.closest('canvas')) {
+        setTooltip(null);
+      }
+    };
+
+    if (tooltip) {
+      document.addEventListener('click', handleClickOutside);
+      return () => document.removeEventListener('click', handleClickOutside);
+    }
+  }, [tooltip]);
+
+  useEffect(() => {
+    if (!map || facilitiesData.length === 0) return;
+
+    // Create deck.gl overlay
+    const deckOverlay = new GoogleMapsOverlay({
+      layers: [
+        new IconLayer({
+          id: 'fire-facilities',
+          data: facilitiesData,
+          pickable: true,
+
+          getPosition: (d: any) => d.geometry.coordinates,
+
+          getIcon: (d: any) => {
+            const style = getFacilityStyle(d.properties.TYPE);
+            return {
+              url: `data:image/svg+xml;utf8,${encodeURIComponent(`
+                <svg width="40" height="40" xmlns="http://www.w3.org/2000/svg">
+                  <circle cx="20" cy="20" r="16" fill="rgb(${style.color.join(',')})" stroke="white" stroke-width="2"/>
+                  <text x="20" y="27" font-size="18" text-anchor="middle" fill="white">${style.icon}</text>
+                </svg>
+              `)}`,
+              width: 40,
+              height: 40,
+              anchorY: 40
+            };
+          },
+
+          getSize: 40,
+
+          onClick: (info: any) => {
+            if (info.object) {
+              const props = info.object.properties;
+              setTooltip({
+                x: info.x,
+                y: info.y,
+                content: props
+              });
+            }
+          }
+        })
+      ]
+    });
+
+    deckOverlay.setMap(map);
+    setOverlay(deckOverlay);
+
+    return () => {
+      deckOverlay.setMap(null);
+    };
+  }, [map, facilitiesData]);
+
+  return (
+    <>
+      {tooltip && (
+        <div
+          style={{
+            position: 'absolute',
+            zIndex: 1000,
+            pointerEvents: 'auto',
+            left: tooltip.x + 10,
+            top: tooltip.y + 10,
+            backgroundColor: 'white',
+            padding: '12px',
+            borderRadius: '8px',
+            boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
+            maxWidth: '300px',
+            border: '1px solid #e5e7eb',
+          }}
+        >
+          {/* Close button */}
+          <button
+            onClick={() => setTooltip(null)}
+            style={{
+              position: 'absolute',
+              top: '8px',
+              right: '8px',
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              fontSize: '18px',
+              color: '#6b7280',
+              padding: '0',
+              width: '20px',
+              height: '20px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            ×
+          </button>
+
+          <div style={{ marginBottom: '8px', paddingBottom: '8px', borderBottom: '1px solid #e5e7eb' }}>
+            <div style={{ fontWeight: 'bold', fontSize: '14px', marginBottom: '4px', paddingRight: '20px' }}>
+              {tooltip.content.NAME}
+            </div>
+            <div style={{ fontSize: '12px', color: '#6b7280' }}>
+              {getFacilityTypeName(tooltip.content.TYPE)}
+            </div>
+          </div>
+
+          <div style={{ fontSize: '12px', lineHeight: '1.6' }}>
+            {tooltip.content.COUNTY && (
+              <div><strong>County:</strong> {tooltip.content.COUNTY}</div>
+            )}
+            {tooltip.content.ADDRESS && (
+              <div><strong>Address:</strong> {tooltip.content.ADDRESS}</div>
+            )}
+            {tooltip.content.CITY && (
+              <div><strong>City:</strong> {tooltip.content.CITY} {tooltip.content.ZIP}</div>
+            )}
+            {tooltip.content.PHONE_NUM && (
+              <div><strong>Phone:</strong> {tooltip.content.PHONE_NUM}</div>
+            )}
+            {tooltip.content.OWNER && (
+              <div><strong>Owner:</strong> {tooltip.content.OWNER}</div>
+            )}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 export function EvacuationRoutes() {
   const [selectedZone, setSelectedZone] = useState<string | null>(null);
 
@@ -126,7 +326,7 @@ export function EvacuationRoutes() {
         <AlertDescription>
           <div className="flex items-center justify-between">
             <div>
-              <strong>Active Evacuation Order:</strong> Zone A residents must evacuate immediately. 
+              <strong>Active Evacuation Order:</strong> Zone A residents must evacuate immediately.
               Take Highway 101 North or Mountain View Road.
             </div>
             <Button size="sm" variant="destructive">
@@ -136,12 +336,12 @@ export function EvacuationRoutes() {
         </AlertDescription>
       </Alert>
 
-      {/* Evacuation Map */}
+      {/* Interactive Map with Fire Facilities */}
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle className="flex items-center gap-2">
             <MapPin className="h-5 w-5" />
-            Evacuation Zone Map
+            Interactive Evacuation Zone Map
           </CardTitle>
           <div className="flex gap-2">
             <Button variant="outline" size="sm">
@@ -151,43 +351,43 @@ export function EvacuationRoutes() {
           </div>
         </CardHeader>
         <CardContent>
-          <div className="relative w-full h-96 bg-gradient-to-br from-green-100 via-yellow-100 to-red-100 rounded-lg overflow-hidden">
-            <ImageWithFallback
-              src="https://images.unsplash.com/photo-1606736349352-50647dad5adb?crop=entropy&cs=tinysrgb&fit=max&fm=jpg&ixid=M3w3Nzg4Nzd8MHwxfHNlYXJjaHwxfHx3aWxkZmlyZSUyMGZvcmVzdCUyMGFlcmlhbCUyMHZpZXd8ZW58MXx8fHwxNzU4MTMzMDE3fDA&ixlib=rb-4.1.0&q=80&w=1080&utm_source=figma&utm_medium=referral"
-              alt="Evacuation zone map overlay"
-              className="w-full h-full object-cover opacity-30"
-            />
-            
-            {/* Zone overlays */}
-            <div className="absolute top-8 left-8 w-20 h-20 bg-red-500/60 rounded-lg flex items-center justify-center text-white font-bold">
-              Zone A
-            </div>
-            <div className="absolute top-16 right-12 w-24 h-16 bg-orange-500/60 rounded-lg flex items-center justify-center text-white font-bold">
-              Zone B
-            </div>
-            <div className="absolute bottom-12 left-16 w-28 h-20 bg-yellow-500/60 rounded-lg flex items-center justify-center text-white font-bold">
-              Zone C
-            </div>
+          {/* Google Map with Deck.gl Overlay */}
+          <div className="w-full h-96 rounded-lg overflow-hidden border">
+            <Map
+              style={{ width: '100%', height: '100%' }}
+              defaultCenter={{ lat: 38.7, lng: -120.8 }}
+              defaultZoom={8}
+              gestureHandling="greedy"
+              disableDefaultUI={false}
+            >
+              <FireFacilitiesOverlay />
+            </Map>
+          </div>
 
-            {/* Evacuation routes */}
-            <div className="absolute top-1/2 left-1/4 w-2 h-32 bg-blue-600 transform -rotate-45 opacity-75"></div>
-            <div className="absolute top-1/3 right-1/3 w-2 h-24 bg-blue-600 transform rotate-30 opacity-75"></div>
-
-            {/* Assembly points */}
-            <div className="absolute bottom-8 right-8 w-4 h-4 bg-green-600 rounded-full animate-pulse"></div>
-            <div className="absolute bottom-16 right-20 w-4 h-4 bg-green-600 rounded-full animate-pulse"></div>
-            
-            {/* Map controls */}
-            <div className="absolute top-4 right-4 bg-white/90 backdrop-blur-sm rounded-lg p-2 text-xs space-y-2">
+          {/* Map Legend */}
+          <div className="mt-4 bg-gray-50 rounded-lg p-3">
+            <h4 className="font-semibold text-sm mb-3">Map Legend</h4>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
               <div className="flex items-center gap-2">
-                <div className="w-3 h-3 bg-blue-600 rounded"></div>
-                <span>Evacuation Routes</span>
+                <div className="w-3 h-3 bg-red-600 rounded-full"></div>
+                <span>Fire Stations</span>
               </div>
               <div className="flex items-center gap-2">
-                <div className="w-3 h-3 bg-green-600 rounded-full"></div>
-                <span>Assembly Points</span>
+                <div className="w-3 h-3 bg-blue-500 rounded-full"></div>
+                <span>Headquarters</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 bg-purple-600 rounded-full"></div>
+                <span>Communication Sites</span>
+              </div>
+              <div className="flex items-center gap-2">
+                <div className="w-3 h-3 bg-pink-500 rounded-full"></div>
+                <span>Helibases</span>
               </div>
             </div>
+            <p className="text-xs text-muted-foreground mt-3">
+              💡 Click on facility markers to see details. Drag to pan, scroll to zoom.
+            </p>
           </div>
         </CardContent>
       </Card>
@@ -204,11 +404,11 @@ export function EvacuationRoutes() {
           </CardHeader>
           <CardContent className="space-y-4">
             {evacuationZones.map((zone) => (
-              <div 
+              <div
                 key={zone.id}
                 className={`p-4 rounded-lg border-2 cursor-pointer transition-all ${
-                  selectedZone === zone.id 
-                    ? 'border-blue-500 bg-blue-50' 
+                  selectedZone === zone.id
+                    ? 'border-blue-500 bg-blue-50'
                     : 'border-gray-200 hover:border-gray-300'
                 }`}
                 onClick={() => setSelectedZone(selectedZone === zone.id ? null : zone.id)}
@@ -225,7 +425,7 @@ export function EvacuationRoutes() {
                   </div>
                   {getStatusBadge(zone.status)}
                 </div>
-                
+
                 <div className="grid grid-cols-2 gap-4 text-sm">
                   <div className="flex items-center gap-2">
                     <Clock className="h-4 w-4 text-muted-foreground" />
@@ -279,7 +479,7 @@ export function EvacuationRoutes() {
                     {point.distance}
                   </Badge>
                 </div>
-                
+
                 <div className="flex items-center gap-4 text-sm text-muted-foreground mb-3">
                   <div className="flex items-center gap-1">
                     <Users className="h-4 w-4" />
@@ -390,7 +590,7 @@ export function EvacuationRoutes() {
             <Alert>
               <AlertTriangle className="h-4 w-4" />
               <AlertDescription className="text-sm">
-                Save these numbers in your phone and write them down. 
+                Save these numbers in your phone and write them down.
                 Cell towers may be overloaded during emergencies.
               </AlertDescription>
             </Alert>

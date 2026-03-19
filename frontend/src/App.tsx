@@ -1,10 +1,11 @@
 import { useState } from "react";
-import { 
-  Flame, 
+import {
+  Flame,
   Bell,
   Menu,
   Settings,
-  Search
+  Search,
+  LogOut
 } from "lucide-react";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
@@ -12,23 +13,35 @@ import { Dashboard } from "./components/dashboard";
 import { EvacuationRoutes } from "./components/evacuation-routes";
 import { FireNews } from "./components/fire-news";
 import { RiskMap } from "./components/risk-map";
-import { APIProvider, Map } from '@vis.gl/react-google-maps';
+import { APIProvider } from '@vis.gl/react-google-maps';
 import { AuthPage } from "./components/auth-page";
+import { SettingsPage } from "./components/settings-page";
 
-type Page = "dashboard" | "evacuation-routes" | "news" | "risk-map" | "alerts" | "history";
+type Page = "dashboard" | "evacuation-routes" | "news" | "risk-map" | "alerts" | "history" | "settings";
+type SettingsTab = "profile" | "locations" | "notifications";
 
 export default function App() {
   const [currentPage, setCurrentPage] = useState<Page>("dashboard");
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>("profile");
+  const [isAuthenticated, setIsAuthenticated] = useState(() => !!localStorage.getItem("token"));
   const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string;
 
-  // Show auth page if not authenticated
-    if (!isAuthenticated) {
-      return <AuthPage onAuthSuccess={() => setIsAuthenticated(true)} />;
-    }
+  const handleLogout = () => {
+    localStorage.removeItem("token");
+    setIsAuthenticated(false);
+  };
+
+  const goToSettings = (tab: SettingsTab) => {
+    setSettingsTab(tab);
+    setCurrentPage("settings");
+  };
+
+  if (!isAuthenticated) {
+    return <AuthPage onAuthSuccess={() => setIsAuthenticated(true)} />;
+  }
 
   return (
-      <APIProvider apiKey={apiKey} onLoad={() => console.log('Maps API loaded')}>
+    <APIProvider apiKey={apiKey} onLoad={() => console.log('Maps API loaded')}>
     <div className="min-h-screen bg-background">
       {/* Header */}
       <header className="border-b bg-white/95 backdrop-blur-sm sticky top-0 z-50">
@@ -40,70 +53,41 @@ export default function App() {
                 <span className="text-xl font-bold">FireWatch</span>
               </div>
               <nav className="hidden md:flex space-x-6 ml-8">
-                <button 
-                  onClick={() => setCurrentPage("dashboard")}
-                  className={`text-sm font-medium hover:text-red-500 transition-colors ${
-                    currentPage === "dashboard" ? "text-red-500" : "text-muted-foreground"
-                  }`}
-                >
-                  Dashboard
-                </button>
-                <button 
-                  onClick={() => setCurrentPage("evacuation-routes")}
-                  className={`text-sm font-medium hover:text-red-500 transition-colors ${
-                    currentPage === "evacuation-routes" ? "text-red-500" : "text-muted-foreground"
-                  }`}
-                >
-                  Evacuation Routes
-                </button>
-                <button 
-                  onClick={() => setCurrentPage("news")}
-                  className={`text-sm font-medium hover:text-red-500 transition-colors ${
-                    currentPage === "news" ? "text-red-500" : "text-muted-foreground"
-                  }`}
-                >
-                  News
-                </button>
-                <button 
-                  onClick={() => setCurrentPage("risk-map")}
-                  className={`text-sm font-medium hover:text-red-500 transition-colors ${
-                    currentPage === "risk-map" ? "text-red-500" : "text-muted-foreground"
-                  }`}
-                >
-                  Risk Map
-                </button>
-                <button 
-                  onClick={() => setCurrentPage("alerts")}
-                  className={`text-sm font-medium hover:text-red-500 transition-colors ${
-                    currentPage === "alerts" ? "text-red-500" : "text-muted-foreground"
-                  }`}
-                >
-                  Alerts
-                </button>
-                <button 
-                  onClick={() => setCurrentPage("history")}
-                  className={`text-sm font-medium hover:text-red-500 transition-colors ${
-                    currentPage === "history" ? "text-red-500" : "text-muted-foreground"
-                  }`}
-                >
-                  History
-                </button>
+                {(["dashboard", "evacuation-routes", "news", "risk-map", "alerts", "history"] as Page[]).map((page) => (
+                  <button
+                    key={page}
+                    onClick={() => setCurrentPage(page)}
+                    className={`text-sm font-medium hover:text-red-500 transition-colors capitalize ${
+                      currentPage === page ? "text-red-500" : "text-muted-foreground"
+                    }`}
+                  >
+                    {page === "evacuation-routes" ? "Evacuation Routes"
+                      : page === "risk-map" ? "Risk Map"
+                      : page.charAt(0).toUpperCase() + page.slice(1)}
+                  </button>
+                ))}
               </nav>
             </div>
-            
-            <div className="flex items-center space-x-4">
+
+            <div className="flex items-center space-x-2">
               <div className="relative hidden sm:block">
                 <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-                <Input 
-                  placeholder="Search locations..." 
-                  className="pl-10 w-64"
-                />
+                <Input placeholder="Search locations..." className="pl-10 w-64" />
               </div>
-              <Button variant="ghost" size="sm">
+              <Button variant="ghost" size="sm" onClick={() => goToSettings("notifications")} title="Alert preferences">
                 <Bell className="h-4 w-4" />
               </Button>
-              <Button variant="ghost" size="sm">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => goToSettings("profile")}
+                title="Settings"
+                className={currentPage === "settings" ? "text-red-500" : ""}
+              >
                 <Settings className="h-4 w-4" />
+              </Button>
+              <Button variant="ghost" size="sm" onClick={handleLogout} title="Sign out">
+                <LogOut className="h-4 w-4" />
               </Button>
               <Button variant="ghost" size="sm" className="md:hidden">
                 <Menu className="h-4 w-4" />
@@ -115,10 +99,11 @@ export default function App() {
 
       {/* Main Content */}
       <main className="container mx-auto px-4 sm:px-6 lg:px-8 py-8">
-        {currentPage === "dashboard" && <Dashboard />}
+        {currentPage === "dashboard" && <Dashboard onAddLocation={() => goToSettings("locations")} />}
         {currentPage === "evacuation-routes" && <EvacuationRoutes />}
         {currentPage === "news" && <FireNews />}
         {currentPage === "risk-map" && <RiskMap />}
+        {currentPage === "settings" && <SettingsPage key={settingsTab} defaultTab={settingsTab} />}
         {currentPage === "alerts" && (
           <div className="text-center py-16">
             <h2 className="text-2xl font-bold mb-4">Alerts</h2>
@@ -146,7 +131,6 @@ export default function App() {
                 Advanced wildfire risk prediction and monitoring system powered by real-time data and machine learning.
               </p>
             </div>
-            
             <div>
               <h3 className="font-medium mb-4">Features</h3>
               <ul className="space-y-2 text-sm text-muted-foreground">
@@ -156,7 +140,6 @@ export default function App() {
                 <li>Alert notifications</li>
               </ul>
             </div>
-            
             <div>
               <h3 className="font-medium mb-4">Resources</h3>
               <ul className="space-y-2 text-sm text-muted-foreground">
@@ -166,7 +149,6 @@ export default function App() {
                 <li>Historical data</li>
               </ul>
             </div>
-            
             <div>
               <h3 className="font-medium mb-4">Contact</h3>
               <ul className="space-y-2 text-sm text-muted-foreground">
@@ -177,7 +159,6 @@ export default function App() {
               </ul>
             </div>
           </div>
-          
           <div className="border-t mt-8 pt-8 text-center text-sm text-muted-foreground">
             <p>© 2025 FireWatch. All rights reserved. Data provided by National Weather Service and local fire departments.</p>
           </div>

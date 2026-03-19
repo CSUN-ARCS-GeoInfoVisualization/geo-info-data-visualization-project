@@ -6,6 +6,8 @@ import { Label } from "./ui/label";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "./ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
 
+const API_URL = import.meta.env.VITE_API_URL as string;
+
 interface AuthPageProps {
   onAuthSuccess?: () => void;
 }
@@ -13,6 +15,7 @@ interface AuthPageProps {
 export function AuthPage({ onAuthSuccess }: AuthPageProps) {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   // Login form state
   const [loginEmail, setLoginEmail] = useState("");
@@ -26,36 +29,69 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError(null);
     setIsLoading(true);
 
-    // Simulate API call
-    setTimeout(() => {
-      setIsLoading(false);
-      console.log("Login:", { email: loginEmail, password: loginPassword });
+    try {
+      const res = await fetch(`${API_URL}/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: loginEmail, password: loginPassword }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "Login failed");
+        return;
+      }
+      localStorage.setItem("token", data.token);
       onAuthSuccess?.();
-    }, 1500);
+    } catch {
+      setError("Could not reach the server. Is the backend running?");
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError(null);
 
     if (signupPassword !== signupConfirmPassword) {
-      alert("Passwords do not match!");
+      setError("Passwords do not match");
       return;
     }
 
     setIsLoading(true);
 
-    // Simulate API call
-    setTimeout(() => {
-      setIsLoading(false);
-      console.log("Signup:", {
-        name: signupName,
-        email: signupEmail,
-        password: signupPassword
+    try {
+      const res = await fetch(`${API_URL}/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: signupEmail, password: signupPassword }),
       });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "Registration failed");
+        return;
+      }
+      // Auto-login after successful registration
+      const loginRes = await fetch(`${API_URL}/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: signupEmail, password: signupPassword }),
+      });
+      const loginData = await loginRes.json();
+      if (!loginRes.ok) {
+        setError("Registered successfully — please log in.");
+        return;
+      }
+      localStorage.setItem("token", loginData.token);
       onAuthSuccess?.();
-    }, 1500);
+    } catch {
+      setError("Could not reach the server. Is the backend running?");
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
@@ -74,7 +110,7 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
 
         {/* Auth Card */}
         <Card className="shadow-xl border-0">
-          <Tabs defaultValue="login" className="w-full">
+          <Tabs defaultValue="login" className="w-full" onValueChange={() => setError(null)}>
             <CardHeader className="space-y-1 pb-4">
               <TabsList className="grid w-full grid-cols-2">
                 <TabsTrigger value="login">Login</TabsTrigger>
@@ -149,6 +185,9 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
                 </CardContent>
 
                 <CardFooter className="flex flex-col space-y-4">
+                  {error && (
+                    <p className="text-sm text-red-500 w-full text-center">{error}</p>
+                  )}
                   <Button
                     type="submit"
                     className="w-full bg-red-500 hover:bg-red-600"
@@ -303,6 +342,9 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
                 </CardContent>
 
                 <CardFooter className="flex flex-col space-y-4">
+                  {error && (
+                    <p className="text-sm text-red-500 w-full text-center">{error}</p>
+                  )}
                   <Button
                     type="submit"
                     className="w-full bg-red-500 hover:bg-red-600"
