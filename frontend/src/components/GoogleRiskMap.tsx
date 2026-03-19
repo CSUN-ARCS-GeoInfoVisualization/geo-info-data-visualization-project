@@ -1,11 +1,17 @@
 import { Map, Marker } from '@vis.gl/react-google-maps';
 import { DeckOverlayManager } from './maps/DeckOverlayManager';
 
+interface GoogleRiskMapProps {
+  center?: { lat: number; lng: number };
+  zoom?: number;
+  height?: string;
+}
+
 export function GoogleRiskMap({
   center = { lat: 36.7783, lng: -119.4179 },
   zoom = 6,
   height = "h-[420px]",
-}: MapPlaceholderProps) {
+}: GoogleRiskMapProps) {
   return (
     <div className={`w-full ${height} rounded-lg overflow-hidden border`}>
       <Map

@@ -32,6 +32,8 @@ type Page =
   | "history"
   | "settings";
 
+type SettingsTab = "profile" | "locations" | "notifications";
+
 const NAV_LINKS: { page: Page; label: string }[] = [
   { page: "dashboard", label: "Dashboard" },
   { page: "evacuation-routes", label: "Evacuation Routes" },
@@ -45,6 +47,7 @@ export default function App() {
   const [currentPage, setCurrentPage] = useState<Page>("dashboard");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [authToken, setAuthToken] = useState<string | null>(() => localStorage.getItem("token"));
+  const [settingsTab, setSettingsTab] = useState<SettingsTab>("profile");
   const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string;
   const isAuthenticated = Boolean(authToken);
 
@@ -60,6 +63,11 @@ export default function App() {
   const goToPage = (page: Page) => {
     setCurrentPage(page);
     setMobileNavOpen(false);
+  };
+
+  const goToSettings = (tab: SettingsTab) => {
+    setSettingsTab(tab);
+    setCurrentPage("settings");
   };
 
   // Show auth page if not authenticated
@@ -110,14 +118,14 @@ export default function App() {
                   />
                 </div>
 
-                <Button variant="ghost" size="sm">
+                <Button variant="ghost" size="sm" onClick={() => goToSettings("notifications")} title="Alert preferences">
                   <Bell className="h-4 w-4" />
                 </Button>
 
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => setCurrentPage("settings")}
+                  onClick={() => goToSettings("profile")}
                   title="Settings"
                 >
                   <Settings className="h-4 w-4" />
@@ -184,7 +192,7 @@ export default function App() {
 
         {/* Main Content */}
         <main className="container mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          {currentPage === "dashboard" && <Dashboard />}
+          {currentPage === "dashboard" && <Dashboard onAddLocation={() => goToSettings("locations")} />}
           {currentPage === "evacuation-routes" && <EvacuationRoutes />}
           {currentPage === "news" && <FireNews />}
           {currentPage === "risk-map" && <RiskMap />}
@@ -192,7 +200,7 @@ export default function App() {
             <NotificationSettings token={authToken as string} />
           )}
           {currentPage === "history" && <History />}
-          {currentPage === "settings" && <SettingsPage />}
+          {currentPage === "settings" && <SettingsPage key={settingsTab} defaultTab={settingsTab} />}
         </main>
 
         {/* Footer */}

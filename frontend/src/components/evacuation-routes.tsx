@@ -503,6 +503,204 @@ function FireFacilitiesOverlay({ smallDots = false }: { smallDots?: boolean }) {
   );
 }
 
+// Deck.gl overlay component
+function FireFacilitiesOverlay() {
+  const map = useMap();
+  const [overlay, setOverlay] = useState<GoogleMapsOverlay | null>(null);
+  const [tooltip, setTooltip] = useState<any>(null);
+  const [facilitiesData, setFacilitiesData] = useState<any[]>([]);
+
+  // Facility type icons and colors
+  const getFacilityStyle = (type: string) => {
+    const styles: { [key: string]: { icon: string; color: [number, number, number] } } = {
+      'FSB': { icon: '🚒', color: [220, 38, 38] },
+      'FSA': { icon: '🚒', color: [249, 115, 22] },
+      'FSAB': { icon: '🚒', color: [234, 179, 8] },
+      'HQ': { icon: '🏢', color: [59, 130, 246] },
+      'COM': { icon: '📡', color: [147, 51, 234] },
+      'HB': { icon: '🚁', color: [236, 72, 153] },
+      'AAB': { icon: '✈️', color: [14, 165, 233] },
+      'ECC': { icon: '🎯', color: [239, 68, 68] },
+      'LO': { icon: '👁️', color: [251, 191, 36] },
+      'TC': { icon: '🎓', color: [20, 184, 166] },
+      'CC': { icon: '⛺', color: [34, 197, 94] },
+    };
+    return styles[type] || { icon: '📍', color: [156, 163, 175] };
+  };
+
+  const getFacilityTypeName = (type: string) => {
+    const names: { [key: string]: string } = {
+      'FSB': 'Fire Station (State)',
+      'FSA': 'Fire Station (Amador)',
+      'FSAB': 'Fire Station (Assisted)',
+      'HQ': 'Headquarters',
+      'COM': 'Communication Site',
+      'HB': 'Helibase',
+      'AAB': 'Air Attack Base',
+      'ECC': 'Emergency Command Center',
+      'LO': 'Lookout Tower',
+      'TC': 'Training Center',
+      'CC': 'Conservation Camp',
+    };
+    return names[type] || type;
+  };
+
+  // Load GeoJSON data
+  useEffect(() => {
+    fetch('/Data/Facilities_for_Wildland_Fire_Protection.geojson')
+      .then(response => response.json())
+      .then(data => {
+        console.log('Loaded facilities:', data.features.length);
+        setFacilitiesData(data.features.filter(
+          (f: any) => f.properties.FACILITY_STATUS === 'Active'
+        ));
+      })
+      .catch(error => {
+        console.error('Error loading facilities:', error);
+      });
+  }, []);
+
+  // Close tooltip when clicking outside
+  useEffect(() => {
+    const handleClickOutside = (e: MouseEvent) => {
+      const target = e.target as HTMLElement;
+      // Close tooltip if click is not on a facility marker
+      if (!target.closest('canvas')) {
+        setTooltip(null);
+      }
+    };
+
+    if (tooltip) {
+      document.addEventListener('click', handleClickOutside);
+      return () => document.removeEventListener('click', handleClickOutside);
+    }
+  }, [tooltip]);
+
+  useEffect(() => {
+    if (!map || facilitiesData.length === 0) return;
+
+    // Create deck.gl overlay
+    const deckOverlay = new GoogleMapsOverlay({
+      layers: [
+        new IconLayer({
+          id: 'fire-facilities',
+          data: facilitiesData,
+          pickable: true,
+
+          getPosition: (d: any) => d.geometry.coordinates,
+
+          getIcon: (d: any) => {
+            const style = getFacilityStyle(d.properties.TYPE);
+            return {
+              url: `data:image/svg+xml;utf8,${encodeURIComponent(`
+                <svg width="40" height="40" xmlns="http://www.w3.org/2000/svg">
+                  <circle cx="20" cy="20" r="16" fill="rgb(${style.color.join(',')})" stroke="white" stroke-width="2"/>
+                  <text x="20" y="27" font-size="18" text-anchor="middle" fill="white">${style.icon}</text>
+                </svg>
+              `)}`,
+              width: 40,
+              height: 40,
+              anchorY: 40
+            };
+          },
+
+          getSize: 40,
+
+          onClick: (info: any) => {
+            if (info.object) {
+              const props = info.object.properties;
+              setTooltip({
+                x: info.x,
+                y: info.y,
+                content: props
+              });
+            }
+          }
+        })
+      ]
+    });
+
+    deckOverlay.setMap(map);
+    setOverlay(deckOverlay);
+
+    return () => {
+      deckOverlay.setMap(null);
+    };
+  }, [map, facilitiesData]);
+
+  return (
+    <>
+      {tooltip && (
+        <div
+          style={{
+            position: 'absolute',
+            zIndex: 1000,
+            pointerEvents: 'auto',
+            left: tooltip.x + 10,
+            top: tooltip.y + 10,
+            backgroundColor: 'white',
+            padding: '12px',
+            borderRadius: '8px',
+            boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
+            maxWidth: '300px',
+            border: '1px solid #e5e7eb',
+          }}
+        >
+          {/* Close button */}
+          <button
+            onClick={() => setTooltip(null)}
+            style={{
+              position: 'absolute',
+              top: '8px',
+              right: '8px',
+              background: 'none',
+              border: 'none',
+              cursor: 'pointer',
+              fontSize: '18px',
+              color: '#6b7280',
+              padding: '0',
+              width: '20px',
+              height: '20px',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+            }}
+          >
+            ×
+          </button>
+
+          <div style={{ marginBottom: '8px', paddingBottom: '8px', borderBottom: '1px solid #e5e7eb' }}>
+            <div style={{ fontWeight: 'bold', fontSize: '14px', marginBottom: '4px', paddingRight: '20px' }}>
+              {tooltip.content.NAME}
+            </div>
+            <div style={{ fontSize: '12px', color: '#6b7280' }}>
+              {getFacilityTypeName(tooltip.content.TYPE)}
+            </div>
+          </div>
+
+          <div style={{ fontSize: '12px', lineHeight: '1.6' }}>
+            {tooltip.content.COUNTY && (
+              <div><strong>County:</strong> {tooltip.content.COUNTY}</div>
+            )}
+            {tooltip.content.ADDRESS && (
+              <div><strong>Address:</strong> {tooltip.content.ADDRESS}</div>
+            )}
+            {tooltip.content.CITY && (
+              <div><strong>City:</strong> {tooltip.content.CITY} {tooltip.content.ZIP}</div>
+            )}
+            {tooltip.content.PHONE_NUM && (
+              <div><strong>Phone:</strong> {tooltip.content.PHONE_NUM}</div>
+            )}
+            {tooltip.content.OWNER && (
+              <div><strong>Owner:</strong> {tooltip.content.OWNER}</div>
+            )}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 export function EvacuationRoutes() {
   const [selectedZone, setSelectedZone] = useState<string | null>(null);
   const [checklistLevel, setChecklistLevel] = useState<'prepare' | 'fireWatch' | 'evacuationWarning' | 'evacuateNow'>('prepare');

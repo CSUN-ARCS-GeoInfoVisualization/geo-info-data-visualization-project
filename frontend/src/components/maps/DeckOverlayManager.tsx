@@ -4,7 +4,6 @@ import { GoogleMapsOverlay } from "@deck.gl/google-maps";
 import { buildHeatmapLayer } from "../../layers/heatmapLayer";
 import { mockRiskData } from "../../Data/mockRiskData";
 
-
 export function DeckOverlayManager() {
   const map = useMap();
 
