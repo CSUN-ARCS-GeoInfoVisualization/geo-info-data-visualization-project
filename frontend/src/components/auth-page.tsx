@@ -5,15 +5,17 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "./ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
-import { login, register } from "../services/AuthService";
+
+const API_URL = import.meta.env.VITE_API_URL as string;
 
 interface AuthPageProps {
-  onAuthSuccess?: (token: string) => void;
+  onAuthSuccess?: () => void;
 }
 
 export function AuthPage({ onAuthSuccess }: AuthPageProps) {
   const [showPassword, setShowPassword] = useState(false);
   const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   // Login form state
   const [loginEmail, setLoginEmail] = useState("");
@@ -24,18 +26,27 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
   const [signupEmail, setSignupEmail] = useState("");
   const [signupPassword, setSignupPassword] = useState("");
   const [signupConfirmPassword, setSignupConfirmPassword] = useState("");
-  const [authError, setAuthError] = useState<string | null>(null);
 
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
-    setAuthError(null);
+    setError(null);
     setIsLoading(true);
 
     try {
-      const result = await login(loginEmail, loginPassword);
-      onAuthSuccess?.(result.token);
-    } catch (error) {
-      setAuthError(error instanceof Error ? error.message : "Login failed");
+      const res = await fetch(`${API_URL}/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: loginEmail, password: loginPassword }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "Login failed");
+        return;
+      }
+      localStorage.setItem("token", data.token);
+      onAuthSuccess?.();
+    } catch {
+      setError("Could not reach the server. Is the backend running?");
     } finally {
       setIsLoading(false);
     }
@@ -43,21 +54,41 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
 
   const handleSignup = async (e: React.FormEvent) => {
     e.preventDefault();
+    setError(null);
 
     if (signupPassword !== signupConfirmPassword) {
-      alert("Passwords do not match!");
+      setError("Passwords do not match");
       return;
     }
 
-    setAuthError(null);
     setIsLoading(true);
 
     try {
-      await register(signupEmail, signupPassword);
-      const result = await login(signupEmail, signupPassword);
-      onAuthSuccess?.(result.token);
-    } catch (error) {
-      setAuthError(error instanceof Error ? error.message : "Signup failed");
+      const res = await fetch(`${API_URL}/register`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: signupEmail, password: signupPassword }),
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        setError(data.error || "Registration failed");
+        return;
+      }
+      // Auto-login after successful registration
+      const loginRes = await fetch(`${API_URL}/login`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: signupEmail, password: signupPassword }),
+      });
+      const loginData = await loginRes.json();
+      if (!loginRes.ok) {
+        setError("Registered successfully — please log in.");
+        return;
+      }
+      localStorage.setItem("token", loginData.token);
+      onAuthSuccess?.();
+    } catch {
+      setError("Could not reach the server. Is the backend running?");
     } finally {
       setIsLoading(false);
     }
@@ -70,16 +101,16 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
         <div className="text-center mb-8">
           <div className="flex items-center justify-center space-x-2 mb-4">
             <Flame className="h-12 w-12 text-red-500" />
-            <span className="text-3xl font-bold">FireWatch</span>
+            <span className="text-3xl font-bold">Geo-Info-Data-Visualization-Project</span>
           </div>
-          <p className="text-black">
-            Advanced wildfire risk prediction and monitoring
+          <p className="text-muted-foreground">
+            Wildfire risk prediction and monitoring
           </p>
         </div>
 
         {/* Auth Card */}
         <Card className="shadow-xl border-0">
-          <Tabs defaultValue="login" className="w-full">
+          <Tabs defaultValue="login" className="w-full" onValueChange={() => setError(null)}>
             <CardHeader className="space-y-1 pb-4">
               <TabsList className="grid w-full grid-cols-2">
                 <TabsTrigger value="login">Login</TabsTrigger>
@@ -95,7 +126,6 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
                   <CardDescription>
                     Enter your credentials to access your dashboard
                   </CardDescription>
-                  {authError ? <p className="text-sm text-red-600">{authError}</p> : null}
 
                   <div className="space-y-2">
                     <Label htmlFor="login-email">Email</Label>
@@ -155,6 +185,9 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
                 </CardContent>
 
                 <CardFooter className="flex flex-col space-y-4">
+                  {error && (
+                    <p className="text-sm text-red-500 w-full text-center">{error}</p>
+                  )}
                   <Button
                     type="submit"
                     className="w-full bg-red-500 hover:bg-red-600"
@@ -215,7 +248,6 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
                   <CardDescription>
                     Get started with wildfire monitoring and alerts
                   </CardDescription>
-                  {authError ? <p className="text-sm text-red-600">{authError}</p> : null}
 
                   <div className="space-y-2">
                     <Label htmlFor="signup-name">Full Name</Label>
@@ -310,6 +342,9 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
                 </CardContent>
 
                 <CardFooter className="flex flex-col space-y-4">
+                  {error && (
+                    <p className="text-sm text-red-500 w-full text-center">{error}</p>
+                  )}
                   <Button
                     type="submit"
                     className="w-full bg-red-500 hover:bg-red-600"
@@ -365,8 +400,8 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
         </Card>
 
         {/* Additional Info */}
-        <p className="text-center text-sm text-black mt-6">
-          Protected by enterprise-grade security. Your data is safe with us.
+        <p className="text-center text-sm text-muted-foreground mt-6">
+          Wildfire Prediction Senior Research Project conducted at California State University, Northridge Team Members: Ido Cohen, Alex Hernandez-Abrego, Sannia Jean, Ivan Lopez, Tony Song
         </p>
 
         {/* Continue without login */}
@@ -374,7 +409,7 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
           <Button
             variant="ghost"
             onClick={() => onAuthSuccess?.()}
-            className="text-black hover:text-foreground"
+            className="text-muted-foreground hover:text-foreground"
           >
             Continue without login
           </Button>

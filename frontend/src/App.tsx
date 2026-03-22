@@ -16,6 +16,8 @@ import { RiskMap } from "./components/risk-map";
 import { APIProvider } from '@vis.gl/react-google-maps';
 import { AuthPage } from "./components/auth-page";
 import { NotificationSettings } from "./components/notification-settings";
+import { SettingsPage } from "./components/settings-page";
+import { History } from "./components/history";
 import { Toaster } from "sonner@2.0.3";
 
 type Page =
@@ -29,17 +31,16 @@ type Page =
 
 export default function App() {
   const [currentPage, setCurrentPage] = useState<Page>("dashboard");
-  const [authToken, setAuthToken] = useState<string | null>(() => localStorage.getItem("authToken"));
+  const [authToken, setAuthToken] = useState<string | null>(() => localStorage.getItem("token"));
   const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string;
   const isAuthenticated = Boolean(authToken);
 
-  const onAuthSuccess = (token: string) => {
-    localStorage.setItem("authToken", token);
-    setAuthToken(token);
+  const onAuthSuccess = () => {
+    setAuthToken(localStorage.getItem("token"));
   };
 
   const onSignOut = () => {
-    localStorage.removeItem("authToken");
+    localStorage.removeItem("token");
     setAuthToken(null);
   };
 
@@ -163,15 +164,8 @@ export default function App() {
           {currentPage === "alerts" && (
             <NotificationSettings token={authToken as string} />
           )}
-          {currentPage === "history" && (
-            <div className="text-center py-16">
-              <h2 className="text-2xl font-bold mb-4">History</h2>
-              <p className="text-muted-foreground">Historical data coming soon</p>
-            </div>
-          )}
-          {currentPage === "settings" && (
-            <NotificationSettings token={authToken as string} />
-          )}
+          {currentPage === "history" && <History />}
+          {currentPage === "settings" && <SettingsPage />}
         </main>
 
         {/* Footer */}

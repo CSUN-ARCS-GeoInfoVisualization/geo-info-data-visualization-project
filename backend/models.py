@@ -1,7 +1,7 @@
 from flask_sqlalchemy import SQLAlchemy
 from flask_migrate import Migrate
 from sqlalchemy import func
-from passlib.hash import bcrypt
+from werkzeug.security import generate_password_hash, check_password_hash
 
 
 db = SQLAlchemy()
@@ -25,10 +25,23 @@ class User(db.Model):
 
     @staticmethod
     def hash_password(password: str) -> str:
-        return bcrypt.hash(password)
+        return generate_password_hash(password)
 
     def verify_password(self, password: str) -> bool:
-        return bcrypt.verify(password, self.password_hash)
+        return check_password_hash(self.password_hash, password)
+
+
+class UserLocation(db.Model):
+    __tablename__ = 'user_locations'
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    name = db.Column(db.String(100), nullable=False)
+    address = db.Column(db.String(255), nullable=True)
+    lat = db.Column(db.Float, nullable=False)
+    lon = db.Column(db.Float, nullable=False)
+    created_at = db.Column(db.DateTime, server_default=func.now())
+
+    user = db.relationship('User')
 
 
 class NotificationPreference(db.Model):
