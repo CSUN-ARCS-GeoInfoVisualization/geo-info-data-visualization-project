@@ -9,6 +9,14 @@ import {
 } from "lucide-react";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "./components/ui/dropdown-menu";
 import { Dashboard } from "./components/dashboard";
 import { EvacuationRoutes } from "./components/evacuation-routes";
 import { FireNews } from "./components/fire-news";
@@ -29,8 +37,18 @@ type Page =
   | "history"
   | "settings";
 
+const NAV_LINKS: { page: Page; label: string }[] = [
+  { page: "dashboard", label: "Dashboard" },
+  { page: "evacuation-routes", label: "Evacuation Routes" },
+  { page: "news", label: "News" },
+  { page: "risk-map", label: "Risk Map" },
+  { page: "alerts", label: "Alerts" },
+  { page: "history", label: "History" },
+];
+
 export default function App() {
   const [currentPage, setCurrentPage] = useState<Page>("dashboard");
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [authToken, setAuthToken] = useState<string | null>(() => localStorage.getItem("token"));
   const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string;
   const isAuthenticated = Boolean(authToken);
@@ -42,6 +60,11 @@ export default function App() {
   const onSignOut = () => {
     localStorage.removeItem("token");
     setAuthToken(null);
+  };
+
+  const goToPage = (page: Page) => {
+    setCurrentPage(page);
+    setMobileNavOpen(false);
   };
 
   // Show auth page if not authenticated
@@ -64,60 +87,19 @@ export default function App() {
                   <span className="text-xl font-bold">FireWatch</span>
                 </div>
 
-                <nav className="hidden md:flex space-x-6 ml-8">
-                  <button
-                    onClick={() => setCurrentPage("dashboard")}
-                    className={`text-sm font-medium hover:text-red-500 transition-colors ${
-                      currentPage === "dashboard" ? "text-red-500" : "text-muted-foreground"
-                    }`}
-                  >
-                    Dashboard
-                  </button>
-
-                  <button
-                    onClick={() => setCurrentPage("evacuation-routes")}
-                    className={`text-sm font-medium hover:text-red-500 transition-colors ${
-                      currentPage === "evacuation-routes" ? "text-red-500" : "text-muted-foreground"
-                    }`}
-                  >
-                    Evacuation Routes
-                  </button>
-
-                  <button
-                    onClick={() => setCurrentPage("news")}
-                    className={`text-sm font-medium hover:text-red-500 transition-colors ${
-                      currentPage === "news" ? "text-red-500" : "text-muted-foreground"
-                    }`}
-                  >
-                    News
-                  </button>
-
-                  <button
-                    onClick={() => setCurrentPage("risk-map")}
-                    className={`text-sm font-medium hover:text-red-500 transition-colors ${
-                      currentPage === "risk-map" ? "text-red-500" : "text-muted-foreground"
-                    }`}
-                  >
-                    Risk Map
-                  </button>
-
-                  <button
-                    onClick={() => setCurrentPage("alerts")}
-                    className={`text-sm font-medium hover:text-red-500 transition-colors ${
-                      currentPage === "alerts" ? "text-red-500" : "text-muted-foreground"
-                    }`}
-                  >
-                    Alerts
-                  </button>
-
-                  <button
-                    onClick={() => setCurrentPage("history")}
-                    className={`text-sm font-medium hover:text-red-500 transition-colors ${
-                      currentPage === "history" ? "text-red-500" : "text-muted-foreground"
-                    }`}
-                  >
-                    History
-                  </button>
+                <nav className="ml-8 hidden space-x-6 xl:flex" aria-label="Main">
+                  {NAV_LINKS.map(({ page, label }) => (
+                    <button
+                      key={page}
+                      type="button"
+                      onClick={() => setCurrentPage(page)}
+                      className={`text-sm font-medium hover:text-red-500 transition-colors ${
+                        currentPage === page ? "text-red-500" : "text-muted-foreground"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
                 </nav>
               </div>
 
@@ -147,9 +129,56 @@ export default function App() {
                   <LogOut className="h-4 w-4" />
                 </Button>
 
-                <Button variant="ghost" size="sm" className="md:hidden">
-                  <Menu className="h-4 w-4" />
-                </Button>
+                <DropdownMenu
+                  open={mobileNavOpen}
+                  onOpenChange={setMobileNavOpen}
+                >
+                  <DropdownMenuTrigger asChild>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      className="xl:hidden"
+                      type="button"
+                      aria-label="Open navigation menu"
+                      id="mobile-navigation-trigger"
+                    >
+                      <Menu className="h-4 w-4" />
+                    </Button>
+                  </DropdownMenuTrigger>
+                  <DropdownMenuContent
+                    id="mobile-navigation"
+                    align="end"
+                    sideOffset={8}
+                    className="z-[500] w-56"
+                    aria-label="Site navigation"
+                  >
+                    <DropdownMenuLabel>Navigate</DropdownMenuLabel>
+                    <DropdownMenuSeparator />
+                    {NAV_LINKS.map(({ page, label }) => (
+                      <DropdownMenuItem
+                        key={page}
+                        onSelect={() => goToPage(page)}
+                        className={
+                          currentPage === page ? "text-red-600 font-medium" : undefined
+                        }
+                      >
+                        {label}
+                      </DropdownMenuItem>
+                    ))}
+                    <DropdownMenuSeparator />
+                    <DropdownMenuItem
+                      onSelect={() => goToPage("settings")}
+                      className={
+                        currentPage === "settings"
+                          ? "text-red-600 font-medium"
+                          : undefined
+                      }
+                    >
+                      <Settings className="mr-2 h-4 w-4" />
+                      Settings
+                    </DropdownMenuItem>
+                  </DropdownMenuContent>
+                </DropdownMenu>
               </div>
             </div>
           </div>
