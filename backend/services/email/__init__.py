@@ -19,7 +19,7 @@ def init_email_service(app):
     Register alerts_bp blueprint.
     """
     global _sender, _scheduler
-    from backend.routes.alerts import alerts_bp, init_routes
+    from routes.alerts import alerts_bp, init_routes
 
     config = EmailConfig.from_env()
 
@@ -47,7 +47,7 @@ def init_email_service(app):
             db_url = app.config.get("SQLALCHEMY_DATABASE_URI", "sqlite:///local.db")
             engine = create_engine(db_url)
             if app.config.get("TESTING"):
-                from backend.services.email.models import Base
+                from services.email.models import Base
                 Base.metadata.create_all(engine)
             _cache["maker"] = sessionmaker(bind=engine)
         return _cache["maker"]()

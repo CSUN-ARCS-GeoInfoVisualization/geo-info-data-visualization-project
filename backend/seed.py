@@ -25,7 +25,13 @@ with app.app_context():
         admin_role = Role.query.filter_by(name='Admin').first()
         existing = User.query.filter_by(email=email).first()
         if existing:
-            print('Admin user already exists, skipping.')
+            # Keep existing admin account, but refresh password hash from .env
+            # so legacy/invalid hashes are repaired safely.
+            existing.password_hash = User.hash_password(pwd)
+            if existing.role_id != admin_role.id:
+                existing.role_id = admin_role.id
+            db.session.commit()
+            print('Admin user exists. Password hash refreshed from .env for:', email)
         else:
             user = User(email=email, password_hash=User.hash_password(pwd), role_id=admin_role.id)
             db.session.add(user)

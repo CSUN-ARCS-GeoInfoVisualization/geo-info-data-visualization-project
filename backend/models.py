@@ -28,7 +28,22 @@ class User(db.Model):
         return generate_password_hash(password)
 
     def verify_password(self, password: str) -> bool:
-        return check_password_hash(self.password_hash, password)
+        try:
+            return check_password_hash(self.password_hash, password)
+        except (ValueError, TypeError):
+            # Fall back to legacy bcrypt hashes (e.g., "$2b$...") from older builds.
+            try:
+                from passlib.hash import bcrypt as passlib_bcrypt
+                if passlib_bcrypt.verify(password, self.password_hash):
+                    # Auto-upgrade to current Werkzeug hash format after successful legacy login.
+                    self.password_hash = self.hash_password(password)
+                    db.session.add(self)
+                    db.session.commit()
+                    return True
+            except Exception:
+                # If fallback verification fails for any reason, treat as invalid credentials.
+                pass
+            return False
 
 
 class UserLocation(db.Model):

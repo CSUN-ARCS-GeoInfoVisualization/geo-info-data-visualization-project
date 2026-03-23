@@ -6,14 +6,14 @@ from typing import Optional
 from flask import Blueprint, request, jsonify
 from sqlalchemy.orm import Session
 
-from backend.services.email.models import (
+from services.email.models import (
     UserAlertPreference,
     UserMonitoredArea,
     AlertActivity,
 )
-from backend.services.email.provider import EmailMessage
-from backend.services.email.renderer import EmailRenderer
-from backend.services.email.sender import EmailSender
+from services.email.provider import EmailMessage
+from services.email.renderer import EmailRenderer
+from services.email.sender import EmailSender
 
 alerts_bp = Blueprint("alerts", __name__, url_prefix="/api")
 
