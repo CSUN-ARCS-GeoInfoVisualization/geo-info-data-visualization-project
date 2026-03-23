@@ -130,7 +130,7 @@ source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
 # Fill in SECRET_KEY, JWT_SECRET_KEY, DATABASE_URL, and admin credentials in .env
-flask db upgrade
+python -m flask --app app.py db upgrade
 python seed.py
 python app.py
 ```
