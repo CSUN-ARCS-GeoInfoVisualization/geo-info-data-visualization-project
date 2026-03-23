@@ -57,17 +57,24 @@ This repository contains a working frontend (React + TypeScript) and backend (Fl
 
 The easiest way to run the full stack. Requires [Docker Desktop](https://www.docker.com/products/docker-desktop/).
 
-**1. Create a `.env` file in the project root:**
+**1. Create a `.env` file in the project root with the following variables:**
 
-```bash
-cp .env.example .env
-# Fill in your values
+```env
+DB_USER=wildfire_app
+DB_PASSWORD=your_db_password
+DB_NAME=wildfire_db
+SECRET_KEY=your_secret_key
+JWT_SECRET_KEY=your_jwt_secret_key
+INITIAL_ADMIN_EMAIL=admin@example.com
+INITIAL_ADMIN_PASSWORD=your_admin_password
+VITE_GOOGLE_MAPS_API_KEY=your_google_maps_api_key
 ```
-
-Required variables:
 
 | Variable | Description |
 |---|---|
+| `DB_USER` | Postgres username |
+| `DB_PASSWORD` | Postgres password |
+| `DB_NAME` | Postgres database name |
 | `SECRET_KEY` | Flask session secret (any long random string) |
 | `JWT_SECRET_KEY` | JWT signing secret (any long random string, different from above) |
 | `INITIAL_ADMIN_EMAIL` | Email for the seeded admin account |
