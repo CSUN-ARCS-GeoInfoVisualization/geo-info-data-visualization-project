@@ -315,3 +315,31 @@ def test_news_older_pagination_five_per_page(client, monkeypatch):
     d2 = r2.get_json()
     assert len(d2["items"]) == 1
     assert d2["has_more"] is False
+
+
+def test_best_entry_summary_prefers_rich_content_over_short_summary():
+    """RSS/Atom often put the readable body in content[] while summary is a stub."""
+    ed = {
+        "title": "Wildfire update",
+        "summary": "Short teaser.",
+        "content": [
+            {
+                "type": "text/html",
+                "value": (
+                    "<p>Wildfire crews made progress on the Eagle Fire with 40% containment; "
+                    "evacuation orders were lifted for two zones.</p>"
+                ),
+            }
+        ],
+    }
+    raw = agg_mod._best_entry_summary(ed)
+    plain = agg_mod._strip_html(raw).lower()
+    assert "containment" in plain
+    assert "eagle fire" in plain
+    assert len(plain) > len("short teaser.")
+
+
+def test_best_entry_summary_falls_back_to_description():
+    ed = {"summary": "", "description": "Brush fire near Highway 1, crews responding."}
+    raw = agg_mod._best_entry_summary(ed)
+    assert "brush fire" in agg_mod._strip_html(raw).lower()

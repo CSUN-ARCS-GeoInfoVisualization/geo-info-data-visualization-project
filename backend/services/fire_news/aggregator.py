@@ -91,6 +91,43 @@ def _strip_html(text: str | None) -> str:
     return re.sub(r"\s+", " ", plain).strip()
 
 
+def _coerce_feed_text(value: Any) -> str | None:
+    if isinstance(value, str) and value.strip():
+        return value
+    if isinstance(value, dict):
+        v = value.get("value")
+        if isinstance(v, str) and v.strip():
+            return v
+    return None
+
+
+def _best_entry_summary(ed: dict[str, Any]) -> str:
+    """
+    Pick the longest plain-text candidate among summary, description, their *_detail dicts,
+    and Atom/RSS content[] blocks. Feeds often omit summary but ship the real body in content.
+    """
+    candidates: list[str] = []
+    for key in ("summary", "description"):
+        t = _coerce_feed_text(ed.get(key))
+        if t:
+            candidates.append(t)
+        detail = ed.get(f"{key}_detail")
+        if isinstance(detail, dict):
+            t2 = _coerce_feed_text(detail.get("value"))
+            if t2:
+                candidates.append(t2)
+    content = ed.get("content")
+    if isinstance(content, list):
+        for block in content:
+            if isinstance(block, dict):
+                t = _coerce_feed_text(block.get("value"))
+                if t:
+                    candidates.append(t)
+    if not candidates:
+        return ""
+    return max(candidates, key=lambda s: len(_strip_html(s)))
+
+
 def _parse_dt(value: Any) -> datetime | None:
     if value is None:
         return None
@@ -131,8 +168,9 @@ def is_fire_related(title: str, summary: str, extra: str = "") -> bool:
 
 
 def nws_entry_is_fire_related(entry: dict[str, Any]) -> bool:
-    title = entry.get("title", "") or ""
-    summary = entry.get("summary", "") or ""
+    ed = entry if isinstance(entry, dict) else dict(entry)
+    title = ed.get("title", "") or ""
+    summary = _best_entry_summary(ed)
     b = _blob(title, summary)
     if "red flag" in b or "fire weather" in b or "wildfire" in b:
         return True
@@ -316,7 +354,7 @@ def _fetch_nws_atom() -> list[dict[str, Any]]:
         if not nws_entry_is_fire_related(ed):
             continue
         title = ed.get("title", "") or ""
-        summary = ed.get("summary", "") or ed.get("description", "") or ""
+        summary = _best_entry_summary(ed)
         link = ed.get("link")
         if not link:
             links = ed.get("links")
@@ -366,7 +404,7 @@ def _fetch_rss_feed(
     for entry in parsed.entries:
         ed = entry if isinstance(entry, dict) else dict(entry)
         title = ed.get("title", "") or ""
-        summary = ed.get("summary", "") or ed.get("description", "") or ""
+        summary = _best_entry_summary(ed)
         link = ed.get("link")
         if not link:
             continue

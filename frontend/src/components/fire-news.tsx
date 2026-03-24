@@ -188,11 +188,16 @@ export function FireNews() {
         <Alert className="border-l-4 border-l-red-500 bg-red-50">
           <AlertTriangle className="h-4 w-4" />
           <AlertDescription>
-            <div className="flex items-center justify-between gap-2 flex-wrap">
-              <div>
+            <div className="flex items-start justify-between gap-2 flex-wrap">
+              <div className="min-w-0 flex-1">
                 <strong>Breaking:</strong> {breakingNews[0].title}
+                {breakingNews[0].summary?.trim() ? (
+                  <p className="mt-2 text-sm font-normal text-muted-foreground line-clamp-3">
+                    {breakingNews[0].summary}
+                  </p>
+                ) : null}
               </div>
-              <Badge className="bg-red-100 text-red-800 border-red-200 animate-pulse">Live</Badge>
+              <Badge className="bg-red-100 text-red-800 border-red-200 animate-pulse shrink-0">Live</Badge>
             </div>
           </AlertDescription>
         </Alert>
