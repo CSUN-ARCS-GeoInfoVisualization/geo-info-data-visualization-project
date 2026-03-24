@@ -1,5 +1,5 @@
 {
-      "name": "wildfire-prediction-website-gui",
+      "name": "firescope",
       "version": "0.1.0",
       "private": true,
       "dependencies": {

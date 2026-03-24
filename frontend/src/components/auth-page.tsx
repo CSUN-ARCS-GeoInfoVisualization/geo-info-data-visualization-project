@@ -1,5 +1,6 @@
 import { useState } from "react";
-import { Flame, Mail, Lock, User, Eye, EyeOff } from "lucide-react";
+import { Mail, Lock, User, Eye, EyeOff, Flame } from "lucide-react";
+import { FireScopeBrandMark } from "./firescope-brand";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Label } from "./ui/label";
@@ -99,11 +100,11 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
       <div className="w-full max-w-md">
         {/* Logo and Title */}
         <div className="text-center mb-8">
-          <div className="flex items-center justify-center space-x-2 mb-4">
-            <Flame className="h-12 w-12 text-red-500" />
-            <span className="text-3xl font-bold">Geo-Info-Data-Visualization-Project</span>
+          <div className="flex justify-center mb-4">
+            <FireScopeBrandMark height={72} variant="plain" className="mx-auto max-w-full" />
           </div>
-          <p className="text-muted-foreground">
+          <p className="text-muted-foreground flex items-center justify-center gap-2">
+            <Flame className="h-4 w-4 shrink-0 text-orange-500" aria-hidden />
             Wildfire risk prediction and monitoring
           </p>
         </div>

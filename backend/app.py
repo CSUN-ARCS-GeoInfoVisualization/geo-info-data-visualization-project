@@ -11,6 +11,7 @@ from routes.me import me_bp
 from routes.notifications import notifications_bp
 from routes.predict import predict_bp
 from routes.locations import locations_bp
+from routes.news import news_bp
 
 
 def create_app(config_class=Config):
@@ -31,6 +32,7 @@ def create_app(config_class=Config):
     app.register_blueprint(notifications_bp, url_prefix='/api')
     app.register_blueprint(predict_bp, url_prefix='/api')
     app.register_blueprint(locations_bp, url_prefix='/api')
+    app.register_blueprint(news_bp, url_prefix='/api')
 
     # Initialize email service if RESEND_API_KEY is configured
     if os.getenv('RESEND_API_KEY'):

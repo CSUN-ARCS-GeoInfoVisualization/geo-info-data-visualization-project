@@ -85,7 +85,7 @@ class EmailSender:
             )
             msg = EmailMessage(
                 to=email_addr,
-                subject=f"FireWatch Alert: {area_name} - {risk_score:.0f}% Risk",
+                subject=f"FireScope Alert: {area_name} - {risk_score:.0f}% Risk",
                 html_body=html,
                 text_body=text,
             )
@@ -191,7 +191,7 @@ class EmailSender:
                 html, text = self.renderer.render_daily_digest(date_str, area_data)
                 msg = EmailMessage(
                     to=email_addr,
-                    subject=f"FireWatch Daily Digest - {date_str}",
+                    subject=f"FireScope Daily Digest - {date_str}",
                     html_body=html,
                     text_body=text,
                 )
@@ -235,7 +235,7 @@ class EmailSender:
                 )
                 msg = EmailMessage(
                     to=email_addr,
-                    subject=f"FireWatch Weekly Digest - {week_range}",
+                    subject=f"FireScope Weekly Digest - {week_range}",
                     html_body=html,
                     text_body=text,
                 )
