@@ -7,6 +7,7 @@ import { ActiveAlerts } from "./active-alerts";
 import { GoogleRiskMap } from "./GoogleRiskMap";
 import { SavedLocationsWidget } from "./saved-locations-widget";
 import { FIRMSMap } from "./FIRMSMap";
+import { NewsTicker } from "./news-ticker";
 import { apiFetch } from "../services/api";
 
 interface DashboardProps {
@@ -119,6 +120,9 @@ export function Dashboard({ onAddLocation }: DashboardProps) {
 
   return (
     <div className="space-y-8">
+      {/* News Ticker */}
+      <NewsTicker />
+
       {/* Welcome Header */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>

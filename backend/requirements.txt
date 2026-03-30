@@ -13,3 +13,4 @@ scikit-learn
 joblib
 resend>=2.0.0
 APScheduler>=3.10.0
+feedparser>=6.0.0
