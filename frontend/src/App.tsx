@@ -50,16 +50,25 @@ export default function App() {
   const [currentPage, setCurrentPage] = useState<Page>("dashboard");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [authToken, setAuthToken] = useState<string | null>(() => localStorage.getItem("token"));
+  const [isGuest, setIsGuest] = useState(() => sessionStorage.getItem("guest") === "true");
   const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string;
-  const isAuthenticated = Boolean(authToken);
+  const isAuthenticated = Boolean(authToken) || isGuest;
 
   const onAuthSuccess = () => {
-    setAuthToken(localStorage.getItem("token"));
+    const token = localStorage.getItem("token");
+    if (token) {
+      setAuthToken(token);
+    } else {
+      sessionStorage.setItem("guest", "true");
+      setIsGuest(true);
+    }
   };
 
   const onSignOut = () => {
     localStorage.removeItem("token");
+    sessionStorage.removeItem("guest");
     setAuthToken(null);
+    setIsGuest(false);
   };
 
   const goToPage = (page: Page) => {
@@ -186,7 +195,7 @@ export default function App() {
 
         {/* Main Content */}
         <main className="container mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          {currentPage === "dashboard" && <Dashboard />}
+          {currentPage === "dashboard" && <Dashboard onAddLocation={() => setCurrentPage("settings")} />}
           {currentPage === "evacuation-routes" && <EvacuationRoutes />}
           {currentPage === "news" && <FireNews />}
           {currentPage === "risk-map" && <RiskMap />}

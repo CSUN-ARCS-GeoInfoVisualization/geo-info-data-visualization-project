@@ -2,9 +2,6 @@ import { useEffect, useState } from "react";
 import { Thermometer, Droplets, Wind, Eye, MapPin } from "lucide-react";
 import { RiskLevelBadge, RiskLevel } from "./risk-level-badge";
 import { ConditionCard } from "./condition-card";
-import { RiskChart } from "./risk-chart";
-import { ActiveAlerts } from "./active-alerts";
-import { GoogleRiskMap } from "./GoogleRiskMap";
 import { SavedLocationsWidget } from "./saved-locations-widget";
 import { FIRMSMap } from "./FIRMSMap";
 import { apiFetch } from "../services/api";
@@ -118,11 +115,11 @@ export function Dashboard({ onAddLocation }: DashboardProps) {
   const selectedLocation = locations.find((l) => l.id === selectedId) ?? null;
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
       {/* Welcome Header */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
-          <h1 className="text-2xl font-bold">Dashboard</h1>
+          <h1 className="text-2xl font-bold font-heading">Dashboard</h1>
           {email && (
             <p className="text-sm text-muted-foreground mt-1">
               Welcome back, <span className="font-medium text-foreground">{email}</span>
@@ -139,96 +136,94 @@ export function Dashboard({ onAddLocation }: DashboardProps) {
         </div>
       </div>
 
-      {/* Current Conditions */}
-      <div>
-        <div className="flex items-center justify-between mb-3">
-          <p className="text-xs text-muted-foreground flex items-center gap-1">
-            <MapPin className="h-3 w-3" />
-            {locations.length === 0
-              ? "No saved locations — add one in Settings"
-              : selectedLocation
-              ? `Current conditions · ${selectedLocation.name}${selectedLocation.address ? ` · ${selectedLocation.address}` : ""}`
-              : "Loading…"}
-          </p>
+      {/* Map (left) + Side panel (right) */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6" style={{ alignItems: 'stretch' }}>
 
-          {locations.length > 1 && (
-            <select
-              value={selectedId ?? ""}
-              onChange={(e) => setSelectedId(Number(e.target.value))}
-              className="text-xs border rounded-md px-2 py-1 bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
-            >
-              {locations.map((loc) => (
-                <option key={loc.id} value={loc.id}>
-                  {loc.name}
-                </option>
-              ))}
-            </select>
+        {/* Active Fires map — takes 2/3 */}
+        <div className="lg:col-span-2">
+          <FIRMSMap />
+        </div>
+
+        {/* Right panel: location selector + weather cards + saved locations */}
+        <div className="flex flex-col gap-4">
+
+          {/* Location header */}
+          <div className="flex items-center justify-between">
+            <p className="text-xs text-muted-foreground flex items-center gap-1">
+              <MapPin className="h-3 w-3" />
+              {locations.length === 0
+                ? "No saved locations"
+                : selectedLocation
+                ? selectedLocation.name
+                : "Loading…"}
+            </p>
+            {locations.length > 1 && (
+              <select
+                value={selectedId ?? ""}
+                onChange={(e) => setSelectedId(Number(e.target.value))}
+                className="text-xs border rounded-md px-2 py-1 bg-background text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+              >
+                {locations.map((loc) => (
+                  <option key={loc.id} value={loc.id}>
+                    {loc.name}
+                  </option>
+                ))}
+              </select>
+            )}
+          </div>
+
+          {/* 2×2 weather cards */}
+          <div className="grid grid-cols-2 gap-3">
+            <ConditionCard
+              title="Temperature"
+              value={weatherLoading ? "…" : (weather?.temperature ?? "—")}
+              unit="°F"
+              icon={Thermometer}
+              trend="stable"
+              trendValue={weather ? "Live" : weatherLoading ? "Loading…" : "No location"}
+            />
+            <ConditionCard
+              title="Humidity"
+              value={weatherLoading ? "…" : (weather?.humidity ?? "—")}
+              unit="%"
+              icon={Droplets}
+              trend="stable"
+              trendValue={weather ? "Live" : weatherLoading ? "Loading…" : "No location"}
+            />
+            <ConditionCard
+              title="Wind Speed"
+              value={weatherLoading ? "…" : (weather?.windSpeed ?? "—")}
+              unit="mph"
+              icon={Wind}
+              trend="up"
+              trendValue={weather ? `Gusts ${weather.windGusts} mph` : weatherLoading ? "Loading…" : "No location"}
+            />
+            <ConditionCard
+              title="Visibility"
+              value={weatherLoading ? "…" : (weather?.visibility ?? "—")}
+              unit="mi"
+              icon={Eye}
+              trend="stable"
+              trendValue={weather ? "Live" : weatherLoading ? "Loading…" : "No location"}
+            />
+          </div>
+
+          {locations.length === 0 && (
+            <p className="text-xs text-muted-foreground">
+              <button onClick={onAddLocation} className="text-red-500 hover:underline font-medium">
+                Add a location
+              </button>{" "}
+              to see live weather conditions.
+            </p>
           )}
-        </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
-          <ConditionCard
-            title="Temperature"
-            value={weatherLoading ? "…" : (weather?.temperature ?? "—")}
-            unit="°F"
-            icon={Thermometer}
-            trend="stable"
-            trendValue={weather ? "Live data" : weatherLoading ? "Loading…" : "No location"}
-          />
-          <ConditionCard
-            title="Humidity"
-            value={weatherLoading ? "…" : (weather?.humidity ?? "—")}
-            unit="%"
-            icon={Droplets}
-            trend="stable"
-            trendValue={weather ? "Live data" : weatherLoading ? "Loading…" : "No location"}
-          />
-          <ConditionCard
-            title="Wind Speed"
-            value={weatherLoading ? "…" : (weather?.windSpeed ?? "—")}
-            unit="mph"
-            icon={Wind}
-            trend="up"
-            trendValue={weather ? `Gusts up to ${weather.windGusts} mph` : weatherLoading ? "Loading…" : "No location"}
-          />
-          <ConditionCard
-            title="Visibility"
-            value={weatherLoading ? "…" : (weather?.visibility ?? "—")}
-            unit="miles"
-            icon={Eye}
-            trend="stable"
-            trendValue={weather ? "Live data" : weatherLoading ? "Loading…" : "No location"}
-          />
+          {/* Saved locations fills remaining space */}
+          <div className="flex-1">
+            <SavedLocationsWidget onAddLocation={onAddLocation} />
+          </div>
         </div>
-
-        {locations.length === 0 && (
-          <p className="text-xs text-muted-foreground mt-3">
-            <button onClick={onAddLocation} className="text-red-500 hover:underline">
-              Add a location
-            </button>{" "}
-            to see live weather conditions.
-          </p>
-        )}
       </div>
 
-      {/* Map + My Locations */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2">
-          <GoogleRiskMap height="h-[420px]" />
-        </div>
-        <SavedLocationsWidget onAddLocation={onAddLocation} />
-      </div>
-
-      {/* Active Fires (NASA FIRMS) */}
-      <FIRMSMap />
-
-      {/* 7-Day Forecast + Active Alerts */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2">
-          <RiskChart title="7-Day Risk Forecast" type="area" />
-        </div>
-        <ActiveAlerts />
-      </div>
     </div>
   );
 }
