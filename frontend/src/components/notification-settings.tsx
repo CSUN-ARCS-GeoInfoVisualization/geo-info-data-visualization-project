@@ -292,7 +292,7 @@ export function NotificationSettings({ token }: NotificationSettingsProps) {
                     isSelected
                       ? `${tier.bg} ${tier.border} shadow-sm`
                       : isAbove
-                        ? `${tier.bg} border-transparent opacity-80`
+                        ? `${tier.bg} ${tier.border} opacity-80`
                         : "border-transparent bg-muted/20 opacity-50"
                   }`}
                 >
@@ -414,8 +414,9 @@ export function NotificationSettings({ token }: NotificationSettingsProps) {
                 await onSubscribe();
                 if (isDirty) await onSave();
               }}
-              disabled={saving || !contactEmail.trim()}
-              className="bg-gradient-to-r from-red-500 to-orange-500 hover:from-red-600 hover:to-orange-600 shadow-md shadow-red-500/20 transition-all duration-200 min-w-[140px]"
+              disabled={saving}
+              variant="ghost"
+              className="bg-gradient-to-r from-red-500 to-orange-500 hover:from-red-600 hover:to-orange-600 text-white font-medium shadow-md shadow-red-500/20 transition-all duration-200 min-w-[140px]"
             >
               {saving ? (
                 <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
