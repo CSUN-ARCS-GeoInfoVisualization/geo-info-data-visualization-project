@@ -91,11 +91,11 @@ export default function App() {
                     }))}
                     activeIndex={NAV_LINKS.findIndex((l) => l.page === currentPage)}
                     onItemClick={(i) => setCurrentPage(NAV_LINKS[i].page)}
-                    particleCount={12}
-                    particleDistances={[70, 8]}
-                    particleR={80}
-                    animationTime={500}
-                    timeVariance={250}
+                    particleCount={8}
+                    particleDistances={[40, 6]}
+                    particleR={50}
+                    animationTime={350}
+                    timeVariance={150}
                     colors={[1, 2, 3, 1, 2, 3, 1, 4]}
                   />
                 </div>
