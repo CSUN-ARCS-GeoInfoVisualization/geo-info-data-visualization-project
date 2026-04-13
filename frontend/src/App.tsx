@@ -1,5 +1,6 @@
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { Bell, Menu, Settings, Search, LogOut } from "lucide-react";
+import { GooeyNav } from "./components/GooeyNav";
 import { FireScopeBrandMark } from "./components/firescope-brand";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
@@ -82,20 +83,22 @@ export default function App() {
                   className="min-w-0 shrink-0"
                 />
 
-                <nav className="ml-8 hidden space-x-6 xl:flex" aria-label="Main">
-                  {NAV_LINKS.map(({ page, label }) => (
-                    <button
-                      key={page}
-                      type="button"
-                      onClick={() => setCurrentPage(page)}
-                      className={`text-sm font-medium hover:text-red-500 transition-colors ${
-                        currentPage === page ? "text-red-500" : "text-muted-foreground"
-                      }`}
-                    >
-                      {label}
-                    </button>
-                  ))}
-                </nav>
+                <div className="ml-8 hidden xl:block" aria-label="Main">
+                  <GooeyNav
+                    items={NAV_LINKS.map(({ page, label }) => ({
+                      label,
+                      onClick: () => setCurrentPage(page),
+                    }))}
+                    activeIndex={NAV_LINKS.findIndex((l) => l.page === currentPage)}
+                    onItemClick={(i) => setCurrentPage(NAV_LINKS[i].page)}
+                    particleCount={12}
+                    particleDistances={[70, 8]}
+                    particleR={80}
+                    animationTime={500}
+                    timeVariance={250}
+                    colors={[1, 2, 3, 1, 2, 3, 1, 4]}
+                  />
+                </div>
               </div>
 
               <div className="flex items-center space-x-4">
