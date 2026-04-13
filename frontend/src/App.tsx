@@ -83,7 +83,7 @@ export default function App() {
                   className="min-w-0 shrink-0"
                 />
 
-                <div className="ml-8 hidden xl:block" aria-label="Main">
+                <div className="ml-8 hidden md:block" aria-label="Main">
                   <GooeyNav
                     items={NAV_LINKS.map(({ page, label }) => ({
                       label,
@@ -135,7 +135,7 @@ export default function App() {
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="xl:hidden"
+                      className="md:hidden"
                       type="button"
                       aria-label="Open navigation menu"
                       id="mobile-navigation-trigger"
