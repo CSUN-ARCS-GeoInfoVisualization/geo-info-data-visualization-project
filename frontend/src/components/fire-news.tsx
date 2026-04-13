@@ -30,6 +30,45 @@ import {
   type TabCategory,
 } from "../services/newsApi";
 
+function daysAgo(n: number): string {
+  return new Date(Date.now() - n * 24 * 60 * 60 * 1000).toISOString();
+}
+
+const FALLBACK_NEWS: NewsArticleDTO[] = [
+  {
+    id: "fb-1", title: "Red Flag Warning Issued for Southern California", summary: "The National Weather Service has issued a Red Flag Warning for Los Angeles, Ventura, and Santa Barbara counties due to strong Santa Ana winds and critically low humidity. Residents in fire-prone areas are urged to stay alert and have evacuation plans ready.",
+    url: "https://www.weather.gov/alerts/", published_at: daysAgo(0), category: "breaking", source_bucket: "nws", source_label: "NWS Los Angeles", is_breaking: true,
+  },
+  {
+    id: "fb-2", title: "CAL FIRE Reports 95% Containment on Creek Fire", summary: "Firefighters have achieved 95% containment on the Creek Fire in Fresno County. The fire burned approximately 3,200 acres before crews established full perimeter control. Evacuation orders have been lifted for most areas.",
+    url: "https://www.fire.ca.gov/incidents/", published_at: daysAgo(1), category: "updates", source_bucket: "cal_fire", source_label: "CAL FIRE", is_breaking: false,
+  },
+  {
+    id: "fb-3", title: "New Evacuation Routes Published for San Fernando Valley", summary: "Los Angeles Fire Department has updated evacuation route maps for the San Fernando Valley following recent wildfire activity. Residents can now access interactive maps showing primary and alternative routes.",
+    url: "https://lafd.org/", published_at: daysAgo(2), category: "safety", source_bucket: "local_fire", source_label: "LAFD", is_breaking: false,
+  },
+  {
+    id: "fb-4", title: "Fire Season Outlook: Above-Average Risk Through October", summary: "NOAA's seasonal outlook predicts above-average wildfire risk for California through October due to persistent drought conditions and forecast wind events. Agencies are pre-positioning resources across high-risk areas.",
+    url: "https://www.weather.gov/alerts/", published_at: daysAgo(3), category: "research", source_bucket: "nws", source_label: "NOAA", is_breaking: false,
+  },
+  {
+    id: "fb-5", title: "Brush Fire Contained in Malibu Hills", summary: "A 50-acre brush fire in the Malibu Hills area has been fully contained. No structures were damaged and no injuries were reported. LA County Fire credits early air response for the quick containment.",
+    url: "https://www.fire.ca.gov/incidents/", published_at: daysAgo(5), category: "updates", source_bucket: "cal_fire", source_label: "CAL FIRE", is_breaking: false,
+  },
+  {
+    id: "fb-6", title: "Cal OES Activates Emergency Operations for Heat Wave", summary: "The California Governor's Office of Emergency Services has activated its State Operations Center in response to an extreme heat wave affecting inland valleys. Cooling centers have been opened across affected counties.",
+    url: "https://www.news.caloes.ca.gov/", published_at: daysAgo(8), category: "breaking", source_bucket: "emergency", source_label: "Cal OES", is_breaking: false,
+  },
+  {
+    id: "fb-7", title: "USFS Study: Post-Fire Vegetation Recovery in Sierra Nevada", summary: "A new U.S. Forest Service study examines vegetation recovery patterns in areas burned during the 2020-2023 fire seasons. Findings suggest that managed forests show significantly faster recovery than unmanaged areas.",
+    url: "https://www.fs.usda.gov/", published_at: daysAgo(12), category: "research", source_bucket: "nws", source_label: "USFS Research", is_breaking: false,
+  },
+  {
+    id: "fb-8", title: "Defensible Space Inspections Begin in High-Risk Zones", summary: "Fire departments across Southern California have begun annual defensible space inspections. Property owners in Very High Fire Hazard Severity Zones must maintain 100 feet of defensible space around structures.",
+    url: "https://lafd.org/", published_at: daysAgo(15), category: "safety", source_bucket: "local_fire", source_label: "LA County Fire", is_breaking: false,
+  },
+];
+
 function formatRelativeTime(iso: string): string {
   const then = new Date(iso).getTime();
   const now = Date.now();
@@ -64,17 +103,22 @@ export function FireNews() {
   const [loadingOlder, setLoadingOlder] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  const [usingFallback, setUsingFallback] = useState(false);
+
   const loadRecent = useCallback(async () => {
     setLoadingRecent(true);
     setError(null);
     setItems([]);
+    setUsingFallback(false);
     try {
       const data = await fetchNews("recent", selectedCategory, { offset: 0 });
       setItems(data.items);
       setHasMoreToLoad(data.has_more);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Failed to load news");
-      setItems([]);
+    } catch {
+      setUsingFallback(true);
+      setItems(FALLBACK_NEWS.filter(
+        (a) => selectedCategory === "all" || a.category === selectedCategory
+      ));
       setHasMoreToLoad(false);
     } finally {
       setLoadingRecent(false);
@@ -279,7 +323,17 @@ export function FireNews() {
         </Alert>
       )}
 
-      {error && (
+      {usingFallback && (
+        <Alert className="border-amber-200 bg-amber-50">
+          <AlertTriangle className="h-4 w-4 text-amber-600" />
+          <AlertDescription className="text-amber-800">
+            <strong>Showing sample data.</strong> The live news backend is not connected.
+            Once the API server is running, real-time fire news will appear here automatically.
+          </AlertDescription>
+        </Alert>
+      )}
+
+      {error && !usingFallback && (
         <Alert variant="destructive">
           <AlertDescription>{error}</AlertDescription>
         </Alert>
