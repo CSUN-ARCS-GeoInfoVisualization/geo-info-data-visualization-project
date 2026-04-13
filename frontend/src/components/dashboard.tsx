@@ -63,6 +63,14 @@ function toRiskLevel(apiLevel: string): RiskLevel {
   return map[apiLevel] ?? "low";
 }
 
+const DEFAULT_LOCATION: SavedLocation = {
+  id: -1,
+  name: "Los Angeles",
+  address: "Los Angeles, CA",
+  lat: 34.0522,
+  lon: -118.2437,
+};
+
 export function Dashboard({ onAddLocation }: DashboardProps) {
   const [email, setEmail] = useState<string | null>(null);
   const [locations, setLocations] = useState<SavedLocation[]>([]);
@@ -70,6 +78,7 @@ export function Dashboard({ onAddLocation }: DashboardProps) {
   const [weather, setWeather] = useState<WeatherData | null>(null);
   const [weatherLoading, setWeatherLoading] = useState(false);
   const [riskLevel, setRiskLevel] = useState<RiskLevel | null>(null);
+  const [usingDefault, setUsingDefault] = useState(false);
 
   useEffect(() => {
     apiFetch("/me")
@@ -82,11 +91,26 @@ export function Dashboard({ onAddLocation }: DashboardProps) {
       .then(async (r) => {
         if (r.ok) {
           const data: SavedLocation[] = await r.json();
-          setLocations(data);
-          if (data.length > 0) setSelectedId(data[0].id);
+          if (data.length > 0) {
+            setLocations(data);
+            setSelectedId(data[0].id);
+            setUsingDefault(false);
+          } else {
+            setLocations([DEFAULT_LOCATION]);
+            setSelectedId(DEFAULT_LOCATION.id);
+            setUsingDefault(true);
+          }
+        } else {
+          setLocations([DEFAULT_LOCATION]);
+          setSelectedId(DEFAULT_LOCATION.id);
+          setUsingDefault(true);
         }
       })
-      .catch(() => {});
+      .catch(() => {
+        setLocations([DEFAULT_LOCATION]);
+        setSelectedId(DEFAULT_LOCATION.id);
+        setUsingDefault(true);
+      });
   }, []);
 
   // Fetch weather and risk whenever the selected location changes
@@ -122,6 +146,16 @@ export function Dashboard({ onAddLocation }: DashboardProps) {
     <div className="space-y-8">
       {/* News Ticker */}
       <NewsTicker />
+
+      {/* Default location hint */}
+      {usingDefault && (
+        <div className="rounded-lg bg-blue-50 border border-blue-200 px-4 py-3 flex items-center gap-2">
+          <MapPin className="h-4 w-4 text-blue-500 shrink-0" />
+          <p className="text-sm text-blue-800">
+            Showing data for <strong>Los Angeles</strong> (default). Save a location to see personalized weather and fire risk for your area.
+          </p>
+        </div>
+      )}
 
       {/* Welcome Header */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">

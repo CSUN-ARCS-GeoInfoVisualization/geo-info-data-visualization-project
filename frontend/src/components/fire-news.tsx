@@ -383,7 +383,7 @@ export function FireNews() {
             <Card>
               <CardContent className="pt-6 text-center">
                 <Newspaper className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-                <h3 className="text-lg font-medium mb-4">No fire news in the last 90 days</h3>
+                <h3 className="text-lg font-medium mb-4">No fire news in the last 30 days</h3>
               </CardContent>
             </Card>
           )}

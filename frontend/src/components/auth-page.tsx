@@ -314,7 +314,8 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
                     )}
                     <Button
                       type="submit"
-                      className="w-full h-11 bg-gradient-to-r from-red-500 to-orange-500 hover:from-red-600 hover:to-orange-600 shadow-lg shadow-red-500/20 hover:shadow-red-500/30 transition-all duration-200"
+                      variant="ghost"
+                      className="w-full h-11 bg-gradient-to-r from-red-500 to-orange-500 hover:from-red-600 hover:to-orange-600 text-white font-medium shadow-lg shadow-red-500/20 hover:shadow-red-500/30 transition-all duration-200"
                       disabled={isLoading}
                     >
                       {isLoading ? (
@@ -484,7 +485,8 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
                     )}
                     <Button
                       type="submit"
-                      className="w-full h-11 bg-gradient-to-r from-red-500 to-orange-500 hover:from-red-600 hover:to-orange-600 shadow-lg shadow-red-500/20 hover:shadow-red-500/30 transition-all duration-200"
+                      variant="ghost"
+                      className="w-full h-11 bg-gradient-to-r from-red-500 to-orange-500 hover:from-red-600 hover:to-orange-600 text-white font-medium shadow-lg shadow-red-500/20 hover:shadow-red-500/30 transition-all duration-200"
                       disabled={isLoading}
                     >
                       {isLoading ? (
