@@ -146,7 +146,83 @@ export function FireNews() {
     );
   };
 
-  const breakingNews = items.filter((article) => article.is_breaking);
+  const now = Date.now();
+  const SEVEN_DAYS = 7 * 24 * 60 * 60 * 1000;
+
+  const breakingNews = filteredArticles.filter((a) => a.is_breaking);
+
+  const importantRecent = filteredArticles.filter((a) => {
+    const age = now - new Date(a.published_at).getTime();
+    return age < SEVEN_DAYS && (a.is_breaking || a.category === "breaking");
+  });
+
+  const last7Days = filteredArticles.filter((a) => {
+    const age = now - new Date(a.published_at).getTime();
+    return age < SEVEN_DAYS && !a.is_breaking && a.category !== "breaking";
+  });
+
+  const olderArticles = filteredArticles.filter((a) => {
+    const age = now - new Date(a.published_at).getTime();
+    return age >= SEVEN_DAYS;
+  });
+
+  const [showOlder, setShowOlder] = useState(false);
+
+  const renderArticleCard = (article: NewsArticleDTO) => {
+    const bucket = SOURCE_BUCKET_COPY[article.source_bucket] ?? SOURCE_BUCKET_COPY.emergency;
+    return (
+      <Card key={article.id} className={article.is_breaking ? "border-red-200 bg-red-50/30" : ""}>
+        <CardHeader>
+          <div className="flex items-start justify-between gap-4">
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center gap-2 mb-2 flex-wrap">
+                {getCategoryBadge(article.category)}
+                {article.is_fallback && (
+                  <Badge variant="outline" className="text-xs border-amber-300 bg-amber-50">Web discovery</Badge>
+                )}
+                {article.is_breaking && (
+                  <Badge className="bg-red-100 text-red-800 border-red-200 animate-pulse">Breaking</Badge>
+                )}
+              </div>
+              <CardTitle className="text-xl mb-2">{article.title}</CardTitle>
+              <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-4 text-sm text-muted-foreground">
+                <div className="flex items-center gap-1">
+                  <Clock className="h-4 w-4 shrink-0" />
+                  {formatRelativeTime(article.published_at)}
+                </div>
+                <span className="hidden sm:inline">&bull;</span>
+                <span>{bucket.title} — {article.source_label}</span>
+              </div>
+              <p className="text-xs text-muted-foreground mt-1">{bucket.subtitle}</p>
+            </div>
+          </div>
+        </CardHeader>
+        <CardContent>
+          <p className="text-muted-foreground mb-4">{article.summary}</p>
+          <div className="flex items-center justify-between flex-wrap gap-2">
+            <Badge variant="secondary" className="text-xs">
+              {article.source_bucket === "cal_fire" ? "State agency"
+                : article.source_bucket === "nws" ? "Weather"
+                : article.source_bucket === "emergency" ? "Emergency"
+                : article.source_bucket === "web_discovery" ? "Search"
+                : "Local FD"}
+            </Badge>
+            {article.url ? (
+              <Button variant="outline" size="sm" asChild>
+                <a href={article.url} target="_blank" rel="noopener noreferrer">
+                  <ExternalLink className="h-4 w-4 mr-2 inline" />Source
+                </a>
+              </Button>
+            ) : (
+              <Button variant="outline" size="sm" type="button" disabled>
+                <ExternalLink className="h-4 w-4 mr-2 inline" />Source
+              </Button>
+            )}
+          </div>
+        </CardContent>
+      </Card>
+    );
+  };
 
   const emptyAfterFilters =
     !loadingRecent && filteredArticles.length === 0 && items.length > 0;
@@ -160,8 +236,8 @@ export function FireNews() {
         <div>
           <h1 className="text-3xl font-bold mb-2">Fire News & Updates</h1>
           <p className="text-muted-foreground">
-            Articles from the last 90 days: official feeds plus web discovery when configured. New
-            URLs are saved for training; duplicates are skipped. Use Load more for the next page.
+            Breaking events and important alerts shown first, then the last 7 days of updates.
+            Tap "Load last 30 days" for older articles.
           </p>
         </div>
         <DropdownMenu>
@@ -268,104 +344,90 @@ export function FireNews() {
             </Card>
           )}
 
-          {showArticleList &&
-            filteredArticles.map((article) => {
-              const bucket =
-                SOURCE_BUCKET_COPY[article.source_bucket] ?? SOURCE_BUCKET_COPY.emergency;
-              return (
-                <Card
-                  key={article.id}
-                  className={article.is_breaking ? "border-red-200 bg-red-50/30" : ""}
-                >
-                  <CardHeader>
-                    <div className="flex items-start justify-between gap-4">
-                      <div className="flex-1 min-w-0">
-                        <div className="flex items-center gap-2 mb-2 flex-wrap">
-                          {getCategoryBadge(article.category)}
-                          {article.is_fallback && (
-                            <Badge variant="outline" className="text-xs border-amber-300 bg-amber-50">
-                              Web discovery
-                            </Badge>
-                          )}
-                          {article.is_breaking && (
-                            <Badge className="bg-red-100 text-red-800 border-red-200 animate-pulse">
-                              Breaking
-                            </Badge>
-                          )}
-                        </div>
-                        <CardTitle className="text-xl mb-2">{article.title}</CardTitle>
-                        <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-4 text-sm text-muted-foreground">
-                          <div className="flex items-center gap-1">
-                            <Clock className="h-4 w-4 shrink-0" />
-                            {formatRelativeTime(article.published_at)}
-                          </div>
-                          <span className="hidden sm:inline">•</span>
-                          <span>
-                            {bucket.title} — {article.source_label}
-                          </span>
-                        </div>
-                        <p className="text-xs text-muted-foreground mt-1">{bucket.subtitle}</p>
-                      </div>
-                    </div>
-                  </CardHeader>
-                  <CardContent>
-                    <p className="text-muted-foreground mb-4">{article.summary}</p>
+          {showArticleList && importantRecent.length > 0 && (
+            <div className="space-y-4">
+              <div className="flex items-center gap-2">
+                <div className="rounded-lg bg-red-100 p-1.5">
+                  <AlertTriangle className="h-4 w-4 text-red-600" />
+                </div>
+                <h2 className="text-lg font-semibold">Important & Breaking</h2>
+                <Badge variant="outline" className="bg-red-50 text-red-700 border-red-200 text-xs">
+                  {importantRecent.length}
+                </Badge>
+              </div>
+              {importantRecent.map((article) => renderArticleCard(article))}
+            </div>
+          )}
 
-                    <div className="flex items-center justify-between flex-wrap gap-2">
-                      <div className="flex flex-wrap gap-1">
-                        <Badge variant="secondary" className="text-xs">
-                          {article.source_bucket === "cal_fire"
-                            ? "State agency"
-                            : article.source_bucket === "nws"
-                              ? "Weather"
-                              : article.source_bucket === "emergency"
-                                ? "Emergency"
-                                : article.source_bucket === "web_discovery"
-                                  ? "Search"
-                                  : "Local FD"}
-                        </Badge>
-                      </div>
-                      {article.url ? (
-                        <Button variant="outline" size="sm" asChild>
-                          <a href={article.url} target="_blank" rel="noopener noreferrer">
-                            <ExternalLink className="h-4 w-4 mr-2 inline" />
-                            Source
-                          </a>
-                        </Button>
-                      ) : (
-                        <Button variant="outline" size="sm" type="button" disabled>
-                          <ExternalLink className="h-4 w-4 mr-2 inline" />
-                          Source
-                        </Button>
-                      )}
-                    </div>
-                  </CardContent>
-                </Card>
-              );
-            })}
+          {showArticleList && last7Days.length > 0 && (
+            <div className="space-y-4">
+              <div className="flex items-center gap-2">
+                <div className="rounded-lg bg-blue-100 p-1.5">
+                  <Clock className="h-4 w-4 text-blue-600" />
+                </div>
+                <h2 className="text-lg font-semibold">Last 7 Days</h2>
+                <Badge variant="outline" className="text-xs">
+                  {last7Days.length}
+                </Badge>
+              </div>
+              {last7Days.map((article) => renderArticleCard(article))}
+            </div>
+          )}
 
-          {showArticleList && (
-            <div className="text-center pt-2">
-              <Button
-                variant="outline"
-                type="button"
-                onClick={() => void loadOlder()}
-                disabled={loadingOlder || !hasMoreToLoad}
-              >
-                {loadingOlder ? (
-                  <>
-                    <Loader2 className="h-4 w-4 mr-2 animate-spin inline" />
-                    Loading…
-                  </>
-                ) : (
-                  "Load more"
-                )}
-              </Button>
-              <p className="text-xs text-muted-foreground mt-2 max-w-md mx-auto">
-                {hasMoreToLoad
-                  ? "Loads the next page of items (same 90-day pool: feeds + web discovery)."
-                  : "No more articles in this category for the last 90 days."}
-              </p>
+          {showArticleList && (olderArticles.length > 0 || hasMoreToLoad) && (
+            <div className="space-y-4">
+              {!showOlder ? (
+                <div className="text-center py-6 border rounded-xl bg-muted/30">
+                  <p className="text-sm text-muted-foreground mb-3">
+                    {olderArticles.length > 0
+                      ? `${olderArticles.length} older article${olderArticles.length === 1 ? "" : "s"} from the last 30 days`
+                      : "Load articles from the last 30 days"}
+                  </p>
+                  <Button
+                    variant="outline"
+                    type="button"
+                    onClick={() => {
+                      setShowOlder(true);
+                      if (hasMoreToLoad) void loadOlder();
+                    }}
+                  >
+                    <Clock className="h-4 w-4 mr-2" />
+                    Load last 30 days
+                  </Button>
+                </div>
+              ) : (
+                <>
+                  <div className="flex items-center gap-2">
+                    <div className="rounded-lg bg-gray-100 p-1.5">
+                      <Clock className="h-4 w-4 text-gray-600" />
+                    </div>
+                    <h2 className="text-lg font-semibold">Last 30 Days</h2>
+                    <Badge variant="outline" className="text-xs">
+                      {olderArticles.length}
+                    </Badge>
+                  </div>
+                  {olderArticles.map((article) => renderArticleCard(article))}
+                  {hasMoreToLoad && (
+                    <div className="text-center pt-2">
+                      <Button
+                        variant="outline"
+                        type="button"
+                        onClick={() => void loadOlder()}
+                        disabled={loadingOlder}
+                      >
+                        {loadingOlder ? (
+                          <>
+                            <Loader2 className="h-4 w-4 mr-2 animate-spin inline" />
+                            Loading...
+                          </>
+                        ) : (
+                          "Load more"
+                        )}
+                      </Button>
+                    </div>
+                  )}
+                </>
+              )}
             </div>
           )}
 
