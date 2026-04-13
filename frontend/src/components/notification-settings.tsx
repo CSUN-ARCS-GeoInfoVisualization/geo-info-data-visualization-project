@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  Bell, PauseCircle, RotateCcw, Save, ShieldAlert, Zap, Clock, CalendarClock,
-  BellOff, BellRing, Gauge, Moon, CheckCircle2, AlertCircle, Loader2, Undo2,
+  Bell, Save, ShieldAlert, Zap, Clock, CalendarClock,
+  BellOff, BellRing, Gauge, CheckCircle2, AlertCircle, Loader2, Undo2,
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
@@ -56,6 +56,16 @@ const FREQ_OPTIONS: { value: DraftPreference["frequency"]; label: string; desc: 
   { value: "instant", label: "Instant", desc: "Get notified immediately", icon: Zap },
   { value: "daily", label: "Daily Digest", desc: "Once per day summary", icon: Clock },
   { value: "weekly", label: "Weekly Digest", desc: "Weekly summary email", icon: CalendarClock },
+];
+
+const RISK_TIERS = [
+  { value: 65, label: "Elevated", bar: "bg-yellow-400", bg: "bg-yellow-50", border: "border-yellow-200", text: "text-yellow-700" },
+  { value: 70, label: "High", bar: "bg-orange-400", bg: "bg-orange-50", border: "border-orange-200", text: "text-orange-700" },
+  { value: 75, label: "Very High", bar: "bg-orange-500", bg: "bg-orange-50", border: "border-orange-300", text: "text-orange-800" },
+  { value: 80, label: "Severe", bar: "bg-red-400", bg: "bg-red-50", border: "border-red-200", text: "text-red-700" },
+  { value: 85, label: "Extreme", bar: "bg-red-500", bg: "bg-red-50", border: "border-red-300", text: "text-red-800" },
+  { value: 90, label: "Critical", bar: "bg-red-600", bg: "bg-red-50", border: "border-red-300", text: "text-red-900" },
+  { value: 95, label: "Catastrophic", bar: "bg-red-700", bg: "bg-red-100", border: "border-red-400", text: "text-red-950" },
 ];
 
 export function NotificationSettings({ token }: NotificationSettingsProps) {
@@ -254,97 +264,53 @@ export function NotificationSettings({ token }: NotificationSettingsProps) {
         </CardContent>
       </Card>
 
-      {/* Risk threshold */}
+      {/* Risk threshold levels */}
       <Card>
         <CardHeader className="pb-3">
           <CardTitle className="text-base font-semibold flex items-center gap-2">
             <Gauge className="h-4 w-4 text-muted-foreground" />
-            Risk Threshold
+            Risk Threshold Levels
           </CardTitle>
-          <CardDescription>Only receive alerts when fire risk exceeds this level.</CardDescription>
+          <CardDescription>
+            You will receive alerts when fire risk reaches or exceeds your subscribed threshold.
+            The scale below shows each alert tier.
+          </CardDescription>
         </CardHeader>
         <CardContent>
           <div className="space-y-3">
-            <div className="flex items-center gap-4">
-              <input
-                type="range"
-                min={0}
-                max={100}
-                value={draft.riskThreshold}
-                onChange={(e) => setDraft({ ...draft, riskThreshold: Number(e.target.value) })}
-                className="flex-1 h-2 rounded-full appearance-none bg-gray-200 accent-red-500 cursor-pointer"
-              />
-              <span className={`text-2xl font-bold tabular-nums w-16 text-right transition-colors ${thresholdColor}`}>
-                {draft.riskThreshold}%
-              </span>
-            </div>
-            <div className="flex justify-between text-xs text-muted-foreground px-0.5">
-              <span>All alerts</span>
-              <span>Critical only</span>
-            </div>
+            {RISK_TIERS.map((tier) => {
+              const isActive = draft.riskThreshold <= tier.value;
+              return (
+                <div
+                  key={tier.value}
+                  className={`flex items-center gap-3 rounded-lg border px-4 py-3 transition-colors ${
+                    isActive
+                      ? `${tier.bg} ${tier.border}`
+                      : "border-transparent bg-muted/30"
+                  }`}
+                >
+                  <div className={`w-10 text-right text-sm font-bold tabular-nums ${isActive ? tier.text : "text-muted-foreground"}`}>
+                    {tier.value}%
+                  </div>
+                  <div className={`h-2.5 flex-1 rounded-full overflow-hidden bg-gray-100`}>
+                    <div
+                      className={`h-full rounded-full transition-all duration-500 ${tier.bar}`}
+                      style={{ width: `${tier.value}%` }}
+                    />
+                  </div>
+                  <span className={`text-xs font-medium w-20 text-right ${isActive ? tier.text : "text-muted-foreground"}`}>
+                    {tier.label}
+                  </span>
+                  {isActive && (
+                    <CheckCircle2 className={`h-4 w-4 shrink-0 ${tier.text}`} />
+                  )}
+                </div>
+              );
+            })}
           </div>
-        </CardContent>
-      </Card>
-
-      {/* Schedule & blackout */}
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base font-semibold flex items-center gap-2">
-            <Moon className="h-4 w-4 text-muted-foreground" />
-            Pause & Quiet Hours
-          </CardTitle>
-          <CardDescription>Temporarily silence non-emergency alerts.</CardDescription>
-        </CardHeader>
-        <CardContent className="space-y-4">
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="space-y-2">
-              <label className="text-sm font-medium flex items-center gap-1.5">
-                <PauseCircle className="h-3.5 w-3.5 text-muted-foreground" />
-                Pause Until
-              </label>
-              <Input
-                type="datetime-local"
-                value={draft.pausedUntilLocal}
-                onChange={(e) => setDraft({ ...draft, pausedUntilLocal: e.target.value })}
-                className="h-10"
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium flex items-center gap-1.5">
-                <Moon className="h-3.5 w-3.5 text-muted-foreground" />
-                Blackout Start
-              </label>
-              <Input
-                type="datetime-local"
-                value={draft.blackoutStartLocal}
-                onChange={(e) => setDraft({ ...draft, blackoutStartLocal: e.target.value })}
-                className="h-10"
-              />
-            </div>
-            <div className="space-y-2">
-              <label className="text-sm font-medium flex items-center gap-1.5">
-                <Moon className="h-3.5 w-3.5 text-muted-foreground" />
-                Blackout End
-              </label>
-              <Input
-                type="datetime-local"
-                value={draft.blackoutEndLocal}
-                onChange={(e) => setDraft({ ...draft, blackoutEndLocal: e.target.value })}
-                className="h-10"
-              />
-            </div>
-          </div>
-
-          <div className="flex flex-wrap gap-2 pt-1">
-            <Button variant="outline" size="sm" onClick={onPause24Hours} disabled={saving} className="transition-all hover:border-orange-300 hover:bg-orange-50">
-              <PauseCircle className="h-3.5 w-3.5 mr-1.5" />
-              Pause 24 Hours
-            </Button>
-            <Button variant="outline" size="sm" onClick={onResetSchedule} disabled={saving} className="transition-all hover:border-gray-400">
-              <RotateCcw className="h-3.5 w-3.5 mr-1.5" />
-              Clear Schedule
-            </Button>
-          </div>
+          <p className="text-xs text-muted-foreground mt-3">
+            Your current threshold: <strong>{draft.riskThreshold}%</strong> — you will be alerted at all tiers at or above this level.
+          </p>
         </CardContent>
       </Card>
 
