@@ -92,8 +92,8 @@ export default function App() {
             <div className="flex items-center justify-between h-16">
               <div className="flex items-center space-x-4">
                 <div className="flex items-center space-x-2">
-                  <Flame className="h-8 w-8 text-red-500" />
-                  <span className="text-xl font-bold">FireWatch</span>
+                  <Flame className="h-7 w-7 text-red-500" />
+                  <span className="text-xl font-bold font-heading tracking-tight">Firewatch</span>
                 </div>
 
                 <nav className="ml-8 hidden space-x-6 xl:flex" aria-label="Main">
@@ -102,8 +102,10 @@ export default function App() {
                       key={page}
                       type="button"
                       onClick={() => setCurrentPage(page)}
-                      className={`text-sm font-medium hover:text-red-500 transition-colors ${
-                        currentPage === page ? "text-red-500" : "text-muted-foreground"
+                      className={`relative text-sm font-medium transition-colors pb-0.5 ${
+                        currentPage === page
+                          ? "text-red-500 after:absolute after:bottom-0 after:left-0 after:right-0 after:h-0.5 after:bg-red-500 after:rounded-full"
+                          : "text-muted-foreground hover:text-foreground"
                       }`}
                     >
                       {label}

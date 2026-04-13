@@ -1,42 +1,12 @@
-import { useState, useRef, useEffect } from "react";
-import {
-  Map,
-  Layers,
-  Thermometer,
-  Wind,
-  Droplets,
-  Flame,
-  AlertTriangle,
-  MapPin,
-  ZoomIn,
-  ZoomOut,
-  Locate,
-  Filter,
-  Info,
-  Eye,
-  EyeOff,
-  Calendar,
-  Clock,
-  Search,
-  Pencil,
-  Hand,
-  MousePointer,
-  Circle,
-  Square,
-  Navigation,
-  Play,
-  Pause,
-  RotateCcw
-} from "lucide-react";
+import { useState, useEffect } from "react";
+import { Map, Layers, Thermometer, Wind, Droplets, Flame, AlertTriangle, Clock, Info, Search } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
-import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
 import { Switch } from "./ui/switch";
 import { Slider } from "./ui/slider";
 import { Input } from "./ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
-import { Alert, AlertDescription } from "./ui/alert";
+import { TooltipProvider } from "./ui/tooltip";
 import { Map as GoogleMap, useMap } from '@vis.gl/react-google-maps';
 import { GoogleMapsOverlay } from '@deck.gl/google-maps';
 import { GeoJsonLayer } from '@deck.gl/layers';
@@ -154,8 +124,10 @@ export function RiskMap() {
   const [selectedIncident, setSelectedIncident] = useState<string | null>(null);
   const [selectedStation, setSelectedStation] = useState<string | null>(null);
   const [mapTypeId, setMapTypeId] = useState<'roadmap' | 'satellite' | 'hybrid' | 'terrain'>('satellite');
-  const [timeframe, setTimeframe] = useState<"current" | "forecast-6h" | "forecast-24h">("current");
   const [searchQuery, setSearchQuery] = useState("");
+
+  const selectedIncidentData = null; // Will be populated with real data
+  const selectedStationData = null; // Will be populated with real data
 
   const [layers, setLayers] = useState<MapLayer[]>([
     { id: "fire-incidents", name: "Fire Incidents", icon: Flame, enabled: true, opacity: 100, color: "red" },
@@ -177,75 +149,41 @@ export function RiskMap() {
     ));
   };
 
-  const selectedIncidentData = null; // Will be populated with real data
-  const selectedStationData = null; // Will be populated with real data
 
   return (
     <TooltipProvider>
       <div className="space-y-6">
-        {/* Header */}
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
-          <div>
-            <h1 className="text-3xl font-bold mb-2">Risk Assessment Map</h1>
-            <p className="text-muted-foreground">
-              Real-time wildfire risk zones and active incident monitoring
-            </p>
-          </div>
-          <div className="flex gap-2">
-            <Select value={timeframe} onValueChange={(value) => setTimeframe(value as any)}>
-              <SelectTrigger className="w-40">
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                <SelectItem value="current">Current</SelectItem>
-                <SelectItem value="forecast-6h">6-Hour Forecast</SelectItem>
-                <SelectItem value="forecast-24h">24-Hour Forecast</SelectItem>
-              </SelectContent>
-            </Select>
-            <Button variant="outline">
-              <Calendar className="h-4 w-4 mr-2" />
-              Historical
-            </Button>
-            <Button>
-              <AlertTriangle className="h-4 w-4 mr-2" />
-              Alerts
-            </Button>
-          </div>
-        </div>
 
-        {/* Alert Banner */}
-        <Alert className="border-l-4 border-l-red-500 bg-red-50">
-          <AlertTriangle className="h-4 w-4" />
-          <AlertDescription>
-            <strong>Red Flag Warning:</strong> Extreme fire risk conditions detected.
-            High winds and low humidity expected through tomorrow evening.
-          </AlertDescription>
-        </Alert>
+        {/* Header */}
+        <div>
+          <h1 className="text-2xl font-bold font-heading">Risk Assessment Map</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            Real-time wildfire risk zones and active incident monitoring
+          </p>
+        </div>
 
         {/* Main Content */}
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-          {/* Map Container */}
+
+          {/* Map — takes 3/4 */}
           <div className="lg:col-span-3">
-            <Card>
-              <CardHeader>
-                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
-                  <CardTitle className="flex items-center gap-2">
-                    <Map className="h-5 w-5" />
+            <Card className="h-full">
+              <CardHeader className="pb-3">
+                <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3">
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <Map className="h-4 w-4" />
                     Interactive Risk Map
                   </CardTitle>
-                  <div className="flex flex-wrap items-center gap-2">
-                    {/* Search */}
+                  <div className="flex items-center gap-2">
                     <div className="relative">
                       <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
                       <Input
                         placeholder="Search location..."
                         value={searchQuery}
                         onChange={(e) => setSearchQuery(e.target.value)}
-                        className="w-48 pl-8"
+                        className="w-44 pl-8"
                       />
                     </div>
-
-                    {/* Map Type Selector */}
                     <Select value={mapTypeId} onValueChange={(value) => setMapTypeId(value as any)}>
                       <SelectTrigger className="w-32">
                         <SelectValue />
@@ -260,9 +198,8 @@ export function RiskMap() {
                   </div>
                 </div>
               </CardHeader>
-              <CardContent>
-                {/* Google Map */}
-                <div className="w-full h-96 rounded-lg overflow-hidden border relative">
+              <CardContent className="pt-0">
+                <div className="w-full rounded-lg overflow-hidden border" style={{ height: '520px' }}>
                   <GoogleMap
                     style={{ width: '100%', height: '100%' }}
                     defaultCenter={{ lat: 36.7, lng: -119.8 }}
@@ -270,17 +207,8 @@ export function RiskMap() {
                     mapTypeId={mapTypeId}
                     gestureHandling="greedy"
                     disableDefaultUI={false}
-                  >
-                    {/* Fire Perimeters removed - use History tab for perimeter data */}
-
-                    {/* Fire Incidents - removed mock data */}
-                    {/* Add real fire incident data source here */}
-
-                    {/* Weather Stations - removed mock data */}
-                    {/* Add real weather station data source here */}
-                  </GoogleMap>
+                  />
                 </div>
-
                 {/* Map Legend */}
                 <div className="mt-4 bg-gray-50 rounded-lg p-4">
                   <h4 className="font-semibold text-sm mb-3">Map Legend</h4>
@@ -302,13 +230,12 @@ export function RiskMap() {
             </Card>
           </div>
 
-          {/* Sidebar */}
+          {/* Sidebar — Map Layers + Details */}
           <div className="space-y-4">
-            {/* Map Layers */}
             <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Layers className="h-5 w-5" />
+              <CardHeader className="pb-3">
+                <CardTitle className="flex items-center gap-2 text-base">
+                  <Layers className="h-4 w-4" />
                   Map Layers
                 </CardTitle>
               </CardHeader>
@@ -319,7 +246,7 @@ export function RiskMap() {
                     <div key={layer.id} className="space-y-2">
                       <div className="flex items-center justify-between">
                         <div className="flex items-center gap-2">
-                          <Icon className="h-4 w-4" />
+                          <Icon className="h-4 w-4 text-muted-foreground" />
                           <span className="text-sm">{layer.name}</span>
                         </div>
                         <Switch
@@ -328,18 +255,16 @@ export function RiskMap() {
                         />
                       </div>
                       {layer.enabled && (
-                        <div className="ml-6">
-                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                            <span>Opacity</span>
-                            <Slider
-                              value={[layer.opacity]}
-                              onValueChange={(value) => updateLayerOpacity(layer.id, value[0])}
-                              max={100}
-                              step={10}
-                              className="flex-1"
-                            />
-                            <span>{layer.opacity}%</span>
-                          </div>
+                        <div className="ml-6 flex items-center gap-2 text-xs text-muted-foreground">
+                          <span>Opacity</span>
+                          <Slider
+                            value={[layer.opacity]}
+                            onValueChange={(value) => updateLayerOpacity(layer.id, value[0])}
+                            max={100}
+                            step={10}
+                            className="flex-1"
+                          />
+                          <span className="w-7 text-right">{layer.opacity}%</span>
                         </div>
                       )}
                     </div>
@@ -352,8 +277,8 @@ export function RiskMap() {
             {(selectedIncidentData || selectedStationData) && (
               <Card>
                 <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Info className="h-5 w-5" />
+                  <CardTitle className="flex items-center gap-2 text-base">
+                    <Info className="h-4 w-4" />
                     Details
                   </CardTitle>
                 </CardHeader>
@@ -372,7 +297,6 @@ export function RiskMap() {
                       </div>
                     </div>
                   )}
-
                   {selectedStationData && (
                     <div className="space-y-2">
                       <h3 className="font-medium">{selectedStationData.name}</h3>
@@ -414,7 +338,6 @@ export function RiskMap() {
               </div>
             </CardContent>
           </Card>
-
           <Card>
             <CardContent className="pt-6">
               <div className="flex items-center gap-2">
@@ -426,7 +349,6 @@ export function RiskMap() {
               </div>
             </CardContent>
           </Card>
-
           <Card>
             <CardContent className="pt-6">
               <div className="flex items-center gap-2">
@@ -438,7 +360,6 @@ export function RiskMap() {
               </div>
             </CardContent>
           </Card>
-
           <Card>
             <CardContent className="pt-6">
               <div className="flex items-center gap-2">
@@ -451,6 +372,7 @@ export function RiskMap() {
             </CardContent>
           </Card>
         </div>
+
       </div>
     </TooltipProvider>
   );

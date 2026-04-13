@@ -3307,3 +3307,16 @@ html {
 .font-heading {
   font-family: var(--font-heading);
 }
+/* ── Firewatch theme overrides ── */
+:root {
+  --primary: oklch(0.577 0.245 27.325);
+  --primary-foreground: #fff;
+  --destructive: oklch(0.505 0.213 27.518);
+  --accent: oklch(0.971 0.013 17.38);
+  --accent-foreground: oklch(0.145 0 0);
+  --ring: oklch(0.637 0.237 25.331);
+  --muted: oklch(0.963 0.004 30);
+  --muted-foreground: #6b6b7a;
+  --border: oklch(0.91 0.006 30);
+  --radius: 0.5rem;
+}

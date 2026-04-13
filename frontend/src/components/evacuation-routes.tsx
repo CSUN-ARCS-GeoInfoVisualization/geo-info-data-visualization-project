@@ -1,16 +1,5 @@
 import { useState, useEffect } from "react";
-import {
-  MapPin,
-  Navigation,
-  Shield,
-  Phone,
-  AlertTriangle,
-  Car,
-  Users,
-  Clock,
-  CheckCircle,
-  ExternalLink
-} from "lucide-react";
+import { MapPin, Phone, AlertTriangle, CheckCircle } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
@@ -537,436 +526,232 @@ export function EvacuationRoutes() {
   };
 
   return (
-    <div className="space-y-8">
+    <div className="space-y-6">
+
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold mb-2">Evacuation Routes</h1>
-          <p className="text-muted-foreground">
-            Current evacuation zones, routes, and emergency assembly points
+          <h1 className="text-2xl font-bold font-heading">Evacuation Routes</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            Shelter locations, zones, and emergency contacts for California
           </p>
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm">
-            <Navigation className="h-4 w-4 mr-2" />
-            Get Directions
-          </Button>
-          <Button size="sm">
-            <Phone className="h-4 w-4 mr-2" />
-            Emergency: 911
-          </Button>
-        </div>
+        <Button size="sm" variant="destructive">
+          <Phone className="h-4 w-4 mr-2" />
+          Emergency: 911
+        </Button>
       </div>
 
-      {/* Emergency Alert */}
-      <Alert className="border-l-4 border-l-red-500 bg-red-50">
-        <AlertTriangle className="h-4 w-4" />
-        <AlertDescription>
-          <div className="flex items-center justify-between">
-            <div>
-              <strong>Active Evacuation Order:</strong> Zone A residents must evacuate immediately.
-              Take Highway 101 North or Mountain View Road.
-            </div>
-            <Button size="sm" variant="destructive">
-              View Details
-            </Button>
-          </div>
-        </AlertDescription>
-      </Alert>
+      {/* Map (2/3) + Checklist (1/3) */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
 
-      {/* Interactive Map with Fire Facilities */}
-      <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
-          <CardTitle className="flex items-center gap-2">
-            <MapPin className="h-5 w-5" />
-            Interactive Evacuation Zone Map
-          </CardTitle>
-
-          {/* Small Dots Toggle */}
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={smallDots}
-              onChange={(e) => setSmallDots(e.target.checked)}
-              className="w-4 h-4 cursor-pointer"
-            />
-            <span className="text-sm font-medium">Small Icons</span>
-          </label>
-        </CardHeader>
-        <CardContent>
-          {/* Google Map with Deck.gl Overlay */}
-          <div className="w-full h-96 rounded-lg overflow-hidden border">
-            <Map
-              style={{ width: '100%', height: '100%' }}
-              defaultCenter={{ lat: 34.0549, lng: -118.2426 }}
-              defaultZoom={8}
-              gestureHandling="greedy"
-              disableDefaultUI={false}
-            >
-              <FireFacilitiesOverlay smallDots={smallDots} />
-            </Map>
-          </div>
-
-          {/* Map Legend */}
-          <div className="mt-4 bg-gray-50 rounded-lg p-4">
-            <h4 className="font-semibold text-base mb-3">Map Legend</h4>
-
-            {/* Clustering explanation */}
-            <div className="mb-4 pb-4 border-b border-gray-200">
-              <div className="flex items-center gap-3 mb-2">
-                <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center text-white text-xs font-bold shadow-sm">
-                  25
-                </div>
-                <div className="text-sm">
-                  <div className="font-semibold">Shelter Cluster</div>
-                  <div className="text-muted-foreground">Click to zoom in and expand</div>
-                </div>
+        {/* Map */}
+        <div className="lg:col-span-2">
+          <Card className="h-full">
+            <CardHeader className="flex flex-row items-center justify-between pb-3">
+              <CardTitle className="flex items-center gap-2 text-base">
+                <MapPin className="h-4 w-4" />
+                Shelter &amp; Evacuation Map
+              </CardTitle>
+              <label className="flex items-center gap-2 cursor-pointer text-sm text-muted-foreground">
+                <input
+                  type="checkbox"
+                  checked={smallDots}
+                  onChange={(e) => setSmallDots(e.target.checked)}
+                  className="w-4 h-4 cursor-pointer"
+                />
+                Small Icons
+              </label>
+            </CardHeader>
+            <CardContent className="pt-0">
+              <div className="w-full rounded-lg overflow-hidden border" style={{ height: '420px' }}>
+                <Map
+                  style={{ width: '100%', height: '100%' }}
+                  defaultCenter={{ lat: 34.0549, lng: -118.2426 }}
+                  defaultZoom={8}
+                  gestureHandling="greedy"
+                  disableDefaultUI={false}
+                >
+                  <FireFacilitiesOverlay smallDots={smallDots} />
+                </Map>
               </div>
-            </div>
 
-            {/* Shelter types */}
-            <div className="space-y-2">
-              <div className="text-base font-semibold text-muted-foreground mb-2">Emergency Shelter Types:</div>
+              {/* Map Legend */}
+              <div className="mt-4 bg-gray-50 rounded-lg p-4">
+                <h4 className="font-semibold text-base mb-3">Map Legend</h4>
 
-              <div className="grid grid-cols-1 gap-2 text-base">
-                {/* Evacuation Shelters */}
-                <div className="flex items-center gap-2 p-2 rounded hover:bg-gray-100">
-                  <div className="w-6 h-6 rounded-full flex items-center justify-center" style={{backgroundColor: 'rgb(59, 130, 246)'}}>
-                    <span className="text-base">🏃</span>
-                  </div>
-                  <div>
-                    <div><strong>Evacuation Shelter</strong></div>
-                    <div className="text-xs text-muted-foreground">Pre-disaster evacuation only</div>
-                  </div>
-                </div>
-
-                {/* Post-Impact Shelters */}
-                <div className="flex items-center gap-2 p-2 rounded hover:bg-gray-100">
-                  <div className="w-6 h-6 rounded-full flex items-center justify-center" style={{backgroundColor: 'rgb(34, 197, 94)'}}>
-                    <span className="text-base">🏠</span>
-                  </div>
-                  <div>
-                    <div><strong>Post-Impact Shelter</strong></div>
-                    <div className="text-xs text-muted-foreground">After disaster relief</div>
-                  </div>
-                </div>
-
-                {/* Both */}
-                <div className="flex items-center gap-2 p-2 rounded hover:bg-gray-100">
-                  <div className="w-6 h-6 rounded-full flex items-center justify-center" style={{backgroundColor: 'rgb(147, 51, 234)'}}>
-                    <span className="text-base">🏛️</span>
-                  </div>
-                  <div>
-                    <div><strong>Dual-Purpose Shelter</strong></div>
-                    <div className="text-xs text-muted-foreground">Both evacuation & post-impact</div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Instructions */}
-            <div className="mt-4 pt-4 border-t border-gray-200">
-              <p className="text-sm text-muted-foreground">
-                💡 <strong>How to use:</strong> Click blue clusters to zoom in. Click individual shelters to see capacity, accessibility, and amenities. Drag to pan, scroll to zoom. FEMA - National Shelter System Facilities
-              </p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Evacuation Zones and Assembly Points Grid */}
-      {/* COMMENTED OUT - Uncomment when ready to use
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Evacuation Zones */}
-        {/* <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Shield className="h-5 w-5" />
-              Evacuation Zones
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {evacuationZones.map((zone) => (
-              <div
-                key={zone.id}
-                className={`p-4 rounded-lg border-2 cursor-pointer transition-all ${
-                  selectedZone === zone.id
-                    ? 'border-blue-500 bg-blue-50'
-                    : 'border-gray-200 hover:border-gray-300'
-                }`}
-                onClick={() => setSelectedZone(selectedZone === zone.id ? null : zone.id)}
-              >
-                <div className="flex items-center justify-between mb-3">
-                  <div className="flex items-center gap-3">
-                    <div className={`w-4 h-4 rounded-full ${zone.color}`}></div>
-                    <div>
-                      <h3 className="font-medium">{zone.name}</h3>
-                      <p className="text-sm text-muted-foreground">
-                        {zone.population.toLocaleString()} residents
-                      </p>
+                <div className="mb-4 pb-4 border-b border-gray-200">
+                  <div className="flex items-center gap-3 mb-2">
+                    <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center text-white text-xs font-bold shadow-sm">
+                      25
+                    </div>
+                    <div className="text-sm">
+                      <div className="font-semibold">Shelter Cluster</div>
+                      <div className="text-muted-foreground">Click to zoom in and expand</div>
                     </div>
                   </div>
-                  {getStatusBadge(zone.status)}
                 </div>
 
-                <div className="grid grid-cols-2 gap-4 text-sm">
-                  <div className="flex items-center gap-2">
-                    <Clock className="h-4 w-4 text-muted-foreground" />
-                    <span>{zone.estimatedTime}</span>
-                  </div>
-                  <div className="flex items-center gap-2">
-                    <Car className="h-4 w-4 text-muted-foreground" />
-                    <span>{zone.routes.length} routes</span>
+                <div className="space-y-2">
+                  <div className="text-base font-semibold text-muted-foreground mb-2">Emergency Shelter Types:</div>
+                  <div className="grid grid-cols-1 gap-2 text-base">
+                    <div className="flex items-center gap-2 p-2 rounded hover:bg-gray-100">
+                      <div className="w-6 h-6 rounded-full flex items-center justify-center" style={{ backgroundColor: 'rgb(59, 130, 246)' }}>
+                        <span className="text-base">🏃</span>
+                      </div>
+                      <div>
+                        <div><strong>Evacuation Shelter</strong></div>
+                        <div className="text-xs text-muted-foreground">Pre-disaster evacuation only</div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 p-2 rounded hover:bg-gray-100">
+                      <div className="w-6 h-6 rounded-full flex items-center justify-center" style={{ backgroundColor: 'rgb(34, 197, 94)' }}>
+                        <span className="text-base">🏠</span>
+                      </div>
+                      <div>
+                        <div><strong>Post-Impact Shelter</strong></div>
+                        <div className="text-xs text-muted-foreground">After disaster relief</div>
+                      </div>
+                    </div>
+                    <div className="flex items-center gap-2 p-2 rounded hover:bg-gray-100">
+                      <div className="w-6 h-6 rounded-full flex items-center justify-center" style={{ backgroundColor: 'rgb(147, 51, 234)' }}>
+                        <span className="text-base">🏛️</span>
+                      </div>
+                      <div>
+                        <div><strong>Dual-Purpose Shelter</strong></div>
+                        <div className="text-xs text-muted-foreground">Both evacuation &amp; post-impact</div>
+                      </div>
+                    </div>
                   </div>
                 </div>
 
-                {selectedZone === zone.id && (
-                  <div className="mt-4 pt-4 border-t">
-                    <h4 className="font-medium mb-2">Recommended Routes:</h4>
-                    <ul className="space-y-1">
-                      {zone.routes.map((route, index) => (
-                        <li key={index} className="text-sm text-muted-foreground flex items-center gap-2">
-                          <Navigation className="h-3 w-3" />
-                          {route}
-                        </li>
-                      ))}
-                    </ul>
-                    <Button size="sm" className="mt-3">
-                      <Navigation className="h-4 w-4 mr-2" />
-                      Get Route Directions
-                    </Button>
-                  </div>
-                )}
+                <div className="mt-4 pt-4 border-t border-gray-200">
+                  <p className="text-sm text-muted-foreground">
+                    💡 <strong>How to use:</strong> Click blue clusters to zoom in. Click individual shelters to see capacity, accessibility, and amenities. Drag to pan, scroll to zoom. FEMA - National Shelter System Facilities
+                  </p>
+                </div>
               </div>
-            ))}
-          </CardContent>
-        </Card> */}
+            </CardContent>
+          </Card>
+        </div>
 
-        {/* Assembly Points */}
-        {/* <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Users className="h-5 w-5" />
-              Assembly Points
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            {assemblyPoints.map((point, index) => (
-              <div key={index} className="p-4 rounded-lg border">
-                <div className="flex items-start justify-between mb-2">
-                  <div>
-                    <h3 className="font-medium">{point.name}</h3>
-                    <p className="text-sm text-muted-foreground">{point.address}</p>
-                  </div>
-                  <Badge variant="outline" className="text-xs">
-                    {point.distance}
-                  </Badge>
-                </div>
-
-                <div className="flex items-center gap-4 text-sm text-muted-foreground mb-3">
-                  <div className="flex items-center gap-1">
-                    <Users className="h-4 w-4" />
-                    <span>{point.capacity} capacity</span>
-                  </div>
-                </div>
-
-                <div className="flex flex-wrap gap-1 mb-3">
-                  {point.amenities.map((amenity, i) => (
-                    <Badge key={i} variant="secondary" className="text-xs">
-                      {amenity}
-                    </Badge>
-                  ))}
-                </div>
-
-                <Button size="sm" variant="outline" className="w-full">
-                  <Navigation className="h-4 w-4 mr-2" />
-                  Get Directions
-                </Button>
-              </div>
-            ))}
-          </CardContent>
-        </Card> */}
-      {/* </div> */}
-      {/* END COMMENTED OUT SECTION */}
-
-      {/* Safety Checklist and Emergency Contacts */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        {/* Safety Checklist */}
+        {/* Evacuation Checklist */}
         <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <CheckCircle className="h-5 w-5" />
+          <CardHeader className="pb-3">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <CheckCircle className="h-4 w-4" />
               Evacuation Checklist
             </CardTitle>
           </CardHeader>
           <CardContent>
-            {/* Level Selector */}
-            <div className="grid grid-cols-2 gap-2 mb-4">
-              <Button
-                variant={checklistLevel === 'prepare' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => setChecklistLevel('prepare')}
-                className="text-xs flex flex-col items-center py-3 h-auto"
-              >
-                <div className="flex items-center gap-1">
-                  <span>📋</span>
-                  <span>Prepare</span>
-                </div>
-                <span className="text-[10px] opacity-75 mt-0.5">{getCompletionCount('prepare')}</span>
-              </Button>
-              <Button
-                variant={checklistLevel === 'fireWatch' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => setChecklistLevel('fireWatch')}
-                className="text-xs flex flex-col items-center py-3 h-auto bg-yellow-50 hover:bg-yellow-100 text-yellow-800 border-yellow-300"
-                style={checklistLevel === 'fireWatch' ? {backgroundColor: '#fbbf24', color: 'white'} : {}}
-              >
-                <div className="flex items-center gap-1">
-                  <span>⚠️</span>
-                  <span>Fire Watch</span>
-                </div>
-                <span className="text-[10px] opacity-75 mt-0.5">{getCompletionCount('fireWatch')}</span>
-              </Button>
-              <Button
-                variant={checklistLevel === 'evacuationWarning' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => setChecklistLevel('evacuationWarning')}
-                className="text-xs flex flex-col items-center py-3 h-auto bg-orange-50 hover:bg-orange-100 text-orange-800 border-orange-300"
-                style={checklistLevel === 'evacuationWarning' ? {backgroundColor: '#f97316', color: 'white'} : {}}
-              >
-                <div className="flex items-center gap-1">
-                  <span>🚨</span>
-                  <span>Warning</span>
-                </div>
-                <span className="text-[10px] opacity-75 mt-0.5">{getCompletionCount('evacuationWarning')}</span>
-              </Button>
-              <Button
-                variant={checklistLevel === 'evacuateNow' ? 'default' : 'outline'}
-                size="sm"
-                onClick={() => setChecklistLevel('evacuateNow')}
-                className="text-xs flex flex-col items-center py-3 h-auto bg-red-50 hover:bg-red-100 text-red-800 border-red-300"
-                style={checklistLevel === 'evacuateNow' ? {backgroundColor: '#dc2626', color: 'white'} : {}}
-              >
-                <div className="flex items-center gap-1">
-                  <span>🔥</span>
-                  <span>Evacuate Now</span>
-                </div>
-                <span className="text-[10px] opacity-75 mt-0.5">{getCompletionCount('evacuateNow')}</span>
-              </Button>
+            {/* Level selector */}
+            <div className="grid grid-cols-2 gap-1.5 mb-4">
+              {([
+                { key: 'prepare',           label: 'Prepare',      color: '' },
+                { key: 'fireWatch',         label: 'Fire Watch',   color: '#ca8a04' },
+                { key: 'evacuationWarning', label: 'Warning',      color: '#ea580c' },
+                { key: 'evacuateNow',       label: 'Evacuate Now', color: '#dc2626' },
+              ] as const).map(({ key, label, color }) => {
+                const active = checklistLevel === key;
+                return (
+                  <button
+                    key={key}
+                    onClick={() => setChecklistLevel(key)}
+                    className={`text-xs rounded-md px-2 py-2 border font-medium transition-colors ${
+                      active ? 'text-white border-transparent' : 'bg-background text-muted-foreground hover:text-foreground'
+                    }`}
+                    style={active ? { backgroundColor: color || '#18181b', borderColor: 'transparent' } : {}}
+                  >
+                    <div>{label}</div>
+                    <div className="opacity-70 mt-0.5" style={{ fontSize: '10px' }}>{getCompletionCount(key)}</div>
+                  </button>
+                );
+              })}
             </div>
 
-            {/* Checklist Items */}
-            <div className="space-y-2">
+            {/* Items */}
+            <div className="space-y-1">
               {safetyChecklist[checklistLevel].map((item, index) => {
                 const key = `${checklistLevel}-${index}`;
                 const isChecked = checkedItems[key];
-
                 return (
                   <div
                     key={index}
-                    className="flex items-start gap-3 p-2 rounded hover:bg-muted/50 cursor-pointer transition-all"
+                    className="flex items-start gap-4 p-2 rounded hover:bg-muted/50 cursor-pointer transition-colors"
                     onClick={() => toggleCheckbox(checklistLevel, index)}
                   >
-                    <div
-                      className={`w-5 h-5 mt-0.5 rounded border-2 flex items-center justify-center flex-shrink-0 transition-all ${
-                        isChecked
-                          ? 'bg-green-500 border-green-500'
-                          : 'border-muted-foreground'
-                      }`}
-                    >
+                    <div className={`w-4 h-4 mt-0.5 rounded border-2 flex items-center justify-center flex-shrink-0 transition-colors ${
+                      isChecked ? 'bg-green-500 border-green-500' : 'border-muted-foreground'
+                    }`}>
                       {isChecked && (
-                        <svg
-                          className="w-3 h-3 text-white"
-                          fill="none"
-                          strokeLinecap="round"
-                          strokeLinejoin="round"
-                          strokeWidth="3"
-                          viewBox="0 0 24 24"
-                          stroke="currentColor"
-                        >
-                          <path d="M5 13l4 4L19 7"></path>
+                        <svg className="w-2.5 h-2.5 text-white" fill="none" strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" viewBox="0 0 24 24" stroke="currentColor">
+                          <path d="M5 13l4 4L19 7" />
                         </svg>
                       )}
                     </div>
-                    <span className={`text-sm ${isChecked ? 'line-through text-muted-foreground' : ''}`}>
+                    <span className={`text-xs leading-relaxed ${isChecked ? 'line-through text-muted-foreground' : ''}`}>
                       {item}
                     </span>
                   </div>
                 );
               })}
             </div>
-
-            {/*<Button className="w-full mt-4" variant="outline">
-              Download Full Emergency Plan
-            </Button>*/}
-          </CardContent>
-        </Card>
-
-        {/* Emergency Contacts */}
-        <Card>
-          <CardHeader>
-            <CardTitle className="flex items-center gap-2">
-              <Phone className="h-5 w-5" />
-              Emergency Contacts
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div className="space-y-3">
-              <div className="flex items-center justify-between p-3 bg-red-50 rounded-lg">
-                <div>
-                  <h3 className="font-medium text-red-800">Emergency Services</h3>
-                  <p className="text-sm text-red-600">Fire, Police, Medical</p>
-                </div>
-                <Button size="sm" variant="destructive">
-                  <Phone className="h-4 w-4 mr-2" />
-                  911
-                </Button>
-              </div>
-
-              <div className="flex items-center justify-between p-3 border rounded-lg">
-                <div>
-                  <h3 className="font-medium">Fire Department</h3>
-                  <p className="text-sm text-muted-foreground">Non-emergency line</p>
-                </div>
-                <Button size="sm" variant="outline">
-                  <Phone className="h-4 w-4 mr-2" />
-                  (555) 123-4567
-                </Button>
-              </div>
-
-              <div className="flex items-center justify-between p-3 border rounded-lg">
-                <div>
-                  <h3 className="font-medium">Evacuation Hotline</h3>
-                  <p className="text-sm text-muted-foreground">24/7 information line</p>
-                </div>
-                <Button size="sm" variant="outline">
-                  <Phone className="h-4 w-4 mr-2" />
-                  (555) 987-6543
-                </Button>
-              </div>
-
-              <div className="flex items-center justify-between p-3 border rounded-lg">
-                <div>
-                  <h3 className="font-medium">Red Cross Shelter</h3>
-                  <p className="text-sm text-muted-foreground">Emergency assistance</p>
-                </div>
-                <Button size="sm" variant="outline">
-                  <Phone className="h-4 w-4 mr-2" />
-                  (555) 456-7890
-                </Button>
-              </div>
-            </div>
-
-            <Alert>
-              <AlertTriangle className="h-4 w-4" />
-              <AlertDescription className="text-sm">
-                Save these numbers in your phone and write them down.
-                Cell towers may be overloaded during emergencies.
-              </AlertDescription>
-            </Alert>
           </CardContent>
         </Card>
       </div>
+
+      {/* Emergency Contacts — horizontal grid */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Phone className="h-4 w-4" />
+            Emergency Contacts
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+            <div className="flex flex-col gap-2 p-4 bg-red-50 rounded-lg border border-red-100">
+              <p className="font-semibold text-red-800 text-sm">Emergency Services</p>
+              <p className="text-xs text-red-600">Fire, Police, Medical</p>
+              <Button size="sm" variant="destructive" className="mt-auto">
+                <Phone className="h-3 w-3 mr-1.5" />
+                911
+              </Button>
+            </div>
+            <div className="flex flex-col gap-2 p-4 border rounded-lg">
+              <p className="font-semibold text-sm">Fire Department</p>
+              <p className="text-xs text-muted-foreground">Non-emergency line</p>
+              <Button size="sm" variant="outline" className="mt-auto">
+                <Phone className="h-3 w-3 mr-1.5" />
+                (555) 123-4567
+              </Button>
+            </div>
+            <div className="flex flex-col gap-2 p-4 border rounded-lg">
+              <p className="font-semibold text-sm">Evacuation Hotline</p>
+              <p className="text-xs text-muted-foreground">24/7 information line</p>
+              <Button size="sm" variant="outline" className="mt-auto">
+                <Phone className="h-3 w-3 mr-1.5" />
+                (555) 987-6543
+              </Button>
+            </div>
+            <div className="flex flex-col gap-2 p-4 border rounded-lg">
+              <p className="font-semibold text-sm">Red Cross Shelter</p>
+              <p className="text-xs text-muted-foreground">Emergency assistance</p>
+              <Button size="sm" variant="outline" className="mt-auto">
+                <Phone className="h-3 w-3 mr-1.5" />
+                (555) 456-7890
+              </Button>
+            </div>
+          </div>
+          <Alert className="mt-4">
+            <AlertTriangle className="h-4 w-4" />
+            <AlertDescription className="text-sm">
+              Save these numbers in your phone and write them down — cell towers may be overloaded during emergencies.
+            </AlertDescription>
+          </Alert>
+        </CardContent>
+      </Card>
+
     </div>
   );
 }

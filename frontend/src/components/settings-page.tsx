@@ -123,7 +123,7 @@ export function SettingsPage({ defaultTab = "profile" }: SettingsPageProps) {
   return (
     <div className="space-y-2">
       <div className="mb-6">
-        <h1 className="text-2xl font-bold tracking-tight">Settings</h1>
+        <h1 className="text-2xl font-bold font-heading">Settings</h1>
         <p className="text-sm text-muted-foreground mt-1">
           Manage your account, saved locations, and alert preferences
         </p>
@@ -166,45 +166,64 @@ export function SettingsPage({ defaultTab = "profile" }: SettingsPageProps) {
                 <h2 className="font-semibold text-base">Account Information</h2>
                 <p className="text-xs text-muted-foreground mt-0.5">Your registered account details</p>
               </div>
-              <div className="divide-y">
-                {loadingProfile ? (
-                  <div className="px-6 py-6 space-y-4">
-                    <Skeleton className="h-4 w-24" />
-                    <Skeleton className="h-5 w-40" />
-                    <Skeleton className="h-4 w-24" />
-                    <Skeleton className="h-5 w-56" />
+
+              {loadingProfile ? (
+                <div className="px-6 py-6 space-y-4">
+                  <div className="flex items-center gap-4">
+                    <Skeleton className="h-14 w-14 rounded-full" />
+                    <div className="space-y-2">
+                      <Skeleton className="h-4 w-40" />
+                      <Skeleton className="h-3 w-24" />
+                    </div>
                   </div>
-                ) : profile ? (
-                  <>
+                  <Skeleton className="h-px w-full" />
+                  <Skeleton className="h-4 w-32" />
+                  <Skeleton className="h-4 w-48" />
+                </div>
+              ) : profile ? (
+                <>
+                  {/* Avatar + name header */}
+                  <div className="px-6 py-5 flex items-center gap-4 border-b">
+                    <div className="h-14 w-14 rounded-full bg-red-100 flex items-center justify-center shrink-0">
+                      <span className="text-xl font-bold text-red-500">
+                        {profile.email.charAt(0).toUpperCase()}
+                      </span>
+                    </div>
+                    <div>
+                      <p className="font-medium text-foreground">{profile.email}</p>
+                      <span className={`mt-1 inline-block text-xs font-semibold px-2.5 py-0.5 rounded-full border ${ROLE_COLORS[profile.role] ?? "bg-gray-100 text-gray-700 border-gray-200"}`}>
+                        {profile.role}
+                      </span>
+                    </div>
+                  </div>
+
+                  {/* Fields */}
+                  <div className="divide-y">
                     <div className="px-6 py-4 flex items-center justify-between">
-                      <div>
-                        <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide mb-1">User ID</p>
-                        <p className="text-sm font-mono text-foreground">#{profile.id}</p>
-                      </div>
+                      <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">User ID</p>
+                      <p className="text-sm font-mono text-foreground">#{profile.id}</p>
                     </div>
                     <div className="px-6 py-4 flex items-center justify-between">
-                      <div>
-                        <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide mb-1">Email</p>
-                        <p className="text-sm text-foreground">{profile.email}</p>
+                      <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide">Email</p>
+                      <p className="text-sm text-foreground">{profile.email}</p>
+                    </div>
+                    <div className="px-6 py-4 flex items-start justify-between gap-4">
+                      <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide pt-0.5">Role</p>
+                      <div className="text-right">
+                        <div className="flex items-center gap-2 justify-end">
+                          <Shield className="h-3.5 w-3.5 text-muted-foreground" />
+                          <span className={`text-xs font-semibold px-2.5 py-0.5 rounded-full border ${ROLE_COLORS[profile.role] ?? "bg-gray-100 text-gray-700 border-gray-200"}`}>
+                            {profile.role}
+                          </span>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-1">{ROLE_DESCRIPTIONS[profile.role]}</p>
                       </div>
                     </div>
-                    <div className="px-6 py-4">
-                      <p className="text-xs text-muted-foreground font-medium uppercase tracking-wide mb-2">Role</p>
-                      <div className="flex items-center gap-3">
-                        <Shield className="h-4 w-4 text-muted-foreground shrink-0" />
-                        <span className={`text-xs font-semibold px-2.5 py-1 rounded-full border ${ROLE_COLORS[profile.role] ?? "bg-gray-100 text-gray-700 border-gray-200"}`}>
-                          {profile.role}
-                        </span>
-                        <span className="text-xs text-muted-foreground">
-                          {ROLE_DESCRIPTIONS[profile.role]}
-                        </span>
-                      </div>
-                    </div>
-                  </>
-                ) : (
-                  <div className="px-6 py-6 text-sm text-muted-foreground">Could not load profile.</div>
-                )}
-              </div>
+                  </div>
+                </>
+              ) : (
+                <div className="px-6 py-6 text-sm text-muted-foreground">Could not load profile.</div>
+              )}
             </div>
           )}
 
