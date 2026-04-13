@@ -273,45 +273,57 @@ export function NotificationSettings({ token }: NotificationSettingsProps) {
             Risk Threshold Levels
           </CardTitle>
           <CardDescription>
-            You will receive alerts when fire risk reaches or exceeds your subscribed threshold.
-            The scale below shows each alert tier.
+            Choose your minimum alert level. You will automatically be notified for all tiers above the one you select.
           </CardDescription>
         </CardHeader>
         <CardContent>
-          <div className="space-y-3">
+          <div className="space-y-2">
             {RISK_TIERS.map((tier) => {
-              const isActive = draft.riskThreshold <= tier.value;
+              const isSelected = draft.riskThreshold === tier.value;
+              const isAbove = draft.riskThreshold <= tier.value;
               return (
-                <div
+                <button
                   key={tier.value}
-                  className={`flex items-center gap-3 rounded-lg border px-4 py-3 transition-colors ${
-                    isActive
-                      ? `${tier.bg} ${tier.border}`
-                      : "border-transparent bg-muted/30"
+                  type="button"
+                  onClick={() => setDraft({ ...draft, riskThreshold: tier.value })}
+                  className={`w-full flex items-center gap-3 rounded-lg border-2 px-4 py-3 text-left transition-all duration-200 ${
+                    isSelected
+                      ? `${tier.bg} ${tier.border} shadow-sm`
+                      : isAbove
+                        ? `${tier.bg} border-transparent opacity-80`
+                        : "border-transparent bg-muted/20 opacity-50"
                   }`}
                 >
-                  <div className={`w-10 text-right text-sm font-bold tabular-nums ${isActive ? tier.text : "text-muted-foreground"}`}>
+                  <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors ${
+                    isSelected ? `${tier.border} ${tier.bg}` : "border-gray-300"
+                  }`}>
+                    {isSelected && <div className={`w-2.5 h-2.5 rounded-full ${tier.bar}`} />}
+                  </div>
+                  <div className={`w-10 text-right text-sm font-bold tabular-nums ${isAbove ? tier.text : "text-muted-foreground"}`}>
                     {tier.value}%
                   </div>
-                  <div className={`h-2.5 flex-1 rounded-full overflow-hidden bg-gray-100`}>
+                  <div className="h-2.5 flex-1 rounded-full overflow-hidden bg-gray-100">
                     <div
                       className={`h-full rounded-full transition-all duration-500 ${tier.bar}`}
                       style={{ width: `${tier.value}%` }}
                     />
                   </div>
-                  <span className={`text-xs font-medium w-20 text-right ${isActive ? tier.text : "text-muted-foreground"}`}>
+                  <span className={`text-xs font-medium w-24 text-right ${isAbove ? tier.text : "text-muted-foreground"}`}>
                     {tier.label}
                   </span>
-                  {isActive && (
+                  {isAbove && !isSelected && (
                     <CheckCircle2 className={`h-4 w-4 shrink-0 ${tier.text}`} />
                   )}
-                </div>
+                </button>
               );
             })}
           </div>
-          <p className="text-xs text-muted-foreground mt-3">
-            Your current threshold: <strong>{draft.riskThreshold}%</strong> — you will be alerted at all tiers at or above this level.
-          </p>
+          <div className="mt-4 rounded-lg bg-blue-50 border border-blue-200 px-3 py-2.5">
+            <p className="text-xs text-blue-800">
+              <strong>Your selection: {RISK_TIERS.find((t) => t.value === draft.riskThreshold)?.label ?? `${draft.riskThreshold}%`}</strong>
+              {" "}— you will receive alerts for this level and all higher tiers automatically.
+            </p>
+          </div>
         </CardContent>
       </Card>
 
