@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import {
-  Bell, Save, ShieldAlert, Zap, Clock, CalendarClock,
-  BellOff, BellRing, Gauge, CheckCircle2, AlertCircle, Loader2, Undo2,
+  Bell, ShieldAlert, Zap, Clock, CalendarClock, Mail, Phone,
+  BellOff, BellRing, Gauge, CheckCircle2, AlertCircle, Loader2,
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
@@ -76,6 +76,8 @@ export function NotificationSettings({ token }: NotificationSettingsProps) {
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [contactEmail, setContactEmail] = useState("");
+  const [contactPhone, setContactPhone] = useState("");
 
   const isDirty = useMemo(() => {
     if (!preference || !draft) return false;
@@ -327,6 +329,49 @@ export function NotificationSettings({ token }: NotificationSettingsProps) {
         </CardContent>
       </Card>
 
+      {/* Contact info */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base font-semibold flex items-center gap-2">
+            <Mail className="h-4 w-4 text-muted-foreground" />
+            Contact Information
+          </CardTitle>
+          <CardDescription>
+            How should we reach you when an alert is triggered?
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <label htmlFor="alert-email" className="text-sm font-medium">Email Address</label>
+            <div className="relative group">
+              <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground transition-colors group-focus-within:text-red-500" />
+              <Input
+                id="alert-email"
+                type="email"
+                placeholder="your.email@example.com"
+                className="pl-10 h-10"
+                value={contactEmail}
+                onChange={(e) => setContactEmail(e.target.value)}
+              />
+            </div>
+          </div>
+          <div className="space-y-2">
+            <label htmlFor="alert-phone" className="text-sm font-medium flex items-center gap-1.5">
+              <Phone className="h-3.5 w-3.5 text-muted-foreground" />
+              Phone Number <span className="text-xs text-muted-foreground font-normal">(optional — SMS alerts coming soon)</span>
+            </label>
+            <Input
+              id="alert-phone"
+              type="tel"
+              placeholder="(555) 123-4567"
+              className="h-10"
+              value={contactPhone}
+              onChange={(e) => setContactPhone(e.target.value)}
+            />
+          </div>
+        </CardContent>
+      </Card>
+
       {/* Feedback messages */}
       {message && (
         <div className="flex items-center gap-2 rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 animate-[fadeIn_0.2s_ease-out]">
@@ -341,47 +386,45 @@ export function NotificationSettings({ token }: NotificationSettingsProps) {
         </div>
       )}
 
-      {/* Action bar */}
+      {/* Subscribe action */}
       <Card className="border-0 shadow-lg bg-white sticky bottom-4 z-10">
-        <CardContent className="py-4 flex flex-wrap items-center justify-between gap-3">
-          <div className="flex flex-wrap gap-2">
-            {preference.opted_in ? (
-              <Button variant="outline" size="sm" onClick={onUnsubscribe} disabled={saving} className="text-red-600 border-red-200 hover:bg-red-50">
-                <BellOff className="h-3.5 w-3.5 mr-1.5" />
-                Unsubscribe
-              </Button>
-            ) : (
-              <Button variant="outline" size="sm" onClick={onSubscribe} disabled={saving} className="text-emerald-600 border-emerald-200 hover:bg-emerald-50">
-                <BellRing className="h-3.5 w-3.5 mr-1.5" />
-                Subscribe
-              </Button>
-            )}
-          </div>
-          <div className="flex gap-2">
+        <CardContent className="py-4 flex items-center justify-between gap-3">
+          <p className="text-sm text-muted-foreground">
+            {preference.opted_in
+              ? "You are subscribed to wildfire alerts."
+              : "Subscribe to start receiving wildfire alerts."}
+          </p>
+          {preference.opted_in ? (
             <Button
               variant="outline"
-              size="sm"
-              onClick={() => preference && setDraft(buildDraft(preference))}
-              disabled={saving || !isDirty}
-              className="transition-opacity"
-            >
-              <Undo2 className="h-3.5 w-3.5 mr-1.5" />
-              Discard
-            </Button>
-            <Button
-              size="sm"
-              onClick={onSave}
-              disabled={saving || !isDirty}
-              className="bg-gradient-to-r from-red-500 to-orange-500 hover:from-red-600 hover:to-orange-600 shadow-md shadow-red-500/20 transition-all duration-200 min-w-[120px]"
+              onClick={onUnsubscribe}
+              disabled={saving}
+              className="text-red-600 border-red-200 hover:bg-red-50 min-w-[140px]"
             >
               {saving ? (
-                <Loader2 className="h-3.5 w-3.5 mr-1.5 animate-spin" />
+                <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
               ) : (
-                <Save className="h-3.5 w-3.5 mr-1.5" />
+                <BellOff className="h-4 w-4 mr-1.5" />
               )}
-              {saving ? "Saving..." : "Save Changes"}
+              {saving ? "Processing..." : "Unsubscribe"}
             </Button>
-          </div>
+          ) : (
+            <Button
+              onClick={async () => {
+                await onSubscribe();
+                if (isDirty) await onSave();
+              }}
+              disabled={saving || !contactEmail.trim()}
+              className="bg-gradient-to-r from-red-500 to-orange-500 hover:from-red-600 hover:to-orange-600 shadow-md shadow-red-500/20 transition-all duration-200 min-w-[140px]"
+            >
+              {saving ? (
+                <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
+              ) : (
+                <BellRing className="h-4 w-4 mr-1.5" />
+              )}
+              {saving ? "Subscribing..." : "Subscribe"}
+            </Button>
+          )}
         </CardContent>
       </Card>
 
