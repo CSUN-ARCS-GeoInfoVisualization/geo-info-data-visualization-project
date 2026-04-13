@@ -59,15 +59,15 @@ const FREQ_OPTIONS: { value: DraftPreference["frequency"]; label: string; desc: 
 ];
 
 const RISK_TIERS = [
-  { value: 50, label: "Low",          bar: "bg-green-500",   bg: "bg-green-50",   border: "border-green-400",  text: "text-green-700" },
-  { value: 55, label: "Guarded",      bar: "bg-yellow-300",  bg: "bg-yellow-50",  border: "border-yellow-300", text: "text-yellow-600" },
-  { value: 65, label: "Elevated",     bar: "bg-yellow-500",  bg: "bg-yellow-50",  border: "border-yellow-500", text: "text-yellow-700" },
-  { value: 70, label: "High",         bar: "bg-orange-300",  bg: "bg-orange-50",  border: "border-orange-300", text: "text-orange-600" },
-  { value: 75, label: "Very High",    bar: "bg-orange-500",  bg: "bg-orange-50",  border: "border-orange-500", text: "text-orange-700" },
-  { value: 80, label: "Severe",       bar: "bg-orange-700",  bg: "bg-orange-50",  border: "border-orange-700", text: "text-orange-900" },
-  { value: 85, label: "Extreme",      bar: "bg-red-400",     bg: "bg-red-50",     border: "border-red-400",    text: "text-red-600" },
-  { value: 90, label: "Critical",     bar: "bg-red-600",     bg: "bg-red-50",     border: "border-red-600",    text: "text-red-800" },
-  { value: 95, label: "Catastrophic", bar: "bg-red-800",     bg: "bg-red-100",    border: "border-red-800",    text: "text-red-950" },
+  { value: 50, label: "Low",          color: "#22c55e", bgTint: "#f0fdf4" },  // Green
+  { value: 55, label: "Guarded",      color: "#facc15", bgTint: "#fefce8" },  // Bright Yellow
+  { value: 65, label: "Elevated",     color: "#ca8a04", bgTint: "#fefce8" },  // Dark Yellow
+  { value: 70, label: "High",         color: "#fb923c", bgTint: "#fff7ed" },  // Bright Orange
+  { value: 75, label: "Very High",    color: "#f97316", bgTint: "#fff7ed" },  // Orange
+  { value: 80, label: "Severe",       color: "#c2410c", bgTint: "#fff7ed" },  // Dark Orange
+  { value: 85, label: "Extreme",      color: "#f87171", bgTint: "#fef2f2" },  // Light Red
+  { value: 90, label: "Critical",     color: "#dc2626", bgTint: "#fef2f2" },  // Red
+  { value: 95, label: "Catastrophic", color: "#991b1b", bgTint: "#fef2f2" },  // Dark Red
 ];
 
 export function NotificationSettings({ token }: NotificationSettingsProps) {
@@ -289,44 +289,72 @@ export function NotificationSettings({ token }: NotificationSettingsProps) {
                   key={tier.value}
                   type="button"
                   onClick={() => setDraft({ ...draft, riskThreshold: tier.value })}
-                  className={`w-full flex items-center gap-3 rounded-lg border-2 px-4 py-3 text-left transition-all duration-200 ${
-                    isSelected
-                      ? `${tier.bg} ${tier.border} shadow-sm`
-                      : isAbove
-                        ? `${tier.bg} ${tier.border} opacity-80`
-                        : "border-transparent bg-muted/20 opacity-50"
-                  }`}
+                  className="w-full flex items-center gap-3 rounded-lg px-4 py-3 text-left transition-all duration-200"
+                  style={{
+                    borderWidth: 2,
+                    borderStyle: "solid",
+                    borderColor: isSelected || isAbove ? tier.color : "transparent",
+                    backgroundColor: isSelected || isAbove ? tier.bgTint : "rgba(0,0,0,0.03)",
+                    opacity: isSelected ? 1 : isAbove ? 0.85 : 0.45,
+                    boxShadow: isSelected ? `0 1px 4px ${tier.color}33` : "none",
+                  }}
                 >
-                  <div className={`w-5 h-5 rounded-full border-2 flex items-center justify-center shrink-0 transition-colors ${
-                    isSelected ? `${tier.border} ${tier.bg}` : "border-gray-300"
-                  }`}>
-                    {isSelected && <div className={`w-2.5 h-2.5 rounded-full ${tier.bar}`} />}
+                  <div
+                    className="w-5 h-5 rounded-full flex items-center justify-center shrink-0"
+                    style={{
+                      borderWidth: 2,
+                      borderStyle: "solid",
+                      borderColor: isSelected ? tier.color : "#d1d5db",
+                    }}
+                  >
+                    {isSelected && (
+                      <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: tier.color }} />
+                    )}
                   </div>
-                  <div className={`w-10 text-right text-sm font-bold tabular-nums ${isAbove ? tier.text : "text-muted-foreground"}`}>
+                  <div
+                    className="w-10 text-right text-sm font-bold tabular-nums"
+                    style={{ color: isAbove ? tier.color : "#9ca3af" }}
+                  >
                     {tier.value}%
                   </div>
-                  <div className="h-2.5 flex-1 rounded-full overflow-hidden bg-gray-100">
+                  <div className="h-2.5 flex-1 rounded-full overflow-hidden" style={{ backgroundColor: "#e5e7eb" }}>
                     <div
-                      className={`h-full rounded-full transition-all duration-500 ${tier.bar}`}
-                      style={{ width: `${tier.value}%` }}
+                      className="h-full rounded-full transition-all duration-500"
+                      style={{ width: `${tier.value}%`, backgroundColor: tier.color }}
                     />
                   </div>
-                  <span className={`text-xs font-medium w-24 text-right ${isAbove ? tier.text : "text-muted-foreground"}`}>
+                  <span
+                    className="text-xs font-medium w-24 text-right"
+                    style={{ color: isAbove ? tier.color : "#9ca3af" }}
+                  >
                     {tier.label}
                   </span>
                   {isAbove && !isSelected && (
-                    <CheckCircle2 className={`h-4 w-4 shrink-0 ${tier.text}`} />
+                    <CheckCircle2 className="h-4 w-4 shrink-0" style={{ color: tier.color }} />
                   )}
                 </button>
               );
             })}
           </div>
-          <div className="mt-4 rounded-lg bg-blue-50 border border-blue-200 px-3 py-2.5">
-            <p className="text-xs text-blue-800">
-              <strong>Your selection: {RISK_TIERS.find((t) => t.value === draft.riskThreshold)?.label ?? `${draft.riskThreshold}%`}</strong>
-              {" "}— you will receive alerts for this level and all higher tiers automatically.
-            </p>
-          </div>
+          {(() => {
+            const selected = RISK_TIERS.find((t) => t.value === draft.riskThreshold);
+            return (
+              <div
+                className="mt-4 rounded-lg px-3 py-2.5"
+                style={{
+                  backgroundColor: selected ? `${selected.color}12` : "#eff6ff",
+                  borderWidth: 1,
+                  borderStyle: "solid",
+                  borderColor: selected ? `${selected.color}40` : "#bfdbfe",
+                }}
+              >
+                <p className="text-xs" style={{ color: selected?.color ?? "#1e40af" }}>
+                  <strong>Your selection: {selected?.label ?? `${draft.riskThreshold}%`}</strong>
+                  {" "}— you will receive alerts for this level and all higher tiers automatically.
+                </p>
+              </div>
+            );
+          })()}
         </CardContent>
       </Card>
 
