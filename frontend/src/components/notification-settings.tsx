@@ -59,14 +59,15 @@ const FREQ_OPTIONS: { value: DraftPreference["frequency"]; label: string; desc: 
 ];
 
 const RISK_TIERS = [
-  { value: 50, label: "Low", bar: "bg-emerald-400", bg: "bg-emerald-50", border: "border-emerald-200", text: "text-emerald-700" },
-  { value: 65, label: "Elevated", bar: "bg-yellow-400", bg: "bg-yellow-50", border: "border-yellow-200", text: "text-yellow-700" },
-  { value: 70, label: "High", bar: "bg-orange-400", bg: "bg-orange-50", border: "border-orange-200", text: "text-orange-700" },
-  { value: 75, label: "Very High", bar: "bg-orange-500", bg: "bg-orange-50", border: "border-orange-300", text: "text-orange-800" },
-  { value: 80, label: "Severe", bar: "bg-red-400", bg: "bg-red-50", border: "border-red-200", text: "text-red-700" },
-  { value: 85, label: "Extreme", bar: "bg-red-500", bg: "bg-red-50", border: "border-red-300", text: "text-red-800" },
-  { value: 90, label: "Critical", bar: "bg-red-600", bg: "bg-red-50", border: "border-red-300", text: "text-red-900" },
-  { value: 95, label: "Catastrophic", bar: "bg-red-700", bg: "bg-red-100", border: "border-red-400", text: "text-red-950" },
+  { value: 50, label: "Low",          bar: "bg-green-500",   bg: "bg-green-50",   border: "border-green-400",  text: "text-green-700" },
+  { value: 55, label: "Guarded",      bar: "bg-yellow-300",  bg: "bg-yellow-50",  border: "border-yellow-300", text: "text-yellow-600" },
+  { value: 65, label: "Elevated",     bar: "bg-yellow-500",  bg: "bg-yellow-50",  border: "border-yellow-500", text: "text-yellow-700" },
+  { value: 70, label: "High",         bar: "bg-orange-300",  bg: "bg-orange-50",  border: "border-orange-300", text: "text-orange-600" },
+  { value: 75, label: "Very High",    bar: "bg-orange-500",  bg: "bg-orange-50",  border: "border-orange-500", text: "text-orange-700" },
+  { value: 80, label: "Severe",       bar: "bg-orange-700",  bg: "bg-orange-50",  border: "border-orange-700", text: "text-orange-900" },
+  { value: 85, label: "Extreme",      bar: "bg-red-400",     bg: "bg-red-50",     border: "border-red-400",    text: "text-red-600" },
+  { value: 90, label: "Critical",     bar: "bg-red-600",     bg: "bg-red-50",     border: "border-red-600",    text: "text-red-800" },
+  { value: 95, label: "Catastrophic", bar: "bg-red-800",     bg: "bg-red-100",    border: "border-red-800",    text: "text-red-950" },
 ];
 
 export function NotificationSettings({ token }: NotificationSettingsProps) {
@@ -415,8 +416,8 @@ export function NotificationSettings({ token }: NotificationSettingsProps) {
                 if (isDirty) await onSave();
               }}
               disabled={saving}
-              variant="ghost"
-              className="bg-gradient-to-r from-red-500 to-orange-500 hover:from-red-600 hover:to-orange-600 text-white font-medium shadow-md shadow-red-500/20 transition-all duration-200 min-w-[140px]"
+              variant="outline"
+              className="border-2 border-red-500 text-black font-medium hover:bg-red-500 hover:text-white active:bg-red-600 transition-all duration-200 min-w-[140px]"
             >
               {saving ? (
                 <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
