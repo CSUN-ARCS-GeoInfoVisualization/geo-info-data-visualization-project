@@ -54,7 +54,6 @@
 
 .gooey-nav-container .effect.filter {
   background: #dc2626;
-  filter: url(#gooey-filter);
   overflow: visible;
 }
 
