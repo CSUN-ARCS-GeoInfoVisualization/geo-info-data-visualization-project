@@ -1,141 +1,143 @@
-import { useState } from "react";
-import { 
-  Newspaper, 
-  Clock, 
-  ExternalLink, 
-  AlertTriangle, 
+import { useCallback, useEffect, useMemo, useState } from "react";
+import {
+  Newspaper,
+  Clock,
+  ExternalLink,
+  AlertTriangle,
   Flame,
   Shield,
   BookOpen,
-  Filter,
-  Search
+  Search,
+  Loader2,
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { Alert, AlertDescription } from "./ui/alert";
-import { ImageWithFallback } from "./figma/ImageWithFallback";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "./ui/dropdown-menu";
+import {
+  fetchNews,
+  EXTERNAL_SOURCE_LINKS,
+  SOURCE_BUCKET_COPY,
+  TRUSTED_SOURCE_HOME,
+  type NewsArticleDTO,
+  type TabCategory,
+} from "../services/newsApi";
 
-type NewsCategory = "breaking" | "updates" | "safety" | "prevention" | "research";
-
-interface NewsArticle {
-  id: string;
-  title: string;
-  summary: string;
-  content: string;
-  category: NewsCategory;
-  source: string;
-  timestamp: string;
-  imageUrl?: string;
-  location?: string;
-  isBreaking?: boolean;
-  tags: string[];
+function formatRelativeTime(iso: string): string {
+  const then = new Date(iso).getTime();
+  const now = Date.now();
+  const sec = Math.round((now - then) / 1000);
+  if (sec < 60) return "just now";
+  const min = Math.floor(sec / 60);
+  if (min < 60) return `${min} min ago`;
+  const hr = Math.floor(min / 60);
+  if (hr < 24) return `${hr} hour${hr === 1 ? "" : "s"} ago`;
+  const day = Math.floor(hr / 24);
+  if (day < 7) return `${day} day${day === 1 ? "" : "s"} ago`;
+  return new Date(iso).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
 }
 
-const mockNewsArticles: NewsArticle[] = [
-  {
-    id: "1",
-    title: "Red Flag Warning Issued for Northern California Counties",
-    summary: "National Weather Service issues critical fire weather warning with sustained winds up to 45 mph and humidity levels dropping below 15%.",
-    content: "The National Weather Service has issued a Red Flag Warning for multiple Northern California counties, effective through Thursday evening. Critical fire weather conditions are expected with northeast winds 25 to 35 mph with gusts up to 45 mph. Relative humidity values will drop to 10-15% Wednesday afternoon. Any fires that develop will likely spread rapidly due to these extreme conditions.",
-    category: "breaking",
-    source: "National Weather Service",
-    timestamp: "2 hours ago",
-    location: "Northern California",
-    isBreaking: true,
-    tags: ["red flag warning", "weather", "california"]
-  },
-  {
-    id: "2", 
-    title: "Wildfire Near Highway 101 Contained at 15 Acres",
-    summary: "Local fire crews successfully contain grassfire that threatened residential areas in Marin County.",
-    content: "Firefighters have successfully contained a 15-acre wildfire that broke out near Highway 101 in Marin County this morning. The fire, which started around 10:30 AM, threatened several residential structures before being brought under control by local fire departments. No injuries were reported, and all evacuation orders have been lifted. The cause of the fire is currently under investigation.",
-    category: "updates",
-    source: "Marin County Fire Department",
-    timestamp: "4 hours ago",
-    location: "Marin County",
-    isBreaking: false,
-    tags: ["containment", "marin county", "highway 101"]
-  },
-  {
-    id: "3",
-    title: "New Study Shows AI Wildfire Detection Reduces Response Time by 60%",
-    summary: "Researchers demonstrate significant improvements in early fire detection using satellite imagery and machine learning algorithms.",
-    content: "A groundbreaking study published in Nature Communications reveals that AI-powered wildfire detection systems can reduce emergency response times by up to 60%. The system uses satellite imagery and machine learning algorithms to identify fire signatures within minutes of ignition, compared to traditional detection methods that can take hours. The technology is being piloted in high-risk areas across California and Oregon.",
-    category: "research", 
-    source: "Nature Communications",
-    timestamp: "1 day ago",
-    isBreaking: false,
-    tags: ["AI", "technology", "detection", "research"]
-  },
-  {
-    id: "4",
-    title: "Essential Home Fire Safety Tips for Wildfire Season",
-    summary: "Fire safety experts share critical steps homeowners can take to protect their properties during high-risk periods.",
-    content: "As wildfire season intensifies, fire safety experts emphasize the importance of creating defensible space around homes. Key recommendations include maintaining a 30-foot clearance zone, installing ember-resistant vents, and keeping gutters clean. Homeowners should also prepare emergency evacuation kits and establish family communication plans. Regular maintenance of vegetation and removal of flammable materials can significantly reduce fire risk.",
-    category: "safety",
-    source: "CAL FIRE",
-    timestamp: "2 days ago",
-    isBreaking: false,
-    tags: ["safety", "prevention", "homeowners", "defensible space"]
-  },
-  {
-    id: "5",
-    title: "Fire Weather Watch Extended Through Weekend",
-    summary: "Hot, dry conditions with elevated fire danger expected to persist across the region through Sunday.",
-    content: "The National Weather Service has extended the Fire Weather Watch through Sunday evening as hot, dry conditions persist across the region. Temperatures are expected to reach 95-105°F with relative humidity dropping to 8-15%. Light offshore winds will develop Saturday night into Sunday morning. Residents are urged to avoid outdoor activities that could spark fires and report any smoke immediately.",
-    category: "updates",
-    source: "National Weather Service",
-    timestamp: "6 hours ago",
-    isBreaking: false,
-    tags: ["fire weather", "extended forecast", "temperatures"]
-  },
-  {
-    id: "6",
-    title: "New Firefighting Drone Technology Deployed in Sonoma County",
-    summary: "Advanced thermal imaging drones provide real-time fire monitoring and mapping capabilities for emergency crews.",
-    content: "Sonoma County Fire Department has deployed new thermal imaging drone technology to enhance firefighting capabilities. The drones provide real-time fire perimeter mapping, hotspot identification, and personnel safety monitoring. This technology allows incident commanders to make more informed decisions and allocate resources more effectively. The system has already proven valuable in monitoring several small fires this season.",
-    category: "research",
-    source: "Sonoma County Fire Department", 
-    timestamp: "3 days ago",
-    isBreaking: false,
-    tags: ["drones", "technology", "thermal imaging", "sonoma county"]
-  }
-];
+const TRUSTED_GRID_BUCKETS = [
+  "cal_fire",
+  "nws",
+  "local_fire",
+  "emergency",
+] as const;
 
 export function FireNews() {
-  const [selectedCategory, setSelectedCategory] = useState<NewsCategory | "all">("all");
+  const [selectedCategory, setSelectedCategory] = useState<"all" | TabCategory>("all");
   const [searchQuery, setSearchQuery] = useState("");
-  const [expandedArticle, setExpandedArticle] = useState<string | null>(null);
+  const [items, setItems] = useState<NewsArticleDTO[]>([]);
+  const [hasMoreToLoad, setHasMoreToLoad] = useState(false);
+  const [loadingRecent, setLoadingRecent] = useState(true);
+  const [loadingOlder, setLoadingOlder] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const loadRecent = useCallback(async () => {
+    setLoadingRecent(true);
+    setError(null);
+    setItems([]);
+    try {
+      const data = await fetchNews("recent", selectedCategory, { offset: 0 });
+      setItems(data.items);
+      setHasMoreToLoad(data.has_more);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load news");
+      setItems([]);
+      setHasMoreToLoad(false);
+    } finally {
+      setLoadingRecent(false);
+    }
+  }, [selectedCategory]);
+
+  useEffect(() => {
+    loadRecent();
+  }, [loadRecent]);
+
+  const loadOlder = useCallback(async () => {
+    if (!hasMoreToLoad) return;
+    setLoadingOlder(true);
+    setError(null);
+    try {
+      const data = await fetchNews("recent", selectedCategory, {
+        offset: items.length,
+      });
+      setItems((prev) => {
+        const ids = new Set(prev.map((x) => x.id));
+        const merged = [...prev];
+        for (const item of data.items) {
+          if (!ids.has(item.id)) {
+            ids.add(item.id);
+            merged.push(item);
+          }
+        }
+        return merged;
+      });
+      setHasMoreToLoad(data.has_more);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Failed to load more");
+    } finally {
+      setLoadingOlder(false);
+    }
+  }, [selectedCategory, hasMoreToLoad, items.length]);
 
   const categories = [
     { id: "all" as const, label: "All News", icon: Newspaper },
     { id: "breaking" as const, label: "Breaking", icon: AlertTriangle },
     { id: "updates" as const, label: "Updates", icon: Flame },
     { id: "safety" as const, label: "Safety", icon: Shield },
-    { id: "research" as const, label: "Research", icon: BookOpen }
+    { id: "research" as const, label: "Research", icon: BookOpen },
   ];
 
-  const filteredArticles = mockNewsArticles.filter(article => {
-    const matchesCategory = selectedCategory === "all" || article.category === selectedCategory;
-    const matchesSearch = searchQuery === "" || 
-      article.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      article.summary.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      article.tags.some(tag => tag.toLowerCase().includes(searchQuery.toLowerCase()));
-    
-    return matchesCategory && matchesSearch;
-  });
+  const filteredArticles = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q) return items;
+    return items.filter(
+      (article) =>
+        article.title.toLowerCase().includes(q) ||
+        article.summary.toLowerCase().includes(q) ||
+        article.source_label.toLowerCase().includes(q)
+    );
+  }, [items, searchQuery]);
 
-  const getCategoryBadge = (category: NewsCategory) => {
-    const configs = {
+  const getCategoryBadge = (category: TabCategory) => {
+    const configs: Record<TabCategory, { label: string; className: string }> = {
       breaking: { label: "Breaking", className: "bg-red-100 text-red-800 border-red-200" },
       updates: { label: "Updates", className: "bg-orange-100 text-orange-800 border-orange-200" },
       safety: { label: "Safety", className: "bg-green-100 text-green-800 border-green-200" },
-      prevention: { label: "Prevention", className: "bg-blue-100 text-blue-800 border-blue-200" },
-      research: { label: "Research", className: "bg-purple-100 text-purple-800 border-purple-200" }
+      research: { label: "Research", className: "bg-purple-100 text-purple-800 border-purple-200" },
     };
-    
     const config = configs[category];
     return (
       <Badge variant="outline" className={config.className}>
@@ -144,51 +146,76 @@ export function FireNews() {
     );
   };
 
-  const breakingNews = mockNewsArticles.filter(article => article.isBreaking);
+  const breakingNews = items.filter((article) => article.is_breaking);
+
+  const emptyAfterFilters =
+    !loadingRecent && filteredArticles.length === 0 && items.length > 0;
+
+  const showArticleList =
+    !loadingRecent && (items.length > 0 || hasMoreToLoad || error);
 
   return (
     <div className="space-y-8">
-      {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
           <h1 className="text-3xl font-bold mb-2">Fire News & Updates</h1>
           <p className="text-muted-foreground">
-            Latest wildfire news, safety updates, and emergency information
+            Articles from the last 90 days: official feeds plus web discovery when configured. New
+            URLs are saved for training; duplicates are skipped. Use Load more for the next page.
           </p>
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm">
-            <ExternalLink className="h-4 w-4 mr-2" />
-            View External Sources
-          </Button>
-        </div>
+        <DropdownMenu>
+          <DropdownMenuTrigger asChild>
+            <Button variant="outline" size="sm" type="button">
+              <ExternalLink className="h-4 w-4 shrink-0" />
+              View external sources
+            </Button>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="min-w-[14rem]">
+            {EXTERNAL_SOURCE_LINKS.map((link) => (
+              <DropdownMenuItem key={link.href} asChild>
+                <a href={link.href} target="_blank" rel="noopener noreferrer" className="cursor-pointer">
+                  <ExternalLink className="h-4 w-4" />
+                  {link.label}
+                </a>
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
 
-      {/* Breaking News Alert */}
       {breakingNews.length > 0 && (
         <Alert className="border-l-4 border-l-red-500 bg-red-50">
           <AlertTriangle className="h-4 w-4" />
           <AlertDescription>
-            <div className="flex items-center justify-between">
-              <div>
+            <div className="flex items-start justify-between gap-2 flex-wrap">
+              <div className="min-w-0 flex-1">
                 <strong>Breaking:</strong> {breakingNews[0].title}
+                {breakingNews[0].summary?.trim() ? (
+                  <p className="mt-2 text-sm font-normal text-muted-foreground line-clamp-3">
+                    {breakingNews[0].summary}
+                  </p>
+                ) : null}
               </div>
-              <Badge className="bg-red-100 text-red-800 border-red-200 animate-pulse">
-                Live
-              </Badge>
+              <Badge className="bg-red-100 text-red-800 border-red-200 animate-pulse shrink-0">Live</Badge>
             </div>
           </AlertDescription>
         </Alert>
       )}
 
-      {/* Search and Filter Controls */}
+      {error && (
+        <Alert variant="destructive">
+          <AlertDescription>{error}</AlertDescription>
+        </Alert>
+      )}
+
       <Card>
         <CardContent className="pt-6">
           <div className="flex flex-col md:flex-row gap-4">
             <div className="relative flex-1">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground" />
-              <Input 
-                placeholder="Search fire news..." 
+              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-muted-foreground pointer-events-none" />
+              <Input
+                placeholder="Search fire news..."
                 className="pl-10"
                 value={searchQuery}
                 onChange={(e) => setSearchQuery(e.target.value)}
@@ -204,6 +231,7 @@ export function FireNews() {
                     size="sm"
                     onClick={() => setSelectedCategory(category.id)}
                     className="flex items-center gap-2"
+                    type="button"
                   >
                     <Icon className="h-4 w-4" />
                     {category.label}
@@ -215,98 +243,135 @@ export function FireNews() {
         </CardContent>
       </Card>
 
-      {/* News Articles */}
-      <div className="space-y-6">
-        {filteredArticles.length === 0 ? (
-          <Card>
-            <CardContent className="pt-6 text-center">
-              <Newspaper className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
-              <h3 className="text-lg font-medium mb-2">No articles found</h3>
-              <p className="text-muted-foreground">
-                Try adjusting your search criteria or category filter.
-              </p>
-            </CardContent>
-          </Card>
-        ) : (
-          filteredArticles.map((article) => (
-            <Card key={article.id} className={article.isBreaking ? "border-red-200 bg-red-50/30" : ""}>
-              <CardHeader>
-                <div className="flex items-start justify-between gap-4">
-                  <div className="flex-1">
-                    <div className="flex items-center gap-2 mb-2">
-                      {getCategoryBadge(article.category)}
-                      {article.location && (
-                        <Badge variant="outline" className="text-xs">
-                          {article.location}
-                        </Badge>
-                      )}
-                      {article.isBreaking && (
-                        <Badge className="bg-red-100 text-red-800 border-red-200 animate-pulse">
-                          Breaking
-                        </Badge>
-                      )}
-                    </div>
-                    <CardTitle className="text-xl mb-2">{article.title}</CardTitle>
-                    <div className="flex items-center gap-4 text-sm text-muted-foreground">
-                      <div className="flex items-center gap-1">
-                        <Clock className="h-4 w-4" />
-                        {article.timestamp}
-                      </div>
-                      <span>•</span>
-                      <span>{article.source}</span>
-                    </div>
-                  </div>
-                </div>
-              </CardHeader>
-              <CardContent>
-                <p className="text-muted-foreground mb-4">{article.summary}</p>
-                
-                {expandedArticle === article.id && (
-                  <div className="mb-4 p-4 bg-muted/30 rounded-lg">
-                    <p className="text-sm leading-relaxed">{article.content}</p>
-                  </div>
-                )}
-
-                <div className="flex items-center justify-between">
-                  <div className="flex flex-wrap gap-1">
-                    {article.tags.map((tag, index) => (
-                      <Badge key={index} variant="secondary" className="text-xs">
-                        {tag}
-                      </Badge>
-                    ))}
-                  </div>
-                  <div className="flex gap-2">
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={() => setExpandedArticle(
-                        expandedArticle === article.id ? null : article.id
-                      )}
-                    >
-                      {expandedArticle === article.id ? "Show Less" : "Read More"}
-                    </Button>
-                    <Button variant="outline" size="sm">
-                      <ExternalLink className="h-4 w-4 mr-2" />
-                      Source
-                    </Button>
-                  </div>
-                </div>
+      {loadingRecent ? (
+        <div className="flex justify-center py-16">
+          <Loader2 className="h-10 w-10 animate-spin text-muted-foreground" />
+        </div>
+      ) : (
+        <div className="space-y-6">
+          {!loadingRecent && items.length === 0 && !hasMoreToLoad && !error && (
+            <Card>
+              <CardContent className="pt-6 text-center">
+                <Newspaper className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                <h3 className="text-lg font-medium mb-4">No fire news in the last 90 days</h3>
               </CardContent>
             </Card>
-          ))
-        )}
-      </div>
+          )}
 
-      {/* Load More */}
-      {filteredArticles.length > 0 && (
-        <div className="text-center">
-          <Button variant="outline">
-            Load More Articles
-          </Button>
+          {emptyAfterFilters && (
+            <Card>
+              <CardContent className="pt-6 text-center">
+                <Newspaper className="h-12 w-12 text-muted-foreground mx-auto mb-4" />
+                <h3 className="text-lg font-medium mb-2">No articles found</h3>
+                <p className="text-muted-foreground">Try adjusting your search or category filter.</p>
+              </CardContent>
+            </Card>
+          )}
+
+          {showArticleList &&
+            filteredArticles.map((article) => {
+              const bucket =
+                SOURCE_BUCKET_COPY[article.source_bucket] ?? SOURCE_BUCKET_COPY.emergency;
+              return (
+                <Card
+                  key={article.id}
+                  className={article.is_breaking ? "border-red-200 bg-red-50/30" : ""}
+                >
+                  <CardHeader>
+                    <div className="flex items-start justify-between gap-4">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2 mb-2 flex-wrap">
+                          {getCategoryBadge(article.category)}
+                          {article.is_fallback && (
+                            <Badge variant="outline" className="text-xs border-amber-300 bg-amber-50">
+                              Web discovery
+                            </Badge>
+                          )}
+                          {article.is_breaking && (
+                            <Badge className="bg-red-100 text-red-800 border-red-200 animate-pulse">
+                              Breaking
+                            </Badge>
+                          )}
+                        </div>
+                        <CardTitle className="text-xl mb-2">{article.title}</CardTitle>
+                        <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-4 text-sm text-muted-foreground">
+                          <div className="flex items-center gap-1">
+                            <Clock className="h-4 w-4 shrink-0" />
+                            {formatRelativeTime(article.published_at)}
+                          </div>
+                          <span className="hidden sm:inline">•</span>
+                          <span>
+                            {bucket.title} — {article.source_label}
+                          </span>
+                        </div>
+                        <p className="text-xs text-muted-foreground mt-1">{bucket.subtitle}</p>
+                      </div>
+                    </div>
+                  </CardHeader>
+                  <CardContent>
+                    <p className="text-muted-foreground mb-4">{article.summary}</p>
+
+                    <div className="flex items-center justify-between flex-wrap gap-2">
+                      <div className="flex flex-wrap gap-1">
+                        <Badge variant="secondary" className="text-xs">
+                          {article.source_bucket === "cal_fire"
+                            ? "State agency"
+                            : article.source_bucket === "nws"
+                              ? "Weather"
+                              : article.source_bucket === "emergency"
+                                ? "Emergency"
+                                : article.source_bucket === "web_discovery"
+                                  ? "Search"
+                                  : "Local FD"}
+                        </Badge>
+                      </div>
+                      {article.url ? (
+                        <Button variant="outline" size="sm" asChild>
+                          <a href={article.url} target="_blank" rel="noopener noreferrer">
+                            <ExternalLink className="h-4 w-4 mr-2 inline" />
+                            Source
+                          </a>
+                        </Button>
+                      ) : (
+                        <Button variant="outline" size="sm" type="button" disabled>
+                          <ExternalLink className="h-4 w-4 mr-2 inline" />
+                          Source
+                        </Button>
+                      )}
+                    </div>
+                  </CardContent>
+                </Card>
+              );
+            })}
+
+          {showArticleList && (
+            <div className="text-center pt-2">
+              <Button
+                variant="outline"
+                type="button"
+                onClick={() => void loadOlder()}
+                disabled={loadingOlder || !hasMoreToLoad}
+              >
+                {loadingOlder ? (
+                  <>
+                    <Loader2 className="h-4 w-4 mr-2 animate-spin inline" />
+                    Loading…
+                  </>
+                ) : (
+                  "Load more"
+                )}
+              </Button>
+              <p className="text-xs text-muted-foreground mt-2 max-w-md mx-auto">
+                {hasMoreToLoad
+                  ? "Loads the next page of items (same 90-day pool: feeds + web discovery)."
+                  : "No more articles in this category for the last 90 days."}
+              </p>
+            </div>
+          )}
+
         </div>
       )}
 
-      {/* News Sources */}
       <Card>
         <CardHeader>
           <CardTitle className="flex items-center gap-2">
@@ -316,22 +381,22 @@ export function FireNews() {
         </CardHeader>
         <CardContent>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            <div className="text-center p-4 border rounded-lg">
-              <h3 className="font-medium mb-1">CAL FIRE</h3>
-              <p className="text-xs text-muted-foreground">Official state fire agency</p>
-            </div>
-            <div className="text-center p-4 border rounded-lg">
-              <h3 className="font-medium mb-1">National Weather Service</h3>
-              <p className="text-xs text-muted-foreground">Weather alerts & warnings</p>
-            </div>
-            <div className="text-center p-4 border rounded-lg">
-              <h3 className="font-medium mb-1">Local Fire Departments</h3>
-              <p className="text-xs text-muted-foreground">Regional fire updates</p>
-            </div>
-            <div className="text-center p-4 border rounded-lg">
-              <h3 className="font-medium mb-1">Emergency Services</h3>
-              <p className="text-xs text-muted-foreground">Official alerts & evacuations</p>
-            </div>
+            {TRUSTED_GRID_BUCKETS.map((key) => {
+              const s = SOURCE_BUCKET_COPY[key];
+              const href = TRUSTED_SOURCE_HOME[key];
+              return (
+                <a
+                  key={key}
+                  href={href}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="text-center p-4 border rounded-lg hover:bg-muted/40 transition-colors block"
+                >
+                  <h3 className="font-medium mb-1">{s.title}</h3>
+                  <p className="text-xs text-muted-foreground">{s.subtitle}</p>
+                </a>
+              );
+            })}
           </div>
         </CardContent>
       </Card>

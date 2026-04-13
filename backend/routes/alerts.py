@@ -193,7 +193,7 @@ def admin_send_test():
         risk_score=75,
         contributing_factors=["Dry vegetation", "High wind"],
     )
-    msg = EmailMessage(to=to, subject="FireWatch Test Email", html_body=html, text_body=text)
+    msg = EmailMessage(to=to, subject="FireScope Test Email", html_body=html, text_body=text)
     result = _email_sender.provider.send(msg)
     if result.success:
         return jsonify({"ok": True, "message_id": result.provider_message_id})

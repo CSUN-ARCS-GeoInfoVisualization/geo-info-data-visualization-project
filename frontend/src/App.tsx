@@ -1,12 +1,6 @@
 import { useState } from "react";
-import {
-  Flame,
-  Bell,
-  Menu,
-  Settings,
-  Search,
-  LogOut
-} from "lucide-react";
+import { Bell, Menu, Settings, Search, LogOut } from "lucide-react";
+import { FireScopeBrandMark } from "./components/firescope-brand";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import {
@@ -81,11 +75,12 @@ export default function App() {
         <header className="border-b bg-white/95 backdrop-blur-sm sticky top-0 z-50">
           <div className="container mx-auto px-4 sm:px-6 lg:px-8">
             <div className="flex items-center justify-between h-16">
-              <div className="flex items-center space-x-4">
-                <div className="flex items-center space-x-2">
-                  <Flame className="h-8 w-8 text-red-500" />
-                  <span className="text-xl font-bold">FireWatch</span>
-                </div>
+              <div className="flex items-center space-x-4 transition-none">
+                <FireScopeBrandMark
+                  height={36}
+                  variant="plain"
+                  className="min-w-0 shrink-0"
+                />
 
                 <nav className="ml-8 hidden space-x-6 xl:flex" aria-label="Main">
                   {NAV_LINKS.map(({ page, label }) => (
@@ -202,9 +197,8 @@ export default function App() {
           <div className="container mx-auto px-4 sm:px-6 lg:px-8 py-8">
             <div className="grid grid-cols-1 md:grid-cols-4 gap-8">
               <div>
-                <div className="flex items-center space-x-2 mb-4">
-                  <Flame className="h-6 w-6 text-red-500" />
-                  <span className="text-lg font-bold">FireWatch</span>
+                <div className="flex items-center mb-4">
+                  <FireScopeBrandMark height={32} variant="plain" />
                 </div>
                 <p className="text-sm text-muted-foreground">
                   Advanced wildfire risk prediction and monitoring system powered by real-time data and machine learning.
@@ -236,15 +230,15 @@ export default function App() {
                 <ul className="space-y-2 text-sm text-muted-foreground">
                   <li>Emergency: 911</li>
                   <li>Fire Dept: (555) 123-4567</li>
-                  <li>Support: help@firewatch.com</li>
-                  <li>Updates: @FireWatch</li>
+                  <li>Support: help@firescope.app</li>
+                  <li>Updates: @FireScope</li>
                 </ul>
               </div>
             </div>
 
             <div className="border-t mt-8 pt-8 text-center text-sm text-muted-foreground">
               <p>
-                © 2025 FireWatch. All rights reserved. Data provided by National Weather Service and local fire departments.
+                © 2025 FireScope. All rights reserved. Data provided by National Weather Service and local fire departments.
               </p>
             </div>
           </div>

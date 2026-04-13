@@ -49,6 +49,9 @@ export function SavedLocationsWidget({ onAddLocation }: SavedLocationsWidgetProp
           if (data.length > 0) fetchPredictions(data);
         }
       })
+      .catch(() => {
+        /* backend unreachable */
+      })
       .finally(() => setLoading(false));
   }, []);
 
@@ -70,6 +73,8 @@ export function SavedLocationsWidget({ onAddLocation }: SavedLocationsWidgetProp
         });
         setPredictions(map);
       }
+    } catch {
+      /* backend unreachable or connection reset */
     } finally {
       setPredicting(false);
     }

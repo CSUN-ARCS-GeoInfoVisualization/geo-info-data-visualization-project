@@ -1,6 +1,6 @@
 # Email Delivery Setup Guide (Resend)
 
-This guide walks through configuring the FireWatch email module with [Resend](https://resend.com). *(Maintained by Ido)*
+This guide walks through configuring the FireScope email module with [Resend](https://resend.com). *(Maintained by Ido)*
 
 ## 1. Create Resend Account
 
@@ -30,7 +30,7 @@ For development, you can send from `onboarding@resend.dev` without domain verifi
 ## 3. API Key
 
 1. In Resend: **API Keys** → **Create API Key**
-2. Name it (e.g. "FireWatch Production")
+2. Name it (e.g. "FireScope Production")
 3. Copy the key (starts with `re_`) and store it securely
 4. Add to `.env`:
 
@@ -45,7 +45,7 @@ Copy `.env.example` to `.env` and configure:
 ```bash
 RESEND_API_KEY=re_xxxx              # Required for sending
 SENDER_EMAIL=alerts@your-domain.dev # Must be verified domain
-SENDER_NAME=FireWatch Alerts
+SENDER_NAME=FireScope Alerts
 EMAIL_MAX_RETRIES=3
 EMAIL_RETRY_BASE_DELAY=2.0
 DAILY_DIGEST_HOUR=8

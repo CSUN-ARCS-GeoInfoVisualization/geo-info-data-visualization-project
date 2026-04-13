@@ -91,3 +91,29 @@ class AlertActivity(db.Model):
 
     user = db.relationship('User', foreign_keys=[user_id])
     triggered_by_user = db.relationship('User', foreign_keys=[triggered_by_user_id])
+
+
+class NewsArticle(db.Model):
+    """
+    Fire news ingested from allowlisted feeds + optional web discovery.
+    Retention: application prunes rows with published_at older than 90 days.
+    training_meta holds a JSON snapshot of the source dict for ML / analytics pipelines.
+    """
+    __tablename__ = 'news_articles'
+
+    id = db.Column(db.Integer, primary_key=True)
+    url_hash = db.Column(db.String(64), unique=True, nullable=False, index=True)
+    article_id = db.Column(db.String(64), nullable=False, index=True)
+    title = db.Column(db.Text, nullable=False)
+    summary = db.Column(db.Text, nullable=False)
+    url = db.Column(db.Text, nullable=False)
+    published_at = db.Column(db.DateTime(timezone=True), nullable=False, index=True)
+    category = db.Column(db.String(24), nullable=False)
+    source_bucket = db.Column(db.String(32), nullable=False, index=True)
+    source_label = db.Column(db.String(255), nullable=False)
+    is_breaking = db.Column(db.Boolean, default=False, nullable=False)
+    is_fallback = db.Column(db.Boolean, default=False, nullable=False, index=True)
+    provenance = db.Column(db.String(64), nullable=True)
+    training_meta = db.Column(db.JSON, nullable=True)
+    first_ingested_at = db.Column(db.DateTime(timezone=True), server_default=func.now())
+    updated_at = db.Column(db.DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
