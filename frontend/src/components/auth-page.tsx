@@ -9,6 +9,7 @@ import { Input } from "./ui/input";
 import { Label } from "./ui/label";
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from "./ui/card";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "./ui/tabs";
+import { GlowCard } from "./ui/spotlight-card";
 
 const API_URL = import.meta.env.VITE_API_URL as string;
 
@@ -228,7 +229,8 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
             </p>
           </div>
 
-          <Card className="shadow-2xl border-0 bg-white/95 backdrop-blur-xl">
+          <GlowCard glowColor="red" customSize className="w-full !aspect-auto !grid-rows-none !p-0 !shadow-none !gap-0">
+          <Card className="shadow-2xl border-0 bg-white/95 backdrop-blur-xl rounded-2xl">
             <Tabs defaultValue="login" className="w-full" onValueChange={() => { setError(null); setSuccess(null); }}>
               <CardHeader className="space-y-1 pb-4">
                 <TabsList className="grid w-full grid-cols-2 h-11">
@@ -314,8 +316,8 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
                     )}
                     <Button
                       type="submit"
-                      variant="ghost"
-                      className="w-full h-11 bg-gradient-to-r from-red-500 to-orange-500 hover:from-red-600 hover:to-orange-600 text-white font-medium shadow-lg shadow-red-500/20 hover:shadow-red-500/30 transition-all duration-200"
+                      variant="outline"
+                      className="w-full h-11 border-2 border-red-500 text-black font-medium hover:bg-red-500 hover:text-white active:bg-red-600 transition-all duration-200"
                       disabled={isLoading}
                     >
                       {isLoading ? (
@@ -485,8 +487,8 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
                     )}
                     <Button
                       type="submit"
-                      variant="ghost"
-                      className="w-full h-11 bg-gradient-to-r from-red-500 to-orange-500 hover:from-red-600 hover:to-orange-600 text-white font-medium shadow-lg shadow-red-500/20 hover:shadow-red-500/30 transition-all duration-200"
+                      variant="outline"
+                      className="w-full h-11 border-2 border-red-500 text-black font-medium hover:bg-red-500 hover:text-white active:bg-red-600 transition-all duration-200"
                       disabled={isLoading}
                     >
                       {isLoading ? (
@@ -528,6 +530,7 @@ export function AuthPage({ onAuthSuccess }: AuthPageProps) {
               </TabsContent>
             </Tabs>
           </Card>
+          </GlowCard>
 
           <p className="text-center text-xs text-white/30 mt-6 leading-relaxed">
             Wildfire Prediction Senior Research Project — California State University, Northridge
