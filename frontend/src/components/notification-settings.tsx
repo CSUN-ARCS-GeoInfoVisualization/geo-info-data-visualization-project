@@ -59,6 +59,7 @@ const FREQ_OPTIONS: { value: DraftPreference["frequency"]; label: string; desc: 
 ];
 
 const RISK_TIERS = [
+  { value: 50, label: "Low", bar: "bg-emerald-400", bg: "bg-emerald-50", border: "border-emerald-200", text: "text-emerald-700" },
   { value: 65, label: "Elevated", bar: "bg-yellow-400", bg: "bg-yellow-50", border: "border-yellow-200", text: "text-yellow-700" },
   { value: 70, label: "High", bar: "bg-orange-400", bg: "bg-orange-50", border: "border-orange-200", text: "text-orange-700" },
   { value: 75, label: "Very High", bar: "bg-orange-500", bg: "bg-orange-50", border: "border-orange-300", text: "text-orange-800" },
