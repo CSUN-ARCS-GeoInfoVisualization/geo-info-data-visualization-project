@@ -25,6 +25,7 @@ SAMPLE_LOCATIONS = [
         "evi": 0,
         "lst": 13200,    # ≈ -8.7°C  (cold mountain winter)
         "wind": 6.0,
+        "humidity": 30.0,
         "elevation": 2000.0,
         "note": "High elevation, cold, low wind — matches Fire=0 training data",
     },
@@ -35,6 +36,7 @@ SAMPLE_LOCATIONS = [
         "evi": 1200,
         "lst": 13800,    # ≈ 2.9°C   (cool coastal)
         "wind": 5.0,
+        "humidity": 80.0,
         "elevation": 16.0,
         "note": "Coastal, cool, moderate vegetation",
     },
@@ -45,6 +47,7 @@ SAMPLE_LOCATIONS = [
         "evi": 600,
         "lst": 13500,    # ≈ -3.6°C  (winter valley)
         "wind": 4.0,
+        "humidity": 60.0,
         "elevation": 9.0,
         "note": "Flat valley, low wind",
     },
@@ -55,6 +58,7 @@ SAMPLE_LOCATIONS = [
         "evi": 800,
         "lst": 13900,    # ≈ 5.0°C
         "wind": 7.0,
+        "humidity": 40.0,
         "elevation": 420.0,
         "note": "Foothill chaparral, moderate wind",
     },
@@ -65,6 +69,7 @@ SAMPLE_LOCATIONS = [
         "evi": 500,
         "lst": 14000,    # ≈ 7.0°C
         "wind": 7.0,
+        "humidity": 35.0,
         "elevation": 550.0,
         "note": "Dry shrubland, intermittent wind",
     },
@@ -75,6 +80,7 @@ SAMPLE_LOCATIONS = [
         "evi": 0,
         "lst": 14055,    # ≈ 7.95°C  — direct match to Fire=1 training record
         "wind": 8.0,
+        "humidity": 20.0,
         "elevation": 987.76,
         "note": "Matches Fire=1 record in clean_data_2020.csv",
     },
@@ -85,6 +91,7 @@ SAMPLE_LOCATIONS = [
         "evi": 0,
         "lst": 14196,    # ≈ 10.77°C — direct match to Fire=1 training record
         "wind": 10.0,
+        "humidity": 15.0,
         "elevation": 61.45,
         "note": "Matches Fire=1 record in clean_data_2020.csv",
     },
@@ -95,6 +102,7 @@ SAMPLE_LOCATIONS = [
         "evi": 0,
         "lst": 14196,    # ≈ 10.77°C
         "wind": 12.0,    # High Diablo/Santa Ana wind
+        "humidity": 12.0,
         "elevation": 800.0,
         "note": "High wind, warm, exposed ridge",
     },
@@ -105,7 +113,8 @@ SAMPLE_LOCATIONS = [
         "evi": 0,
         "lst": 15200,    # ≈ 30.85°C — peak summer heat
         "wind": 10.0,    # sustained fire-season wind
+        "humidity": 10.0,
         "elevation": 500.0,
-        "note": "High-risk: hot and dry summer conditions → model score ~0.62",
+        "note": "High-risk: hot and dry summer conditions",
     },
 ]

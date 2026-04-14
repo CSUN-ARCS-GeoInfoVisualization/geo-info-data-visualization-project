@@ -25,12 +25,14 @@ def _run(lat: float, lon: float) -> dict:
 
     try:
         weather = get_weather(lat, lon)
-        wind = weather["wind_speed"]
-        lst = (weather["temperature_celsius"] + 273.15) / 0.02
+        wind     = weather["wind_speed"]
+        humidity = weather["humidity"]
+        lst      = (weather["temperature_celsius"] + 273.15) / 0.02
         weather_source = "live"
     except Exception:
-        wind = loc["wind"]
-        lst = loc["lst"]
+        wind     = loc["wind"]
+        humidity = loc["humidity"]
+        lst      = loc["lst"]
         weather_source = "fallback"
 
     try:
@@ -51,6 +53,7 @@ def _run(lat: float, lon: float) -> dict:
         evi=evi,
         lst=lst,
         wind=wind,
+        humidity=humidity,
         elevation=elevation,
     )
     return {
@@ -75,6 +78,8 @@ def _run(lat: float, lon: float) -> dict:
             "lst_source": weather_source,
             "wind": result["wind"],
             "wind_source": weather_source,
+            "humidity": result["humidity"],
+            "humidity_source": weather_source,
             "elevation": result["elevation"],
             "elevation_source": elevation_source,
         },

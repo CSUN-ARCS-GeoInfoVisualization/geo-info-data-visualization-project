@@ -18,7 +18,7 @@ def get_weather(lat: float, lon: float) -> dict:
     params = {
         "latitude": lat,
         "longitude": lon,
-        "current": "wind_speed_10m,temperature_2m",
+        "current": "wind_speed_10m,temperature_2m,relative_humidity_2m",
         "wind_speed_unit": "ms",
     }
 
@@ -27,6 +27,7 @@ def get_weather(lat: float, lon: float) -> dict:
 
     data = response.json()
     return {
-        "wind_speed": float(data["current"]["wind_speed_10m"]),
-        "temperature_celsius": float(data["current"]["temperature_2m"]),
+        "wind_speed":           float(data["current"]["wind_speed_10m"]),
+        "temperature_celsius":  float(data["current"]["temperature_2m"]),
+        "humidity":             float(data["current"]["relative_humidity_2m"]),
     }
