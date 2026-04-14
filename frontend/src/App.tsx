@@ -21,7 +21,7 @@ import { AuthPage } from "./components/auth-page";
 import { NotificationSettings } from "./components/notification-settings";
 import { SettingsPage } from "./components/settings-page";
 import { History } from "./components/history";
-import { Toaster } from "sonner@2.0.3";
+import { Toaster } from "sonner";
 
 type Page =
   | "dashboard"
