@@ -167,55 +167,87 @@ def _appeears_login() -> str:
     return resp.json()["token"]
 
 
+TASK_ID_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".appeears_task_id")
+
+
+def _get_with_retry(url, headers, timeout=15, retries=5, backoff=30):
+    """GET with retry on network errors."""
+    for attempt in range(retries):
+        try:
+            resp = requests.get(url, headers=headers, timeout=timeout)
+            return resp
+        except (requests.exceptions.ConnectionError, requests.exceptions.Timeout) as e:
+            if attempt == retries - 1:
+                raise
+            wait = backoff * (attempt + 1)
+            print(f"\n  Network error ({e.__class__.__name__}), retrying in {wait}s...", end="", flush=True)
+            time.sleep(wait)
+
+
 def fetch_evi_batch(
-    points: list[tuple[float, float, str]]
+    points: list[tuple[float, float, str]],
+    resume_task_id: str | None = None,
 ) -> dict[tuple[float, float], float]:
     """
     Batch-fetch MODIS MOD13Q1 EVI (250 m, 16-day composite) for all points
     via NASA AppEEARS. Submits one task for the full 2020 year, then selects
     the EVI value whose composite date is closest to each point's acquisition date.
 
+    If resume_task_id is given (or a saved .appeears_task_id file exists), skips
+    submission and resumes polling that task.
+
     Returns:
         dict mapping (lat_rounded, lon_rounded) -> EVI raw value
     """
-    print(f"Submitting AppEEARS batch EVI task for {len(points):,} points...")
     token   = _appeears_login()
     headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
 
-    coords = [
-        {"id": str(i), "latitude": round(lat, 6), "longitude": round(lon, 6), "category": ""}
-        for i, (lat, lon, _) in enumerate(points)
-    ]
+    # -- Resume or submit --
+    task_id = resume_task_id
+    if task_id is None and os.path.exists(TASK_ID_FILE):
+        with open(TASK_ID_FILE) as f:
+            task_id = f.read().strip()
+        print(f"Resuming AppEEARS task {task_id} from saved state...")
 
-    task_payload = {
-        "task_type": "point",
-        "task_name": f"wildfire_evi_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
-        "params": {
-            "dates": [{"startDate": "01-01-2020", "endDate": "12-31-2020"}],
-            "layers": [{"product": "MOD13Q1.061", "layer": "_250m_16_days_EVI"}],
-            "coordinates": coords,
-            "output": {
-                "format": {"type": "csv"},
-                "projection": "geographic",
+    if task_id is None:
+        print(f"Submitting AppEEARS batch EVI task for {len(points):,} points...")
+        coords = [
+            {"id": str(i), "latitude": round(lat, 6), "longitude": round(lon, 6), "category": ""}
+            for i, (lat, lon, _) in enumerate(points)
+        ]
+
+        task_payload = {
+            "task_type": "point",
+            "task_name": f"wildfire_evi_{datetime.now().strftime('%Y%m%d_%H%M%S')}",
+            "params": {
+                "dates": [{"startDate": "01-01-2020", "endDate": "12-31-2020"}],
+                "layers": [{"product": "MOD13Q1.061", "layer": "_250m_16_days_EVI"}],
+                "coordinates": coords,
+                "output": {
+                    "format": {"type": "csv"},
+                    "projection": "geographic",
+                },
             },
-        },
-    }
+        }
 
-    resp = requests.post(
-        f"{APPEEARS_URL}/task",
-        json=task_payload,
-        headers=headers,
-        timeout=30,
-    )
-    resp.raise_for_status()
-    task_id = resp.json()["task_id"]
-    print(f"  Task ID: {task_id}")
+        resp = requests.post(
+            f"{APPEEARS_URL}/task",
+            json=task_payload,
+            headers=headers,
+            timeout=30,
+        )
+        resp.raise_for_status()
+        task_id = resp.json()["task_id"]
+        print(f"  Task ID: {task_id}")
+        # Save so we can resume if the process is interrupted
+        with open(TASK_ID_FILE, "w") as f:
+            f.write(task_id)
 
     # Poll until done
     print("  Waiting for AppEEARS to process", end="", flush=True)
     while True:
         time.sleep(20)
-        status_resp = requests.get(
+        status_resp = _get_with_retry(
             f"{APPEEARS_URL}/task/{task_id}",
             headers={"Authorization": f"Bearer {token}"},
             timeout=15,
@@ -228,8 +260,12 @@ def fetch_evi_batch(
         elif status in ("error", "deleted"):
             raise RuntimeError(f"AppEEARS task failed: {status}")
 
+    # Clear saved task ID now that it's done
+    if os.path.exists(TASK_ID_FILE):
+        os.remove(TASK_ID_FILE)
+
     # Find the CSV in the bundle
-    bundle = requests.get(
+    bundle = _get_with_retry(
         f"{APPEEARS_URL}/bundle/{task_id}",
         headers={"Authorization": f"Bearer {token}"},
         timeout=15,
@@ -246,11 +282,10 @@ def fetch_evi_batch(
 
     # Download
     print("  Downloading EVI CSV...")
-    dl = requests.get(
+    dl = _get_with_retry(
         f"{APPEEARS_URL}/bundle/{task_id}/{csv_file['file_id']}",
         headers={"Authorization": f"Bearer {token}"},
         timeout=120,
-        stream=True,
     )
     dl.raise_for_status()
 
