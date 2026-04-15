@@ -93,6 +93,21 @@ class AlertActivity(db.Model):
     triggered_by_user = db.relationship('User', foreign_keys=[triggered_by_user_id])
 
 
+class RoleRequest(db.Model):
+    __tablename__ = 'role_requests'
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
+    requested_role = db.Column(db.String(32), nullable=False)
+    reason = db.Column(db.Text, nullable=True)
+    status = db.Column(db.String(16), nullable=False, default='pending')  # pending/approved/denied
+    reviewed_by = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    created_at = db.Column(db.DateTime, server_default=func.now())
+    updated_at = db.Column(db.DateTime, server_default=func.now(), onupdate=func.now())
+
+    user = db.relationship('User', foreign_keys=[user_id])
+    reviewer = db.relationship('User', foreign_keys=[reviewed_by])
+
+
 class NewsArticle(db.Model):
     """
     Fire news ingested from allowlisted feeds + optional web discovery.

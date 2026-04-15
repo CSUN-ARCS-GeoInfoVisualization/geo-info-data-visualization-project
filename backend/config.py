@@ -14,3 +14,5 @@ class Config:
 
     INITIAL_ADMIN_EMAIL = os.getenv('INITIAL_ADMIN_EMAIL')
     INITIAL_ADMIN_PASSWORD = os.getenv('INITIAL_ADMIN_PASSWORD')
+
+    SUPREME_ADMINS = ['ido.the.cohen@gmail.com', 'xunfei.jiang@csun.edu']

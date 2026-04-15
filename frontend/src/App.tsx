@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { Bell, Menu, Settings, Search, LogOut } from "lucide-react";
 import { GooeyNav } from "./components/GooeyNav";
 import { FireScopeBrandMark } from "./components/firescope-brand";
@@ -21,7 +21,10 @@ import { AuthPage } from "./components/auth-page";
 import { NotificationSettings } from "./components/notification-settings";
 import { SettingsPage } from "./components/settings-page";
 import { History } from "./components/history";
+import { AdminPage } from "./components/admin-page";
+import { ResearchPage } from "./components/research-page";
 import { Toaster } from "sonner";
+import { apiFetch } from "./services/api";
 
 type Page =
   | "dashboard"
@@ -30,17 +33,20 @@ type Page =
   | "risk-map"
   | "alerts"
   | "history"
-  | "settings";
+  | "settings"
+  | "research"
+  | "admin";
 
 type SettingsTab = "profile" | "locations" | "notifications";
 
-const NAV_LINKS: { page: Page; label: string }[] = [
+const BASE_NAV: { page: Page; label: string }[] = [
   { page: "dashboard", label: "Dashboard" },
   { page: "evacuation-routes", label: "Evacuation Routes" },
   { page: "news", label: "News" },
   { page: "risk-map", label: "Risk Map" },
   { page: "alerts", label: "Alerts" },
   { page: "history", label: "History" },
+  { page: "research", label: "Research" },
 ];
 
 export default function App() {
@@ -48,16 +54,42 @@ export default function App() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [authToken, setAuthToken] = useState<string | null>(() => localStorage.getItem("token"));
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("profile");
+  const [userRole, setUserRole] = useState<string | null>(null);
+  const [isSupreme, setIsSupreme] = useState(false);
   const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string;
   const isAuthenticated = Boolean(authToken);
 
+  const fetchUserRole = useCallback(async () => {
+    try {
+      const r = await apiFetch("/me");
+      if (r.ok) {
+        const data = await r.json();
+        setUserRole(data.role);
+        setIsSupreme(data.is_supreme || false);
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => {
+    if (isAuthenticated) fetchUserRole();
+  }, [isAuthenticated, fetchUserRole]);
+
+  const NAV_LINKS = useMemo(() => {
+    const links = [...BASE_NAV];
+    if (userRole === "Admin") links.push({ page: "admin", label: "Admin" });
+    return links;
+  }, [userRole]);
+
   const onAuthSuccess = () => {
     setAuthToken(localStorage.getItem("token"));
+    fetchUserRole();
   };
 
   const onSignOut = () => {
     localStorage.removeItem("token");
     setAuthToken(null);
+    setUserRole(null);
+    setIsSupreme(false);
   };
 
   const goToPage = (page: Page) => {
@@ -200,6 +232,8 @@ export default function App() {
             <NotificationSettings token={authToken as string} />
           )}
           {currentPage === "history" && <History />}
+          {currentPage === "research" && <ResearchPage userRole={userRole} />}
+          {currentPage === "admin" && userRole === "Admin" && <AdminPage />}
           {currentPage === "settings" && <SettingsPage key={settingsTab} defaultTab={settingsTab} />}
         </main>
 
