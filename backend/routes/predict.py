@@ -20,6 +20,13 @@ def _nearest_location(lat: float, lon: float) -> dict:
     return min(SAMPLE_LOCATIONS, key=dist)
 
 
+def _validate_coords(lat: float, lon: float):
+    if not (-90 <= lat <= 90):
+        raise ValueError(f"lat {lat} out of range [-90, 90]")
+    if not (-180 <= lon <= 180):
+        raise ValueError(f"lon {lon} out of range [-180, 180]")
+
+
 def _run(lat: float, lon: float) -> dict:
     loc = _nearest_location(lat, lon)
 
@@ -100,6 +107,11 @@ def predict_single():
     except (TypeError, ValueError):
         return jsonify({'error': 'lat and lon must be numbers'}), 400
 
+    try:
+        _validate_coords(lat, lon)
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+
     return jsonify(_run(lat, lon))
 
 
@@ -121,6 +133,10 @@ def predict_batch():
             lat, lon = float(lat), float(lon)
         except (TypeError, ValueError):
             return jsonify({'error': f'items[{i}] lat and lon must be numbers'}), 400
+        try:
+            _validate_coords(lat, lon)
+        except ValueError as e:
+            return jsonify({'error': f'items[{i}]: {e}'}), 400
         results.append(_run(lat, lon))
 
     return jsonify({'results': results})

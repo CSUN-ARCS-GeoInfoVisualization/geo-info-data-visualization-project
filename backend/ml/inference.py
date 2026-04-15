@@ -15,6 +15,16 @@ _MODELS_DIR     = os.path.join(os.path.dirname(os.path.abspath(__file__)), "mode
 _DEFAULT_MODEL  = os.path.join(_MODELS_DIR, "wildfire_model_predictive.pkl")
 _DEFAULT_SCALER = os.path.join(_MODELS_DIR, "wildfire_scaler_predictive.pkl")
 
+# Module-level cache: keyed by (model_path, scaler_path) so swapping models works
+_cache: dict[tuple[str, str], tuple] = {}
+
+
+def _load(model_path: str, scaler_path: str) -> tuple:
+    key = (model_path, scaler_path)
+    if key not in _cache:
+        _cache[key] = (joblib.load(model_path), joblib.load(scaler_path))
+    return _cache[key]
+
 
 def risk_label(score: float) -> str:
     if score < 0.25:
@@ -49,8 +59,7 @@ def predict_from_features(
     Returns:
         dict with keys: evi, lst, wind, humidity, elevation, risk_score, label
     """
-    scaler = joblib.load(scaler_path)
-    model  = joblib.load(model_path)
+    model, scaler = _load(model_path, scaler_path)
 
     features        = np.array([[evi, lst, wind, humidity, elevation]])
     features_scaled = scaler.transform(features)
