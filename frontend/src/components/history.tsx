@@ -24,6 +24,8 @@ import { Checkbox } from "./ui/checkbox";
 import { Map as GoogleMap, useMap } from '@vis.gl/react-google-maps';
 import { GoogleMapsOverlay } from '@deck.gl/google-maps';
 import { GeoJsonLayer, ScatterplotLayer } from '@deck.gl/layers';
+import { MapsKeyLoadingPlaceholder, useMapsConfig } from "../context/maps-config";
+import { MapPlaceholder } from "./map-placeholder";
 
 // Fire Perimeters Overlay Component
 function HistoricalFirePerimetersOverlay({
@@ -411,6 +413,17 @@ function DINSDamageOverlay({
 }
 
 export function History() {
+  const { mapsApiKey, mapsKeyLoading } = useMapsConfig();
+  if (mapsKeyLoading) {
+    return <MapsKeyLoadingPlaceholder className="min-h-[480px]" />;
+  }
+  if (!mapsApiKey) {
+    return <MapPlaceholder className="min-h-[480px] w-full" />;
+  }
+  return <HistoryContent />;
+}
+
+function HistoryContent() {
   const [selectedYears, setSelectedYears] = useState<number[]>([2025]); // Start with 2025 selected
   const [mapTypeId, setMapTypeId] = useState<'roadmap' | 'satellite' | 'hybrid' | 'terrain'>('satellite');
   const [searchQuery, setSearchQuery] = useState("");
@@ -439,7 +452,9 @@ export function History() {
 
         // Extract all unique years and sort
         const features = data.features;
-        const years = [...new Set(features.map((f: any) => f.properties.YEAR_).filter(Boolean))].sort((a, b) => b - a);
+        const years = [...new Set(features.map((f: any) => f.properties.YEAR_).filter(Boolean))].sort(
+          (a, b) => Number(b) - Number(a)
+        );
         setAvailableYears(years as number[]);
 
         // Calculate stats for initial year (2025)

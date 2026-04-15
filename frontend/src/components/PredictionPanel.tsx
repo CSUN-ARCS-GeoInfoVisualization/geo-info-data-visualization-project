@@ -24,19 +24,17 @@ export default function PredictionPanel() {
   const [selectedIndex, setSelectedIndex] = useState(0);
   const [result, setResult] = useState<any>(null);
   const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
 
   const selected = LOCATIONS[selectedIndex];
 
   async function handlePredict() {
     setLoading(true);
-    setError(null);
     setResult(null);
     try {
       const data = await predictSingle(selected.lat, selected.lon, null);
       setResult(data);
-    } catch (e: any) {
-      setError(e.message ?? "Prediction failed.");
+    } catch {
+      /* silent */
     } finally {
       setLoading(false);
     }
@@ -86,10 +84,6 @@ export default function PredictionPanel() {
       >
         {loading ? "Running…" : "Run Prediction"}
       </button>
-
-      {error && (
-        <p style={{ marginTop: "0.75rem", color: "#dc2626", fontSize: "0.85rem" }}>{error}</p>
-      )}
 
       {result && (
         <div style={{ marginTop: "1rem", padding: "0.75rem", background: "white", borderRadius: "6px", border: "1px solid #ddd" }}>

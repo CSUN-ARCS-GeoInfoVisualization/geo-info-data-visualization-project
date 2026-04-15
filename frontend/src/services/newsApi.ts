@@ -26,11 +26,30 @@ export interface NewsArticleDTO {
 export const DEFAULT_NEWS_PAGE = 15;
 const DEFAULT_LOAD_MORE = 10;
 
+/** Must match backend ALLOWED_LOOKBACK_DAYS ordering. */
+export const NEWS_LOOKBACK_SEQUENCE = [14, 21, 28, 35, 42, 49, 56, 60] as const;
+
+export function nextNewsLookbackDays(current: number): number {
+  const seq = NEWS_LOOKBACK_SEQUENCE as readonly number[];
+  const i = seq.indexOf(current);
+  if (i < 0) return 14;
+  if (i + 1 < seq.length) return seq[i + 1];
+  return current;
+}
+
+export interface NewsFetchResponse {
+  items: NewsArticleDTO[];
+  has_more: boolean;
+  lookback_days: number;
+  max_lookback_days: number;
+  can_extend_lookback: boolean;
+}
+
 export async function fetchNews(
   segment: "recent" | "older",
   category: "all" | TabCategory,
-  opts?: { offset?: number; limit?: number }
-): Promise<{ items: NewsArticleDTO[]; has_more: boolean }> {
+  opts?: { offset?: number; limit?: number; lookback_days?: number }
+): Promise<NewsFetchResponse> {
   const offset = opts?.offset ?? 0;
   const limit =
     opts?.limit ??
@@ -41,6 +60,9 @@ export async function fetchNews(
     offset: String(offset),
     limit: String(limit),
   });
+  if (opts?.lookback_days != null) {
+    params.set("lookback_days", String(opts.lookback_days));
+  }
   const r = await apiFetch(`/news?${params}`);
   if (!r.ok) {
     const t = await r.text();

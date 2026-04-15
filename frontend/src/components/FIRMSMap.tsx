@@ -1,15 +1,17 @@
-import { useState, useEffect } from "react";
+import React, { useState, useEffect, useCallback, useMemo } from "react";
 import { Map as GoogleMap, useMap } from '@vis.gl/react-google-maps';
 import { GoogleMapsOverlay } from '@deck.gl/google-maps';
 import { ScatterplotLayer } from '@deck.gl/layers';
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
-import { Flame, RefreshCw, Info, AlertTriangle } from "lucide-react";
+import { Flame, RefreshCw, Info } from "lucide-react";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
+import { MapsKeyLoadingPlaceholder, useMapsConfig } from "../context/maps-config";
+import { MapPlaceholder } from "./map-placeholder";
+import { getApiBaseUrl } from "../config/apiBase";
 
-// NASA FIRMS API configuration
-const FIRMS_API_KEY = '86b3bd8d28576ae3fdaa2afc69fae104'; // Get from https://firms.modaps.eosdis.nasa.gov/api/
-const FIRMS_BASE_URL = 'https://firms.modaps.eosdis.nasa.gov/api/area/csv';
+// NASA FIRMS — VITE_FIRMS_API_KEY (Netlify build) or NASA_FIRMS_API_KEY on API server (/api/public/config)
+const FIRMS_BASE_URL = "https://firms.modaps.eosdis.nasa.gov/api/area/csv";
 
 // California bounding box: [west, south, east, north]
 const CALIFORNIA_BOUNDS = '-125,32,-114,42';
@@ -186,23 +188,57 @@ function ActiveFiresOverlay({
 }
 
 export function FIRMSMap() {
+  const { mapsApiKey, mapsKeyLoading } = useMapsConfig();
+  const envFirms = useMemo(
+    () => ((import.meta.env.VITE_FIRMS_API_KEY as string | undefined) ?? "").trim(),
+    []
+  );
+  const apiBase = getApiBaseUrl();
+  const [remoteFirmsKey, setRemoteFirmsKey] = useState<string | null>(null);
+  const [firmsConfigReady, setFirmsConfigReady] = useState(() => {
+    if (envFirms) return true;
+    return !apiBase;
+  });
+
+  const firmsApiKey = envFirms || remoteFirmsKey || "";
+
+  useEffect(() => {
+    if (envFirms) return;
+    if (!apiBase) return;
+    let cancelled = false;
+    fetch(`${apiBase}/public/config`)
+      .then((r) => (r.ok ? r.json() : null))
+      .then((data: { firms_api_key?: string } | null) => {
+        if (cancelled || !data) return;
+        const k = (data.firms_api_key ?? "").trim();
+        setRemoteFirmsKey(k.length > 0 ? k : null);
+      })
+      .catch(() => {})
+      .finally(() => {
+        if (!cancelled) setFirmsConfigReady(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [envFirms, apiBase]);
+
   const [fires, setFires] = useState<ActiveFire[]>([]);
   const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [showFires, setShowFires] = useState(true);
   const [dayRange, setDayRange] = useState(1); // Day range selector
 
-  // Fetch active fires from NASA FIRMS API
-  const fetchActiveFires = async () => {
+  const fetchActiveFires = useCallback(async () => {
     setLoading(true);
-    setError(null);
 
     try {
-      // VIIRS S-NPP Near Real-Time
-      const url = `${FIRMS_BASE_URL}/${FIRMS_API_KEY}/VIIRS_SNPP_NRT/${CALIFORNIA_BOUNDS}/${dayRange}`;
-
-      console.log('🔥 Fetching fires from:', url);
+      const key = firmsApiKey.trim();
+      if (!key) {
+        setFires([]);
+        setLoading(false);
+        return;
+      }
+      const url = `${FIRMS_BASE_URL}/${key}/VIIRS_SNPP_NRT/${CALIFORNIA_BOUNDS}/${dayRange}`;
 
       const response = await fetch(url);
 
@@ -212,16 +248,11 @@ export function FIRMSMap() {
 
       const csv = await response.text();
 
-      console.log('📄 CSV Response (first 300 chars):', csv.substring(0, 300));
-
-      // Check if response is an error message
-      if (csv.includes('Invalid') || csv.includes('Error')) {
-        throw new Error('Invalid API key or request.');
+      if (csv.includes("Invalid") || csv.includes("Error")) {
+        throw new Error("Invalid API key or request.");
       }
 
-      // Check if no data
-      if (csv.trim().split('\n').length <= 1) {
-        console.log('ℹ️ No active fires detected in the last', dayRange, 'day(s)');
+      if (csv.trim().split("\n").length <= 1) {
         setFires([]);
         setLastUpdate(new Date());
         setLoading(false);
@@ -231,24 +262,17 @@ export function FIRMSMap() {
       const parsedFires = parseCSV(csv);
       setFires(parsedFires);
       setLastUpdate(new Date());
-
-      console.log(`✅ Loaded ${parsedFires.length} active fires from NASA FIRMS`);
-
-      if (parsedFires.length > 0) {
-        console.log('Sample fire:', parsedFires[0]);
-      }
-    } catch (err) {
-      console.error('❌ Error fetching FIRMS data:', err);
-      setError(err instanceof Error ? err.message : 'Failed to fetch fire data');
+    } catch {
+      setFires([]);
     } finally {
       setLoading(false);
     }
-  };
+  }, [firmsApiKey, dayRange]);
 
-  // Initial load
   useEffect(() => {
+    if (!firmsConfigReady) return;
     fetchActiveFires();
-  }, [dayRange]); // Refetch when day range changes
+  }, [firmsConfigReady, fetchActiveFires]);
 
   const highConfidenceFires = fires.filter(f => f.confidence >= 80).length;
   const mediumConfidenceFires = fires.filter(f => f.confidence >= 50 && f.confidence < 80).length;
@@ -321,33 +345,12 @@ export function FIRMSMap() {
       </CardHeader>
 
       <CardContent>
-        {/* Error Alert */}
-        {error && (
-          <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg flex items-start gap-2">
-            <AlertTriangle className="h-4 w-4 text-yellow-600 mt-0.5" />
-            <div className="text-sm">
-              <p className="font-medium text-yellow-800">API Configuration Needed</p>
-              <p className="text-yellow-700 text-xs mt-1">
-                {error}
-              </p>
-              <p className="text-xs text-yellow-600 mt-2">
-                Showing demo data. Get your free API key at:{' '}
-                <a
-                  href="https://firms.modaps.eosdis.nasa.gov/api/"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="underline"
-                >
-                  NASA FIRMS
-                </a>
-              </p>
-            </div>
-          </div>
-        )}
-
-        {/* Map */}
-        <div className="w-full h-96 rounded-lg overflow-hidden border relative">
-          {fires.length === 0 && !loading && !error && (
+        {/* Map or fallback (no Google Maps key = no script / no useMap) */}
+        <div className="w-full min-h-96 rounded-lg overflow-hidden border relative">
+          {mapsKeyLoading && (
+            <MapsKeyLoadingPlaceholder className="min-h-96 w-full absolute inset-0 bg-background/80 z-20" />
+          )}
+          {fires.length === 0 && !loading && mapsApiKey && !mapsKeyLoading && (
             <div className="absolute inset-0 flex items-center justify-center bg-black/10 z-10 pointer-events-none">
               <div className="bg-white px-6 py-3 rounded-lg shadow-lg text-center">
                 <p className="text-lg font-semibold text-green-600">✅ No Active Fires Detected</p>
@@ -358,16 +361,22 @@ export function FIRMSMap() {
             </div>
           )}
 
-          <GoogleMap
-            style={{ width: '100%', height: '100%' }}
-            defaultCenter={{ lat: 36.7, lng: -119.8 }}
-            defaultZoom={6}
-            mapTypeId="satellite"
-            gestureHandling="greedy"
-            disableDefaultUI={false}
-          >
-            <ActiveFiresOverlay fires={fires} enabled={showFires} />
-          </GoogleMap>
+          {!mapsApiKey && !mapsKeyLoading ? (
+            <MapPlaceholder className="min-h-96 w-full" />
+          ) : mapsApiKey ? (
+            <div className="h-96 w-full relative">
+              <GoogleMap
+                style={{ width: '100%', height: '100%' }}
+                defaultCenter={{ lat: 36.7, lng: -119.8 }}
+                defaultZoom={6}
+                mapTypeId="satellite"
+                gestureHandling="greedy"
+                disableDefaultUI={false}
+              >
+                <ActiveFiresOverlay fires={fires} enabled={showFires} />
+              </GoogleMap>
+            </div>
+          ) : null}
         </div>
 
         {/* Legend */}

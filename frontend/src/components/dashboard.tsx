@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Thermometer, Droplets, Wind, Eye, MapPin } from "lucide-react";
 import { RiskLevelBadge, RiskLevel } from "./risk-level-badge";
 import { ConditionCard } from "./condition-card";
@@ -7,7 +7,6 @@ import { ActiveAlerts } from "./active-alerts";
 import { GoogleRiskMap } from "./GoogleRiskMap";
 import { SavedLocationsWidget } from "./saved-locations-widget";
 import { FIRMSMap } from "./FIRMSMap";
-import { NewsTicker } from "./news-ticker";
 import { apiFetch } from "../services/api";
 
 interface DashboardProps {
@@ -29,6 +28,9 @@ interface WeatherData {
   windGusts: string;
   visibility: string;
 }
+
+/** Central CA — used for weather, risk, and maps until the user saves a location. */
+const DEFAULT_COORDS = { lat: 36.7783, lon: -119.4179 };
 
 async function fetchWeather(lat: number, lng: number): Promise<WeatherData> {
   const url =
@@ -63,14 +65,6 @@ function toRiskLevel(apiLevel: string): RiskLevel {
   return map[apiLevel] ?? "low";
 }
 
-const DEFAULT_LOCATION: SavedLocation = {
-  id: -1,
-  name: "Los Angeles",
-  address: "Los Angeles, CA",
-  lat: 34.0522,
-  lon: -118.2437,
-};
-
 export function Dashboard({ onAddLocation }: DashboardProps) {
   const [email, setEmail] = useState<string | null>(null);
   const [locations, setLocations] = useState<SavedLocation[]>([]);
@@ -78,11 +72,33 @@ export function Dashboard({ onAddLocation }: DashboardProps) {
   const [weather, setWeather] = useState<WeatherData | null>(null);
   const [weatherLoading, setWeatherLoading] = useState(false);
   const [riskLevel, setRiskLevel] = useState<RiskLevel | null>(null);
-  const [usingDefault, setUsingDefault] = useState(false);
+
+  const effective = useMemo(() => {
+    const loc = locations.find((l) => l.id === selectedId);
+    if (loc) {
+      return {
+        lat: loc.lat,
+        lon: loc.lon,
+        label: `${loc.name}${loc.address ? ` · ${loc.address}` : ""}`,
+        isDefault: false,
+      };
+    }
+    return {
+      lat: DEFAULT_COORDS.lat,
+      lon: DEFAULT_COORDS.lon,
+      label: "California (overview)",
+      isDefault: true,
+    };
+  }, [locations, selectedId]);
 
   useEffect(() => {
     apiFetch("/me")
-      .then(async (r) => { if (r.ok) { const d = await r.json(); setEmail(d.email); } })
+      .then(async (r) => {
+        if (r.ok) {
+          const d = await r.json();
+          setEmail(d.email);
+        }
+      })
       .catch(() => {});
   }, []);
 
@@ -91,36 +107,18 @@ export function Dashboard({ onAddLocation }: DashboardProps) {
       .then(async (r) => {
         if (r.ok) {
           const data: SavedLocation[] = await r.json();
-          if (data.length > 0) {
-            setLocations(data);
-            setSelectedId(data[0].id);
-            setUsingDefault(false);
-          } else {
-            setLocations([DEFAULT_LOCATION]);
-            setSelectedId(DEFAULT_LOCATION.id);
-            setUsingDefault(true);
-          }
-        } else {
-          setLocations([DEFAULT_LOCATION]);
-          setSelectedId(DEFAULT_LOCATION.id);
-          setUsingDefault(true);
+          setLocations(data);
+          if (data.length > 0) setSelectedId(data[0].id);
         }
       })
-      .catch(() => {
-        setLocations([DEFAULT_LOCATION]);
-        setSelectedId(DEFAULT_LOCATION.id);
-        setUsingDefault(true);
-      });
+      .catch(() => {});
   }, []);
 
-  // Fetch weather and risk whenever the selected location changes
   useEffect(() => {
-    const loc = locations.find((l) => l.id === selectedId);
-    if (!loc) return;
-
+    const { lat, lon } = effective;
     setWeatherLoading(true);
     setWeather(null);
-    fetchWeather(loc.lat, loc.lon)
+    fetchWeather(lat, lon)
       .then(setWeather)
       .catch(() => {})
       .finally(() => setWeatherLoading(false));
@@ -128,7 +126,7 @@ export function Dashboard({ onAddLocation }: DashboardProps) {
     setRiskLevel(null);
     apiFetch("/predict/batch", {
       method: "POST",
-      body: JSON.stringify({ items: [{ lat: loc.lat, lon: loc.lon }] }),
+      body: JSON.stringify({ items: [{ lat, lon }] }),
     })
       .then(async (r) => {
         if (r.ok) {
@@ -138,26 +136,12 @@ export function Dashboard({ onAddLocation }: DashboardProps) {
         }
       })
       .catch(() => {});
-  }, [selectedId, locations]);
+  }, [effective.lat, effective.lon]);
 
   const selectedLocation = locations.find((l) => l.id === selectedId) ?? null;
 
   return (
     <div className="space-y-8">
-      {/* News Ticker */}
-      <NewsTicker />
-
-      {/* Default location hint */}
-      {usingDefault && (
-        <div className="rounded-lg bg-blue-50 border border-blue-200 px-4 py-3 flex items-center gap-2">
-          <MapPin className="h-4 w-4 text-blue-500 shrink-0" />
-          <p className="text-sm text-blue-800">
-            Showing data for <strong>Los Angeles</strong> (default). Save a location to see personalized weather and fire risk for your area.
-          </p>
-        </div>
-      )}
-
-      {/* Welcome Header */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
           <h1 className="text-2xl font-bold">Dashboard</h1>
@@ -172,21 +156,22 @@ export function Dashboard({ onAddLocation }: DashboardProps) {
           {riskLevel ? (
             <RiskLevelBadge level={riskLevel} size="lg" />
           ) : (
-            <span className="text-sm text-muted-foreground">{selectedId ? "Loading…" : "—"}</span>
+            <span className="text-sm text-muted-foreground">
+              {weatherLoading ? "Loading…" : "—"}
+            </span>
           )}
         </div>
       </div>
 
-      {/* Current Conditions */}
       <div>
         <div className="flex items-center justify-between mb-3">
           <p className="text-xs text-muted-foreground flex items-center gap-1">
             <MapPin className="h-3 w-3" />
-            {locations.length === 0
-              ? "No saved locations — add one in Settings"
+            {effective.isDefault
+              ? "Current conditions · California overview (save a location in Settings for your address)"
               : selectedLocation
-              ? `Current conditions · ${selectedLocation.name}${selectedLocation.address ? ` · ${selectedLocation.address}` : ""}`
-              : "Loading…"}
+                ? `Current conditions · ${effective.label}`
+                : "Loading…"}
           </p>
 
           {locations.length > 1 && (
@@ -211,7 +196,7 @@ export function Dashboard({ onAddLocation }: DashboardProps) {
             unit="°F"
             icon={Thermometer}
             trend="stable"
-            trendValue={weather ? "Live data" : weatherLoading ? "Loading…" : "No location"}
+            trendValue={weather ? "Live (Open-Meteo)" : weatherLoading ? "Loading…" : "—"}
           />
           <ConditionCard
             title="Humidity"
@@ -219,7 +204,7 @@ export function Dashboard({ onAddLocation }: DashboardProps) {
             unit="%"
             icon={Droplets}
             trend="stable"
-            trendValue={weather ? "Live data" : weatherLoading ? "Loading…" : "No location"}
+            trendValue={weather ? "Live (Open-Meteo)" : weatherLoading ? "Loading…" : "—"}
           />
           <ConditionCard
             title="Wind Speed"
@@ -227,7 +212,13 @@ export function Dashboard({ onAddLocation }: DashboardProps) {
             unit="mph"
             icon={Wind}
             trend="up"
-            trendValue={weather ? `Gusts up to ${weather.windGusts} mph` : weatherLoading ? "Loading…" : "No location"}
+            trendValue={
+              weather
+                ? `Gusts up to ${weather.windGusts} mph`
+                : weatherLoading
+                  ? "Loading…"
+                  : "—"
+            }
           />
           <ConditionCard
             title="Visibility"
@@ -235,35 +226,42 @@ export function Dashboard({ onAddLocation }: DashboardProps) {
             unit="miles"
             icon={Eye}
             trend="stable"
-            trendValue={weather ? "Live data" : weatherLoading ? "Loading…" : "No location"}
+            trendValue={weather ? "Live (Open-Meteo)" : weatherLoading ? "Loading…" : "—"}
           />
         </div>
 
         {locations.length === 0 && (
           <p className="text-xs text-muted-foreground mt-3">
-            <button onClick={onAddLocation} className="text-red-500 hover:underline">
-              Add a location
+            <button type="button" onClick={onAddLocation} className="text-red-500 hover:underline">
+              Add a saved location
             </button>{" "}
-            to see live weather conditions.
+            in Settings to center maps and metrics on your home or work.
           </p>
         )}
       </div>
 
-      {/* Map + My Locations */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2">
-          <GoogleRiskMap height="h-[420px]" />
+          <GoogleRiskMap
+            height="h-[420px]"
+            center={{ lat: effective.lat, lng: effective.lon }}
+            markerPosition={{ lat: effective.lat, lng: effective.lon }}
+            zoom={effective.isDefault ? 6 : 10}
+          />
         </div>
         <SavedLocationsWidget onAddLocation={onAddLocation} />
       </div>
 
-      {/* Active Fires (NASA FIRMS) */}
       <FIRMSMap />
 
-      {/* 7-Day Forecast + Active Alerts */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2">
-          <RiskChart title="7-Day Risk Forecast" type="area" />
+          <RiskChart
+            title="7-Day risk index & weather"
+            type="area"
+            latitude={effective.lat}
+            longitude={effective.lon}
+          />
         </div>
         <ActiveAlerts />
       </div>

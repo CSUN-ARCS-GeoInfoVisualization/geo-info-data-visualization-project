@@ -1,8 +1,9 @@
 import { useEffect } from "react";
 import { useMap } from "@vis.gl/react-google-maps";
 import { GoogleMapsOverlay } from "@deck.gl/google-maps";
-import { buildHeatmapLayer } from "../../layers/heatmapLayer";
+import { buildHeatmapLayer } from "../../layers/heatmaplayer";
 import { mockRiskData } from "../../Data/mockRiskData";
+
 
 export function DeckOverlayManager() {
   const map = useMap();

@@ -1,3 +1,5 @@
+import { getApiBaseUrl } from "../config/apiBase";
+
 type RequestOptions = {
   method?: string;
   headers?: Record<string, string>;
@@ -16,12 +18,14 @@ export type NotificationPreference = {
   unsubscribed_at: string | null;
 };
 
-const rawApiUrl = import.meta.env.VITE_API_URL || "http://localhost:5000";
-const API_BASE = rawApiUrl.endsWith("/api")
-  ? rawApiUrl
-  : `${rawApiUrl.replace(/\/$/, "")}/api`;
-
 async function apiRequest<T>(path: string, options: RequestOptions = {}, token?: string): Promise<T> {
+  const API_BASE = getApiBaseUrl();
+  if (!API_BASE) {
+    throw new Error(
+      "VITE_API_URL is not configured. In Netlify, set it to your API URL (e.g. https://your-service.onrender.com/api) and redeploy."
+    );
+  }
+
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
     ...(options.headers || {}),

@@ -1,6 +1,5 @@
 import { useState, useEffect, useMemo, useCallback } from "react";
 import { Bell, Menu, Settings, Search, LogOut } from "lucide-react";
-import { GooeyNav } from "./components/GooeyNav";
 import { FireScopeBrandMark } from "./components/firescope-brand";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
@@ -16,15 +15,15 @@ import { Dashboard } from "./components/dashboard";
 import { EvacuationRoutes } from "./components/evacuation-routes";
 import { FireNews } from "./components/fire-news";
 import { RiskMap } from "./components/risk-map";
-import { APIProvider } from '@vis.gl/react-google-maps';
+import { MapsRuntimeProvider } from "./context/maps-config";
 import { AuthPage } from "./components/auth-page";
 import { NotificationSettings } from "./components/notification-settings";
+import { apiFetch, GUEST_SESSION_KEY } from "./services/api";
 import { SettingsPage } from "./components/settings-page";
 import { History } from "./components/history";
 import { AdminPage } from "./components/admin-page";
 import { ResearchPage } from "./components/research-page";
 import { Toaster } from "sonner";
-import { apiFetch } from "./services/api";
 
 type Page =
   | "dashboard"
@@ -37,9 +36,6 @@ type Page =
   | "research"
   | "admin";
 
-type SettingsTab = "profile" | "locations" | "notifications";
-
-// Original 6 nav items — GooeyNav animation is tuned for exactly these
 const NAV_LINKS: { page: Page; label: string }[] = [
   { page: "dashboard", label: "Dashboard" },
   { page: "evacuation-routes", label: "Evacuation Routes" },
@@ -49,15 +45,20 @@ const NAV_LINKS: { page: Page; label: string }[] = [
   { page: "history", label: "History" },
 ];
 
+type SettingsTab = "profile" | "locations" | "notifications";
+
 export default function App() {
   const [currentPage, setCurrentPage] = useState<Page>("dashboard");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [settingsDefaultTab, setSettingsDefaultTab] = useState<SettingsTab>("profile");
   const [authToken, setAuthToken] = useState<string | null>(() => localStorage.getItem("token"));
-  const [settingsTab, setSettingsTab] = useState<SettingsTab>("profile");
+  const [guestMode, setGuestMode] = useState(() => {
+    if (localStorage.getItem("token")) return false;
+    return localStorage.getItem(GUEST_SESSION_KEY) === "1";
+  });
   const [userRole, setUserRole] = useState<string | null>(null);
   const [isSupreme, setIsSupreme] = useState(false);
-  const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string;
-  const isAuthenticated = Boolean(authToken);
+  const isAuthenticated = Boolean(authToken) || guestMode;
 
   const fetchUserRole = useCallback(async () => {
     try {
@@ -71,10 +72,10 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (isAuthenticated) fetchUserRole();
-  }, [isAuthenticated, fetchUserRole]);
+    if (authToken) fetchUserRole();
+  }, [authToken, fetchUserRole]);
 
-  // Extra nav items based on role (rendered separately from GooeyNav)
+  // Extra nav items based on role
   const extraNavLinks = useMemo(() => {
     const links: { page: Page; label: string }[] = [
       { page: "research", label: "Research" },
@@ -83,17 +84,28 @@ export default function App() {
     return links;
   }, [userRole]);
 
-  // All links combined for mobile dropdown
   const allNavLinks = useMemo(() => [...NAV_LINKS, ...extraNavLinks], [extraNavLinks]);
 
   const onAuthSuccess = () => {
-    setAuthToken(localStorage.getItem("token"));
+    const t = localStorage.getItem("token");
+    if (t) {
+      localStorage.removeItem(GUEST_SESSION_KEY);
+      setGuestMode(false);
+    }
+    setAuthToken(t);
     fetchUserRole();
+  };
+
+  const onGuestContinue = () => {
+    localStorage.setItem(GUEST_SESSION_KEY, "1");
+    setGuestMode(true);
   };
 
   const onSignOut = () => {
     localStorage.removeItem("token");
+    localStorage.removeItem(GUEST_SESSION_KEY);
     setAuthToken(null);
+    setGuestMode(false);
     setUserRole(null);
     setIsSupreme(false);
   };
@@ -103,20 +115,21 @@ export default function App() {
     setMobileNavOpen(false);
   };
 
-  const goToSettings = (tab: SettingsTab) => {
-    setSettingsTab(tab);
-    setCurrentPage("settings");
-  };
-
   // Show auth page if not authenticated
   if (!isAuthenticated) {
-    return <AuthPage onAuthSuccess={onAuthSuccess} />;
+    return <AuthPage onAuthSuccess={onAuthSuccess} onGuestContinue={onGuestContinue} />;
   }
 
+  const openSettings = (tab: SettingsTab) => {
+    setSettingsDefaultTab(tab);
+    setCurrentPage("settings");
+    setMobileNavOpen(false);
+  };
+
   return (
-    <APIProvider apiKey={apiKey} onLoad={() => console.log('Maps API loaded')}>
-      <div className="min-h-screen bg-background">
-        <Toaster position="top-right" richColors />
+    <MapsRuntimeProvider>
+        <div className="min-h-screen bg-background">
+          <Toaster position="top-right" richColors />
 
         {/* Header */}
         <header className="border-b bg-white/95 backdrop-blur-sm sticky top-0 z-50">
@@ -129,33 +142,33 @@ export default function App() {
                   className="min-w-0 shrink-0"
                 />
 
-                <div className="ml-8 hidden md:flex items-center overflow-visible gap-2" aria-label="Main">
-                  <GooeyNav
-                    items={NAV_LINKS.map(({ page, label }) => ({
-                      label,
-                      onClick: () => setCurrentPage(page),
-                    }))}
-                    activeIndex={NAV_LINKS.findIndex((l) => l.page === currentPage)}
-                    onItemClick={(i) => setCurrentPage(NAV_LINKS[i].page)}
-                    particleCount={8}
-                    particleDistances={[40, 6]}
-                    particleR={50}
-                    animationTime={350}
-                    timeVariance={150}
-                    colors={[1, 2, 3, 1, 2, 3, 1, 4]}
-                  />
-                  {extraNavLinks.map(({ page, label }) => (
-                    <Button
+                <nav className="ml-8 hidden space-x-6 xl:flex" aria-label="Main">
+                  {NAV_LINKS.map(({ page, label }) => (
+                    <button
                       key={page}
-                      variant={currentPage === page ? "default" : "ghost"}
-                      size="sm"
+                      type="button"
                       onClick={() => setCurrentPage(page)}
-                      className="ml-1"
+                      className={`text-sm font-medium hover:text-red-500 transition-colors ${
+                        currentPage === page ? "text-red-500" : "text-muted-foreground"
+                      }`}
                     >
                       {label}
-                    </Button>
+                    </button>
                   ))}
-                </div>
+                  {/* Role-based nav items */}
+                  {extraNavLinks.map(({ page, label }) => (
+                    <button
+                      key={page}
+                      type="button"
+                      onClick={() => setCurrentPage(page)}
+                      className={`text-sm font-medium hover:text-red-500 transition-colors ${
+                        currentPage === page ? "text-red-500" : "text-muted-foreground"
+                      }`}
+                    >
+                      {label}
+                    </button>
+                  ))}
+                </nav>
               </div>
 
               <div className="flex items-center space-x-4">
@@ -167,14 +180,14 @@ export default function App() {
                   />
                 </div>
 
-                <Button variant="ghost" size="sm" onClick={() => goToSettings("notifications")} title="Alert preferences">
+                <Button variant="ghost" size="sm">
                   <Bell className="h-4 w-4" />
                 </Button>
 
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => goToSettings("profile")}
+                  onClick={() => openSettings("profile")}
                   title="Settings"
                 >
                   <Settings className="h-4 w-4" />
@@ -192,7 +205,7 @@ export default function App() {
                     <Button
                       variant="ghost"
                       size="sm"
-                      className="md:hidden"
+                      className="xl:hidden"
                       type="button"
                       aria-label="Open navigation menu"
                       id="mobile-navigation-trigger"
@@ -222,7 +235,7 @@ export default function App() {
                     ))}
                     <DropdownMenuSeparator />
                     <DropdownMenuItem
-                      onSelect={() => goToPage("settings")}
+                      onSelect={() => openSettings("profile")}
                       className={
                         currentPage === "settings"
                           ? "text-red-600 font-medium"
@@ -241,17 +254,28 @@ export default function App() {
 
         {/* Main Content */}
         <main className="container mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          {currentPage === "dashboard" && <Dashboard onAddLocation={() => goToSettings("locations")} />}
+          {currentPage === "dashboard" && (
+            <Dashboard
+              onAddLocation={() => openSettings("locations")}
+            />
+          )}
           {currentPage === "evacuation-routes" && <EvacuationRoutes />}
           {currentPage === "news" && <FireNews />}
           {currentPage === "risk-map" && <RiskMap />}
-          {currentPage === "alerts" && (
-            <NotificationSettings token={authToken as string} />
-          )}
+          {currentPage === "alerts" &&
+            (authToken ? (
+              <NotificationSettings token={authToken} />
+            ) : (
+              <div className="rounded-lg border border-dashed bg-muted/30 px-6 py-10 text-center text-sm text-muted-foreground">
+                Sign in to manage alert notifications and subscription settings.
+              </div>
+            ))}
           {currentPage === "history" && <History />}
           {currentPage === "research" && <ResearchPage userRole={userRole} />}
           {currentPage === "admin" && userRole === "Admin" && <AdminPage />}
-          {currentPage === "settings" && <SettingsPage key={settingsTab} defaultTab={settingsTab} />}
+          {currentPage === "settings" && (
+            <SettingsPage defaultTab={settingsDefaultTab} />
+          )}
         </main>
 
         {/* Footer */}
@@ -305,7 +329,7 @@ export default function App() {
             </div>
           </div>
         </footer>
-      </div>
-    </APIProvider>
+        </div>
+    </MapsRuntimeProvider>
   );
 }
