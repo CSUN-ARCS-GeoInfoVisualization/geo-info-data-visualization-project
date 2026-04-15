@@ -1,10 +1,10 @@
-import { getApiBaseUrl } from "../config/apiBase";
+const rawApiUrl = import.meta.env.VITE_API_URL || "http://localhost:5000";
+const API_URL = rawApiUrl.endsWith("/api")
+  ? rawApiUrl
+  : `${rawApiUrl.replace(/\/$/, "")}/api`;
+console.log("Loaded API_URL =", API_URL);
 
 export async function predictSingle(lat, lon, date) {
-  const API_URL = getApiBaseUrl();
-  if (!API_URL) {
-    throw new Error("VITE_API_URL is not configured");
-  }
   const response = await fetch(`${API_URL}/predict`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -19,10 +19,6 @@ export async function predictSingle(lat, lon, date) {
 }
 
 export async function predictBatch(items) {
-  const API_URL = getApiBaseUrl();
-  if (!API_URL) {
-    throw new Error("VITE_API_URL is not configured");
-  }
   const response = await fetch(`${API_URL}/predict/batch`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },

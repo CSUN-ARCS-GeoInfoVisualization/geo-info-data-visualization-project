@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { LucideIcon } from "lucide-react";
 
@@ -9,7 +8,6 @@ interface ConditionCardProps {
   icon: LucideIcon;
   trend?: "up" | "down" | "stable";
   trendValue?: string;
-  children?: ReactNode;
 }
 
 export function ConditionCard({ 

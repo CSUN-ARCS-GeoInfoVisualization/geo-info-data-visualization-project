@@ -1,6 +1,6 @@
 import { Eye } from "lucide-react";
-import { ConditionCard } from "../condition-card";
-import PredictionPanel from "../PredictionPanel";
+import { ConditionCard } from "./condition-card";
+import PredictionPanel from "./PredictionPanel";
 
 export default function PredictionConditionCard() {
   return (

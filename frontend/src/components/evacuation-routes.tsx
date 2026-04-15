@@ -19,8 +19,6 @@ import { Map, Marker, useMap } from '@vis.gl/react-google-maps';
 import { GoogleMapsOverlay } from '@deck.gl/google-maps';
 import { IconLayer } from '@deck.gl/layers';
 import Supercluster from 'supercluster';
-import { MapsKeyLoadingPlaceholder, useMapsConfig } from "../context/maps-config";
-import { MapPlaceholder } from "./map-placeholder";
 
 const evacuationZones = [
   {
@@ -506,17 +504,6 @@ function FireFacilitiesOverlay({ smallDots = false }: { smallDots?: boolean }) {
 }
 
 export function EvacuationRoutes() {
-  const { mapsApiKey, mapsKeyLoading } = useMapsConfig();
-  if (mapsKeyLoading) {
-    return <MapsKeyLoadingPlaceholder className="min-h-[480px]" />;
-  }
-  if (!mapsApiKey) {
-    return <MapPlaceholder className="min-h-[480px] w-full" />;
-  }
-  return <EvacuationRoutesContent />;
-}
-
-function EvacuationRoutesContent() {
   const [selectedZone, setSelectedZone] = useState<string | null>(null);
   const [checklistLevel, setChecklistLevel] = useState<'prepare' | 'fireWatch' | 'evacuationWarning' | 'evacuateNow'>('prepare');
   const [checkedItems, setCheckedItems] = useState<{[key: string]: boolean}>({});

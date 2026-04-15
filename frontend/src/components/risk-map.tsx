@@ -40,8 +40,6 @@ import { Alert, AlertDescription } from "./ui/alert";
 import { Map as GoogleMap, useMap } from '@vis.gl/react-google-maps';
 import { GoogleMapsOverlay } from '@deck.gl/google-maps';
 import { GeoJsonLayer } from '@deck.gl/layers';
-import { MapsKeyLoadingPlaceholder, useMapsConfig } from "../context/maps-config";
-import { MapPlaceholder } from "./map-placeholder";
 
 interface MapLayer {
   id: string;
@@ -153,17 +151,6 @@ function WeatherStationMarker({ station, selected, onClick }: { station: Weather
 }
 
 export function RiskMap() {
-  const { mapsApiKey, mapsKeyLoading } = useMapsConfig();
-  if (mapsKeyLoading) {
-    return <MapsKeyLoadingPlaceholder className="min-h-[480px]" />;
-  }
-  if (!mapsApiKey) {
-    return <MapPlaceholder className="min-h-[480px] w-full" />;
-  }
-  return <RiskMapContent />;
-}
-
-function RiskMapContent() {
   const [selectedIncident, setSelectedIncident] = useState<string | null>(null);
   const [selectedStation, setSelectedStation] = useState<string | null>(null);
   const [mapTypeId, setMapTypeId] = useState<'roadmap' | 'satellite' | 'hybrid' | 'terrain'>('satellite');

@@ -55,6 +55,7 @@ export function SettingsPanel({ open, onOpenChange, defaultTab = "profile" }: Se
   const [loadingProfile, setLoadingProfile] = useState(false);
   const [loadingPrefs, setLoadingPrefs] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
   useEffect(() => {
@@ -88,6 +89,7 @@ export function SettingsPanel({ open, onOpenChange, defaultTab = "profile" }: Se
   const handleSaveNotifications = async () => {
     if (!prefs) return;
     setSaving(true);
+    setSaveError(null);
     setSaveSuccess(false);
     try {
       const res = await apiFetch("/me/notifications", {
@@ -102,14 +104,14 @@ export function SettingsPanel({ open, onOpenChange, defaultTab = "profile" }: Se
       });
       const data = await res.json();
       if (!res.ok) {
-        /* silent */
+        setSaveError(data.error || "Failed to save preferences");
       } else {
         setPrefs(data);
         setSaveSuccess(true);
         setTimeout(() => setSaveSuccess(false), 3000);
       }
     } catch {
-      /* silent */
+      setSaveError("Could not reach the server");
     } finally {
       setSaving(false);
     }
@@ -276,8 +278,10 @@ export function SettingsPanel({ open, onOpenChange, defaultTab = "profile" }: Se
                 </div>
 
                 {/* Save */}
-                <div className="flex flex-col items-end gap-2 pt-2">
+                <div className="flex items-center justify-between pt-2">
+                  {saveError && <p className="text-sm text-red-500">{saveError}</p>}
                   {saveSuccess && <p className="text-sm text-green-600">Saved!</p>}
+                  {!saveError && !saveSuccess && <span />}
                   <Button
                     onClick={handleSaveNotifications}
                     disabled={saving || !prefs.opted_in}

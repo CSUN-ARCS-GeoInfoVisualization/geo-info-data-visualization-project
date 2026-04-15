@@ -1,12 +1,12 @@
 import { HeatmapLayer } from "@deck.gl/aggregation-layers";
 
-export function buildHeatmapLayer(data: any[]) {
+export function buildHeatmapLayer(data: { lat: number; lng: number; intensity: number }[]) {
   return new HeatmapLayer({
     id: "risk-heatmap-layer",
     data,
     getPosition: (d) => [d.lng, d.lat],
     getWeight: (d) => d.intensity,
-    radiusPixels: 40,
+    radiusPixels: 60,
     aggregation: "SUM",
     intensity: 1,
     threshold: 0.05,

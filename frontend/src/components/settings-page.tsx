@@ -62,15 +62,12 @@ const NAV_ITEMS: { id: Tab; label: string; icon: React.ElementType; description:
 
 export function SettingsPage({ defaultTab = "profile" }: SettingsPageProps) {
   const [activeTab, setActiveTab] = useState<Tab>(defaultTab ?? "profile");
-
-  useEffect(() => {
-    setActiveTab(defaultTab ?? "profile");
-  }, [defaultTab]);
   const [profile, setProfile] = useState<UserProfile | null>(null);
   const [prefs, setPrefs] = useState<NotificationPrefs | null>(null);
   const [loadingProfile, setLoadingProfile] = useState(true);
   const [loadingPrefs, setLoadingPrefs] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [saveError, setSaveError] = useState<string | null>(null);
   const [saveSuccess, setSaveSuccess] = useState(false);
 
   useEffect(() => {
@@ -95,6 +92,7 @@ export function SettingsPage({ defaultTab = "profile" }: SettingsPageProps) {
   const handleSave = async () => {
     if (!prefs) return;
     setSaving(true);
+    setSaveError(null);
     setSaveSuccess(false);
     try {
       const res = await apiFetch("/me/notifications", {
@@ -109,14 +107,14 @@ export function SettingsPage({ defaultTab = "profile" }: SettingsPageProps) {
       });
       const data = await res.json();
       if (!res.ok) {
-        /* silent */
+        setSaveError(data.error || "Failed to save");
       } else {
         setPrefs(data);
         setSaveSuccess(true);
         setTimeout(() => setSaveSuccess(false), 3000);
       }
     } catch {
-      /* silent */
+      setSaveError("Could not reach the server");
     } finally {
       setSaving(false);
     }
@@ -348,6 +346,7 @@ export function SettingsPage({ defaultTab = "profile" }: SettingsPageProps) {
                     {/* Save */}
                     <div className="px-6 py-4 bg-muted/30 flex items-center justify-between gap-4">
                       <div>
+                        {saveError && <p className="text-sm text-red-500">{saveError}</p>}
                         {saveSuccess && <p className="text-sm text-green-600">Preferences saved!</p>}
                       </div>
                       <Button
