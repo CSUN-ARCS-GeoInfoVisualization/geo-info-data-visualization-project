@@ -15,12 +15,29 @@ from data.sample_locations import SAMPLE_LOCATIONS
 research_bp = Blueprint('research', __name__)
 logger = logging.getLogger(__name__)
 
+_BOUNDARIES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'data', 'boundaries')
+_VALID_BOUNDARIES = {'zip-codes', 'census-tracts', 'neighborhoods'}
+
 # Risk grid cache (expensive computation)
 _grid_cache: dict = {"expires": 0.0, "data": None, "params": None}
 _GRID_CACHE_TTL = 900  # 15 minutes
 
 FIRMS_MAP_KEY = os.getenv('FIRMS_MAP_KEY', '')
 FIRMS_BASE = 'https://firms.modaps.eosdis.nasa.gov/api/area/csv'
+
+
+@research_bp.route('/boundaries/<name>', methods=['GET'])
+def get_boundaries(name):
+    """Serve simplified GeoJSON boundary files (public, no auth)."""
+    if name not in _VALID_BOUNDARIES:
+        return jsonify({'error': 'Invalid boundary type'}), 404
+    filepath = os.path.join(_BOUNDARIES_DIR, f'{name}.json')
+    if not os.path.exists(filepath):
+        return jsonify({'error': 'File not found'}), 404
+    import json as json_mod
+    with open(filepath) as f:
+        data = json_mod.load(f)
+    return jsonify(data)
 
 
 def _require_researcher_or_admin():
