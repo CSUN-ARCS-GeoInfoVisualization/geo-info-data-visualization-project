@@ -1,8 +1,11 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   FlaskConical, Map as MapIcon, SlidersHorizontal, Layers, Flame, Send, Clock, Loader2,
 } from "lucide-react";
-import { Map } from "@vis.gl/react-google-maps";
+import { Map, useMap } from "@vis.gl/react-google-maps";
+import { GoogleMapsOverlay } from "@deck.gl/google-maps";
+import { ScatterplotLayer } from "@deck.gl/layers";
+import { HeatmapLayer } from "@deck.gl/aggregation-layers";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
@@ -123,6 +126,96 @@ function RequestAccessView() {
 }
 
 /* ------------------------------------------------------------------ */
+/*  deck.gl overlay — renders inside <Map> using useMap()              */
+/* ------------------------------------------------------------------ */
+function ResearchOverlay({ features, showHeatmap }: { features: any[]; showHeatmap: boolean }) {
+  const map = useMap();
+  const overlayRef = useRef<GoogleMapsOverlay | null>(null);
+
+  useEffect(() => {
+    if (!map) return;
+
+    if (overlayRef.current) {
+      overlayRef.current.setMap(null);
+      overlayRef.current.finalize();
+    }
+
+    const layers: any[] = [];
+
+    // Scatterplot layer — individual colored circles
+    if (features.length > 0) {
+      layers.push(
+        new ScatterplotLayer({
+          id: "research-scatter",
+          data: features,
+          pickable: true,
+          opacity: 0.85,
+          stroked: true,
+          filled: true,
+          radiusMinPixels: 4,
+          radiusMaxPixels: 25,
+          lineWidthMinPixels: 1,
+          getPosition: (d: any) => d.geometry.coordinates,
+          getRadius: (d: any) => Math.sqrt(d.properties.frp || 1) * 400,
+          getFillColor: (d: any) => {
+            const c = d.properties.confidence || 50;
+            if (c >= 80) return [220, 38, 38, 200];   // red
+            if (c >= 60) return [234, 88, 12, 200];    // orange
+            if (c >= 40) return [234, 179, 8, 200];    // yellow
+            return [34, 197, 94, 200];                  // green
+          },
+          getLineColor: [255, 255, 255, 200],
+          getLineWidth: 1,
+          updateTriggers: {
+            getRadius: [features.length],
+            getFillColor: [features.length],
+          },
+        })
+      );
+    }
+
+    // Heatmap layer — risk gradient overlay
+    if (showHeatmap && features.length > 0) {
+      layers.push(
+        new HeatmapLayer({
+          id: "research-heatmap",
+          data: features,
+          getPosition: (d: any) => d.geometry.coordinates,
+          getWeight: (d: any) => (d.properties.confidence || 50) * (d.properties.frp || 1),
+          radiusPixels: 60,
+          intensity: 1.5,
+          threshold: 0.05,
+          colorRange: [
+            [34, 197, 94, 80],     // green
+            [234, 179, 8, 120],    // yellow
+            [234, 88, 12, 160],    // orange
+            [220, 38, 38, 200],    // red
+            [153, 27, 27, 220],    // dark red
+          ],
+          updateTriggers: {
+            getWeight: [features.length],
+          },
+        })
+      );
+    }
+
+    const overlay = new GoogleMapsOverlay({ layers });
+    overlay.setMap(map);
+    overlayRef.current = overlay;
+
+    return () => {
+      if (overlayRef.current) {
+        overlayRef.current.setMap(null);
+        overlayRef.current.finalize();
+        overlayRef.current = null;
+      }
+    };
+  }, [map, features, showHeatmap]);
+
+  return null;
+}
+
+/* ------------------------------------------------------------------ */
 /*  Researcher / Admin view — interactive map with sliders             */
 /* ------------------------------------------------------------------ */
 function ResearchMapView() {
@@ -132,6 +225,7 @@ function ResearchMapView() {
   const [features, setFeatures] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [showHeatmap, setShowHeatmap] = useState(true);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -154,14 +248,6 @@ function ResearchMapView() {
     const timer = setTimeout(fetchData, 500);
     return () => clearTimeout(timer);
   }, [fetchData]);
-
-  // Color a point by its confidence level
-  const getMarkerColor = (conf: number) => {
-    if (conf >= 80) return "#dc2626"; // red
-    if (conf >= 60) return "#ea580c"; // orange
-    if (conf >= 40) return "#eab308"; // yellow
-    return "#22c55e"; // green
-  };
 
   return (
     <div className="space-y-4">
@@ -223,6 +309,23 @@ function ResearchMapView() {
 
             <Card>
               <CardHeader className="pb-3">
+                <CardTitle className="text-sm">Layers</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <label className="flex items-center gap-2 text-sm cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={showHeatmap}
+                    onChange={(e) => setShowHeatmap(e.target.checked)}
+                    className="accent-red-500"
+                  />
+                  Show risk heatmap
+                </label>
+              </CardContent>
+            </Card>
+
+            <Card>
+              <CardHeader className="pb-3">
                 <CardTitle className="text-sm">Legend</CardTitle>
               </CardHeader>
               <CardContent className="space-y-2">
@@ -253,7 +356,7 @@ function ResearchMapView() {
         )}
 
         {/* Map */}
-        <div className="flex-1">
+        <div className="flex-1 relative">
           <div className="w-full h-[calc(100vh-220px)] min-h-[500px] rounded-lg overflow-hidden border">
             <Map
               style={{ width: "100%", height: "100%" }}
@@ -262,31 +365,20 @@ function ResearchMapView() {
               gestureHandling="greedy"
               mapTypeId="terrain"
             >
-              {features.map((f, i) => {
-                const [lng, lat] = f.geometry.coordinates;
-                const conf = f.properties.confidence || 50;
-                return (
-                  <div key={i}>
-                    {/* Use Advanced Markers or fallback circle overlay */}
-                  </div>
-                );
-              })}
+              <ResearchOverlay features={features} showHeatmap={showHeatmap} />
             </Map>
-            {/* Color overlay info */}
-            {features.length > 0 && (
-              <div className="absolute bottom-4 left-4 bg-white/90 backdrop-blur-sm rounded-lg p-3 shadow-lg text-sm">
-                <div className="font-medium mb-1">
-                  {features.length} hotspots in view
-                </div>
-                <div className="flex gap-1">
-                  {["#22c55e", "#eab308", "#ea580c", "#dc2626"].map((c) => (
-                    <div key={c} className="w-6 h-2 rounded" style={{ backgroundColor: c }} />
-                  ))}
-                </div>
-                <div className="text-xs text-muted-foreground">Low → Extreme risk</div>
-              </div>
-            )}
           </div>
+          {features.length > 0 && (
+            <div className="absolute bottom-4 left-4 bg-white/90 backdrop-blur-sm rounded-lg p-3 shadow-lg text-sm">
+              <div className="font-medium mb-1">{features.length} hotspots</div>
+              <div className="flex gap-1">
+                {["#22c55e", "#eab308", "#ea580c", "#dc2626"].map((c) => (
+                  <div key={c} className="w-6 h-2 rounded" style={{ backgroundColor: c }} />
+                ))}
+              </div>
+              <div className="text-xs text-muted-foreground">Low → Extreme risk</div>
+            </div>
+          )}
         </div>
       </div>
     </div>
