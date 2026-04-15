@@ -128,7 +128,7 @@ function RequestAccessView() {
 /* ------------------------------------------------------------------ */
 /*  deck.gl overlay — renders inside <Map> using useMap()              */
 /* ------------------------------------------------------------------ */
-function ResearchOverlay({ features, showHeatmap }: { features: any[]; showHeatmap: boolean }) {
+function ResearchOverlay({ features, showHeatmap, riskGrid }: { features: any[]; showHeatmap: boolean; riskGrid: any[] }) {
   const map = useMap();
   const overlayRef = useRef<GoogleMapsOverlay | null>(null);
 
@@ -199,6 +199,34 @@ function ResearchOverlay({ features, showHeatmap }: { features: any[]; showHeatm
       );
     }
 
+    // Risk prediction grid layer — colored circles showing ML risk scores
+    if (riskGrid.length > 0) {
+      layers.push(
+        new ScatterplotLayer({
+          id: "risk-grid",
+          data: riskGrid,
+          pickable: true,
+          opacity: 0.6,
+          stroked: false,
+          filled: true,
+          radiusMinPixels: 20,
+          radiusMaxPixels: 40,
+          getPosition: (d: any) => d.geometry.coordinates,
+          getRadius: 40000,
+          getFillColor: (d: any) => {
+            const s = d.properties.risk_score || 0;
+            if (s >= 0.75) return [153, 27, 27, 180];    // extreme — dark red
+            if (s >= 0.50) return [220, 38, 38, 160];    // high — red
+            if (s >= 0.25) return [234, 179, 8, 140];    // medium — yellow
+            return [34, 197, 94, 120];                     // low — green
+          },
+          updateTriggers: {
+            getFillColor: [riskGrid.length, riskGrid[0]?.properties?.risk_score],
+          },
+        })
+      );
+    }
+
     const overlay = new GoogleMapsOverlay({ layers });
     overlay.setMap(map);
     overlayRef.current = overlay;
@@ -210,7 +238,7 @@ function ResearchOverlay({ features, showHeatmap }: { features: any[]; showHeatm
         overlayRef.current = null;
       }
     };
-  }, [map, features, showHeatmap]);
+  }, [map, features, showHeatmap, riskGrid]);
 
   return null;
 }
@@ -223,9 +251,16 @@ function ResearchMapView() {
   const [confidenceMin, setConfidenceMin] = useState(0);
   const [frpMin, setFrpMin] = useState(0);
   const [features, setFeatures] = useState<any[]>([]);
+  const [riskGrid, setRiskGrid] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [showHeatmap, setShowHeatmap] = useState(true);
+  const [showRiskGrid, setShowRiskGrid] = useState(true);
+  const [useOverrides, setUseOverrides] = useState(false);
+  const [eviSlider, setEviSlider] = useState(500);
+  const [lstSlider, setLstSlider] = useState(14000);
+  const [windSlider, setWindSlider] = useState(7);
+  const [elevSlider, setElevSlider] = useState(500);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -244,10 +279,36 @@ function ResearchMapView() {
     setLoading(false);
   }, [days, confidenceMin, frpMin]);
 
+  const fetchRiskGrid = useCallback(async () => {
+    if (!showRiskGrid) { setRiskGrid([]); return; }
+    try {
+      const params = new URLSearchParams();
+      if (useOverrides) {
+        params.set("evi", String(eviSlider));
+        params.set("lst", String(lstSlider));
+        params.set("wind", String(windSlider));
+        params.set("elevation", String(elevSlider));
+      }
+      const r = await apiFetch(`/research/risk-grid?${params}`);
+      if (r.ok) {
+        const data = await r.json();
+        setRiskGrid(data.features || []);
+      }
+    } catch { /* ignore */ }
+  }, [showRiskGrid, useOverrides, eviSlider, lstSlider, windSlider, elevSlider]);
+
   useEffect(() => {
     const timer = setTimeout(fetchData, 500);
     return () => clearTimeout(timer);
   }, [fetchData]);
+
+  useEffect(() => {
+    const timer = setTimeout(fetchRiskGrid, 800);
+    return () => clearTimeout(timer);
+  }, [fetchRiskGrid]);
+
+  // Convert LST encoded value to Celsius for display
+  const lstCelsius = Math.round((lstSlider * 0.02 - 273.15) * 10) / 10;
 
   return (
     <div className="space-y-4">
@@ -311,35 +372,102 @@ function ResearchMapView() {
               <CardHeader className="pb-3">
                 <CardTitle className="text-sm">Layers</CardTitle>
               </CardHeader>
-              <CardContent>
+              <CardContent className="space-y-2">
                 <label className="flex items-center gap-2 text-sm cursor-pointer">
-                  <input
-                    type="checkbox"
-                    checked={showHeatmap}
-                    onChange={(e) => setShowHeatmap(e.target.checked)}
-                    className="accent-red-500"
-                  />
-                  Show risk heatmap
+                  <input type="checkbox" checked={showHeatmap} onChange={(e) => setShowHeatmap(e.target.checked)} className="accent-red-500" />
+                  FIRMS heatmap
+                </label>
+                <label className="flex items-center gap-2 text-sm cursor-pointer">
+                  <input type="checkbox" checked={showRiskGrid} onChange={(e) => setShowRiskGrid(e.target.checked)} className="accent-red-500" />
+                  ML risk prediction grid
                 </label>
               </CardContent>
             </Card>
+
+            {showRiskGrid && (
+              <Card>
+                <CardHeader className="pb-3">
+                  <CardTitle className="text-sm">Risk Model Parameters</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <label className="flex items-center gap-2 text-sm cursor-pointer">
+                    <input type="checkbox" checked={useOverrides} onChange={(e) => setUseOverrides(e.target.checked)} className="accent-red-500" />
+                    Override with sliders
+                  </label>
+                  {useOverrides && (
+                    <div className="space-y-4 pt-2">
+                      <div>
+                        <label className="text-xs font-medium flex justify-between">
+                          Vegetation (EVI) <span className="text-muted-foreground">{eviSlider}</span>
+                        </label>
+                        <input type="range" min={0} max={5000} step={100} value={eviSlider} onChange={(e) => setEviSlider(Number(e.target.value))} className="w-full mt-1 accent-green-500" />
+                        <div className="flex justify-between text-[10px] text-muted-foreground"><span>Bare</span><span>Dense</span></div>
+                      </div>
+                      <div>
+                        <label className="text-xs font-medium flex justify-between">
+                          Temperature <span className="text-muted-foreground">{lstCelsius}°C</span>
+                        </label>
+                        <input type="range" min={13000} max={15500} step={50} value={lstSlider} onChange={(e) => setLstSlider(Number(e.target.value))} className="w-full mt-1 accent-orange-500" />
+                        <div className="flex justify-between text-[10px] text-muted-foreground"><span>-10°C</span><span>35°C</span></div>
+                      </div>
+                      <div>
+                        <label className="text-xs font-medium flex justify-between">
+                          Wind Speed <span className="text-muted-foreground">{windSlider} m/s</span>
+                        </label>
+                        <input type="range" min={0} max={30} step={1} value={windSlider} onChange={(e) => setWindSlider(Number(e.target.value))} className="w-full mt-1 accent-blue-500" />
+                        <div className="flex justify-between text-[10px] text-muted-foreground"><span>Calm</span><span>Storm</span></div>
+                      </div>
+                      <div>
+                        <label className="text-xs font-medium flex justify-between">
+                          Elevation <span className="text-muted-foreground">{elevSlider}m</span>
+                        </label>
+                        <input type="range" min={0} max={3000} step={50} value={elevSlider} onChange={(e) => setElevSlider(Number(e.target.value))} className="w-full mt-1 accent-gray-500" />
+                        <div className="flex justify-between text-[10px] text-muted-foreground"><span>Sea level</span><span>Mountain</span></div>
+                      </div>
+                    </div>
+                  )}
+                  {!useOverrides && (
+                    <p className="text-xs text-muted-foreground">Using interpolated live data from 9 California sample locations. Toggle overrides to experiment with different conditions.</p>
+                  )}
+                </CardContent>
+              </Card>
+            )}
 
             <Card>
               <CardHeader className="pb-3">
                 <CardTitle className="text-sm">Legend</CardTitle>
               </CardHeader>
-              <CardContent className="space-y-2">
-                {[
-                  { color: "#22c55e", label: "Low confidence (< 40%)" },
-                  { color: "#eab308", label: "Medium (40-60%)" },
-                  { color: "#ea580c", label: "High (60-80%)" },
-                  { color: "#dc2626", label: "Very High (80%+)" },
-                ].map(({ color, label }) => (
-                  <div key={label} className="flex items-center gap-2 text-sm">
-                    <div className="w-3 h-3 rounded-full shrink-0" style={{ backgroundColor: color }} />
-                    {label}
+              <CardContent className="space-y-3">
+                <div>
+                  <p className="text-xs font-medium mb-1">FIRMS Hotspots</p>
+                  {[
+                    { color: "#22c55e", label: "Low confidence (< 40%)" },
+                    { color: "#eab308", label: "Medium (40-60%)" },
+                    { color: "#ea580c", label: "High (60-80%)" },
+                    { color: "#dc2626", label: "Very High (80%+)" },
+                  ].map(({ color, label }) => (
+                    <div key={label} className="flex items-center gap-2 text-xs">
+                      <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: color }} />
+                      {label}
+                    </div>
+                  ))}
+                </div>
+                {showRiskGrid && (
+                  <div>
+                    <p className="text-xs font-medium mb-1">ML Risk Prediction</p>
+                    {[
+                      { color: "#22c55e", label: "Low (< 25%)" },
+                      { color: "#eab308", label: "Medium (25-50%)" },
+                      { color: "#dc2626", label: "High (50-75%)" },
+                      { color: "#991b1b", label: "Extreme (75%+)" },
+                    ].map(({ color, label }) => (
+                      <div key={label} className="flex items-center gap-2 text-xs">
+                        <div className="w-2.5 h-2.5 rounded shrink-0" style={{ backgroundColor: color }} />
+                        {label}
+                      </div>
+                    ))}
                   </div>
-                ))}
+                )}
               </CardContent>
             </Card>
 
@@ -365,7 +493,7 @@ function ResearchMapView() {
               gestureHandling="greedy"
               mapTypeId="terrain"
             >
-              <ResearchOverlay features={features} showHeatmap={showHeatmap} />
+              <ResearchOverlay features={features} showHeatmap={showHeatmap} riskGrid={showRiskGrid ? riskGrid : []} />
             </Map>
           </div>
           {features.length > 0 && (
