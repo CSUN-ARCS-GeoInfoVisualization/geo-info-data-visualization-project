@@ -184,10 +184,17 @@ async function fetchRiskGrid(): Promise<RiskGridCell[]> {
     const res = await apiFetch("/research/risk-grid");
     if (!res.ok) return [];
     const data = await res.json();
-    if (Array.isArray(data)) return data as RiskGridCell[];
-    if (data?.cells && Array.isArray(data.cells)) return data.cells as RiskGridCell[];
+    // Backend returns GeoJSON FeatureCollection — convert to RiskGridCell[]
+    if (data?.features && Array.isArray(data.features)) {
+      return data.features.map((f: any) => ({
+        lat: f.geometry.coordinates[1],
+        lng: f.geometry.coordinates[0],
+        risk: Math.round((f.properties.risk_score || 0) * 100),
+      }));
+    }
     return [];
-  } catch {
+  } catch (e) {
+    console.warn("fetchRiskGrid failed:", e);
     return [];
   }
 }

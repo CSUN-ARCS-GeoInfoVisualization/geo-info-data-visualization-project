@@ -295,7 +295,7 @@ function ResearchMapView() {
         const data = await r.json();
         setFeatures(data.features || []);
       }
-    } catch { /* ignore */ }
+    } catch (e) { console.warn("research fire-data fetch failed:", e); }
     setLoading(false);
   }, [days, confidenceMin, frpMin]);
 
@@ -314,7 +314,7 @@ function ResearchMapView() {
         const data = await r.json();
         setRiskGrid(data.features || []);
       }
-    } catch { /* ignore */ }
+    } catch (e) { console.warn("research fetch error:", e); }
   }, [showRiskGrid, useOverrides, eviSlider, lstSlider, windSlider, elevSlider]);
 
   useEffect(() => {
@@ -342,9 +342,7 @@ function ResearchMapView() {
       </div>
 
       {/* Full-width Map */}
-      <Card>
-        <CardContent className="p-0">
-          <div className="w-full h-[500px] rounded-lg overflow-hidden relative">
+      <div className="w-full h-[500px] rounded-lg overflow-hidden border relative">
             <Map
               style={{ width: "100%", height: "100%" }}
               defaultCenter={{ lat: 36.7783, lng: -119.4179 }}
@@ -372,8 +370,6 @@ function ResearchMapView() {
               </div>
             </div>
           </div>
-        </CardContent>
-      </Card>
 
       {/* Controls below map */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">

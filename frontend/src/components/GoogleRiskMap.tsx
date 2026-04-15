@@ -20,12 +20,17 @@ function ActiveFiresOverlay() {
   useEffect(() => {
     fetch('https://incidents.fire.ca.gov/umbraco/api/IncidentApi/List?inactive=false')
       .then((r) => r.json())
-      .then((data: CalFireIncident[]) => setFires(data.filter((f) => f.Latitude && f.Longitude)))
-      .catch(() => {});
+      .then((data) => {
+        if (Array.isArray(data)) {
+          setFires(data.filter((f: any) => f.Latitude && f.Longitude));
+        }
+      })
+      .catch((e) => console.warn("CAL FIRE fetch failed:", e));
   }, []);
 
   useEffect(() => {
-    if (!map || fires.length === 0) return;
+    if (!map) return;
+    if (fires.length === 0) { return; }
     if (overlayRef.current) {
       overlayRef.current.setMap(null);
       overlayRef.current.finalize();
