@@ -1,5 +1,67 @@
-import { Map, Marker } from '@vis.gl/react-google-maps';
-import { DeckOverlayManager } from './maps/DeckOverlayManager';
+import { useEffect, useRef, useState } from 'react';
+import { Map, useMap } from '@vis.gl/react-google-maps';
+import { GoogleMapsOverlay } from '@deck.gl/google-maps';
+import { ScatterplotLayer } from '@deck.gl/layers';
+
+interface CalFireIncident {
+  Name: string;
+  County: string;
+  Latitude: number;
+  Longitude: number;
+  AcresBurned: number | null;
+  PercentContained: number | null;
+}
+
+function ActiveFiresOverlay() {
+  const map = useMap();
+  const overlayRef = useRef<GoogleMapsOverlay | null>(null);
+  const [fires, setFires] = useState<CalFireIncident[]>([]);
+
+  useEffect(() => {
+    fetch('https://incidents.fire.ca.gov/umbraco/api/IncidentApi/List?inactive=false')
+      .then((r) => r.json())
+      .then((data: CalFireIncident[]) => setFires(data.filter((f) => f.Latitude && f.Longitude)))
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!map || fires.length === 0) return;
+    if (overlayRef.current) {
+      overlayRef.current.setMap(null);
+      overlayRef.current.finalize();
+    }
+    const overlay = new GoogleMapsOverlay({
+      layers: [
+        new ScatterplotLayer({
+          id: 'calfire-active',
+          data: fires,
+          pickable: true,
+          opacity: 0.9,
+          stroked: true,
+          filled: true,
+          radiusMinPixels: 6,
+          radiusMaxPixels: 20,
+          getPosition: (d: CalFireIncident) => [d.Longitude, d.Latitude],
+          getRadius: (d: CalFireIncident) => Math.sqrt(d.AcresBurned || 10) * 300,
+          getFillColor: [220, 38, 38, 200],
+          getLineColor: [255, 255, 255, 255],
+          getLineWidth: 2,
+        }),
+      ],
+    });
+    overlay.setMap(map);
+    overlayRef.current = overlay;
+    return () => {
+      if (overlayRef.current) {
+        overlayRef.current.setMap(null);
+        overlayRef.current.finalize();
+        overlayRef.current = null;
+      }
+    };
+  }, [map, fires]);
+
+  return null;
+}
 
 interface GoogleRiskMapProps {
   center?: { lat: number; lng: number };
@@ -21,9 +83,8 @@ export function GoogleRiskMap({
         gestureHandling="greedy"
         disableDefaultUI
       >
-        <Marker position={{ lat: 34.0522, lng: -118.2437 }} />
+        <ActiveFiresOverlay />
       </Map>
-      <DeckOverlayManager />
     </div>
   );
 }
