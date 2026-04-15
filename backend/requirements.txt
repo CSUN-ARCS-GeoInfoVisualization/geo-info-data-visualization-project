@@ -14,3 +14,4 @@ joblib
 resend>=2.0.0
 APScheduler>=3.10.0
 feedparser>=6.0.0
+gunicorn>=21.2.0
