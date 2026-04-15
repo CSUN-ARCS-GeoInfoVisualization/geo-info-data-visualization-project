@@ -150,6 +150,75 @@ def _build_risk_grid(evi_ov, lst_ov, wind_ov, elev_ov):
     return features
 
 
+# California county centroids for risk prediction
+CA_COUNTY_CENTROIDS = [
+    ("Alameda", 37.65, -121.89), ("Alpine", 38.60, -119.82), ("Amador", 38.45, -120.65),
+    ("Butte", 39.67, -121.60), ("Calaveras", 38.20, -120.55), ("Colusa", 39.18, -122.24),
+    ("Contra Costa", 37.92, -121.95), ("Del Norte", 41.74, -123.90), ("El Dorado", 38.78, -120.52),
+    ("Fresno", 36.95, -119.65), ("Glenn", 39.60, -122.39), ("Humboldt", 40.70, -123.87),
+    ("Imperial", 33.04, -115.36), ("Inyo", 36.54, -117.99), ("Kern", 35.35, -118.73),
+    ("Kings", 36.07, -119.82), ("Lake", 39.10, -122.75), ("Lassen", 40.67, -120.73),
+    ("Los Angeles", 34.32, -118.22), ("Madera", 37.22, -119.76), ("Marin", 38.08, -122.72),
+    ("Mariposa", 37.58, -119.97), ("Mendocino", 39.44, -123.39), ("Merced", 37.19, -120.72),
+    ("Modoc", 41.59, -120.72), ("Mono", 37.94, -118.89), ("Monterey", 36.24, -121.31),
+    ("Napa", 38.50, -122.33), ("Nevada", 39.30, -120.77), ("Orange", 33.72, -117.78),
+    ("Placer", 39.06, -120.72), ("Plumas", 40.01, -120.84), ("Riverside", 33.74, -115.99),
+    ("Sacramento", 38.45, -121.34), ("San Benito", 36.61, -121.08), ("San Bernardino", 34.84, -116.18),
+    ("San Diego", 33.03, -116.74), ("San Francisco", 37.78, -122.42), ("San Joaquin", 37.93, -121.27),
+    ("San Luis Obispo", 35.38, -120.45), ("San Mateo", 37.43, -122.36), ("Santa Barbara", 34.74, -119.80),
+    ("Santa Clara", 37.23, -121.70), ("Santa Cruz", 37.06, -122.01), ("Shasta", 40.76, -122.04),
+    ("Sierra", 39.58, -120.52), ("Siskiyou", 41.59, -122.54), ("Solano", 38.27, -121.93),
+    ("Sonoma", 38.53, -122.93), ("Stanislaus", 37.56, -121.00), ("Sutter", 39.03, -121.69),
+    ("Tehama", 40.13, -122.24), ("Trinity", 40.81, -123.01), ("Tulare", 36.23, -118.78),
+    ("Tuolumne", 38.03, -119.97), ("Ventura", 34.36, -119.13), ("Yolo", 38.69, -121.90),
+    ("Yuba", 39.29, -121.35),
+]
+
+_county_cache: dict = {"expires": 0.0, "data": None, "params": None}
+
+
+@research_bp.route('/risk-by-county', methods=['GET'])
+def risk_by_county():
+    """Return risk scores per California county — public endpoint, no auth required."""
+    evi_ov = request.args.get('evi')
+    lst_ov = request.args.get('lst')
+    wind_ov = request.args.get('wind')
+    elev_ov = request.args.get('elevation')
+
+    evi_ov = float(evi_ov) if evi_ov is not None else None
+    lst_ov = float(lst_ov) if lst_ov is not None else None
+    wind_ov = float(wind_ov) if wind_ov is not None else None
+    elev_ov = float(elev_ov) if elev_ov is not None else None
+
+    params_key = (evi_ov, lst_ov, wind_ov, elev_ov)
+    now = time.time()
+    if (_county_cache["data"] is not None
+            and _county_cache["expires"] > now
+            and _county_cache["params"] == params_key):
+        return jsonify(_county_cache["data"])
+
+    results = {}
+    for name, lat, lon in CA_COUNTY_CENTROIDS:
+        evi = evi_ov if evi_ov is not None else _interpolate_feature(lat, lon, "evi")
+        lst = lst_ov if lst_ov is not None else _interpolate_feature(lat, lon, "lst")
+        wind = wind_ov if wind_ov is not None else _interpolate_feature(lat, lon, "wind")
+        elev = elev_ov if elev_ov is not None else _interpolate_feature(lat, lon, "elevation")
+        try:
+            result = predict_from_features(evi, lst, wind, elev)
+            results[name] = {
+                "risk_score": result["risk_score"],
+                "label": result["label"],
+            }
+        except Exception:
+            results[name] = {"risk_score": 0, "label": "Low"}
+
+    data = {"counties": results, "overrides": {"evi": evi_ov, "lst": lst_ov, "wind": wind_ov, "elevation": elev_ov}}
+    _county_cache["data"] = data
+    _county_cache["expires"] = now + _GRID_CACHE_TTL
+    _county_cache["params"] = params_key
+    return jsonify(data)
+
+
 @research_bp.route('/risk-grid', methods=['GET'])
 @jwt_required()
 def risk_grid():

@@ -3,6 +3,7 @@ import { Map, useMap } from '@vis.gl/react-google-maps';
 import { GoogleMapsOverlay } from '@deck.gl/google-maps';
 import { ScatterplotLayer } from '@deck.gl/layers';
 import { apiFetch } from '../services/api';
+import { CountyRiskOverlay } from './CountyRiskOverlay';
 
 interface CalFireIncident {
   Name: string;
@@ -89,6 +90,7 @@ export function GoogleRiskMap({
         gestureHandling="greedy"
         disableDefaultUI
       >
+        <CountyRiskOverlay />
         <ActiveFiresOverlay />
       </Map>
     </div>

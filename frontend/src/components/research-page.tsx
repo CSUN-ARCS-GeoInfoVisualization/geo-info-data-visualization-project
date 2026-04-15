@@ -10,6 +10,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { apiFetch } from "../services/api";
+import { CountyRiskOverlay } from "./CountyRiskOverlay";
 
 interface ResearchPageProps {
   userRole: string | null;
@@ -276,6 +277,9 @@ function ResearchMapView() {
   const [loading, setLoading] = useState(false);
   const [showHeatmap, setShowHeatmap] = useState(true);
   const [showRiskGrid, setShowRiskGrid] = useState(true);
+  const [showCountyZones, setShowCountyZones] = useState(true);
+  const [selectedCounty, setSelectedCounty] = useState<string | null>(null);
+  const [selectedCountyRisk, setSelectedCountyRisk] = useState<{ risk_score: number; label: string } | null>(null);
   const [useOverrides, setUseOverrides] = useState(false);
   const [eviSlider, setEviSlider] = useState(500);
   const [lstSlider, setLstSlider] = useState(14000);
@@ -350,8 +354,22 @@ function ResearchMapView() {
               gestureHandling="greedy"
               mapTypeId="terrain"
             >
+              {showCountyZones && (
+                <CountyRiskOverlay
+                  overrides={useOverrides ? { evi: eviSlider, lst: lstSlider, wind: windSlider, elevation: elevSlider } : undefined}
+                  onCountyClick={(name, risk) => { setSelectedCounty(name); setSelectedCountyRisk(risk); }}
+                />
+              )}
               <ResearchOverlay features={features} showHeatmap={showHeatmap} riskGrid={showRiskGrid ? riskGrid : []} />
             </Map>
+            {/* Selected county info */}
+            {selectedCounty && selectedCountyRisk && (
+              <div className="absolute top-3 right-3 bg-white/95 backdrop-blur-sm rounded-lg p-3 shadow-lg text-sm z-10 max-w-[200px]">
+                <div className="font-bold">{selectedCounty} County</div>
+                <div className="text-muted-foreground">Risk: {Math.round(selectedCountyRisk.risk_score * 100)}% ({selectedCountyRisk.label})</div>
+                <button onClick={() => { setSelectedCounty(null); setSelectedCountyRisk(null); }} className="text-xs text-blue-600 hover:underline mt-1">Clear selection</button>
+              </div>
+            )}
             {/* Map overlay legend */}
             <div className="absolute bottom-3 left-3 bg-white/90 backdrop-blur-sm rounded-lg p-3 shadow-lg text-xs">
               <div className="font-medium mb-1">Risk Zones</div>
@@ -405,8 +423,12 @@ function ResearchMapView() {
               FIRMS heatmap overlay
             </label>
             <label className="flex items-center gap-2 text-sm cursor-pointer">
+              <input type="checkbox" checked={showCountyZones} onChange={(e) => setShowCountyZones(e.target.checked)} className="accent-red-500" />
+              County risk zones (click to select)
+            </label>
+            <label className="flex items-center gap-2 text-sm cursor-pointer">
               <input type="checkbox" checked={showRiskGrid} onChange={(e) => setShowRiskGrid(e.target.checked)} className="accent-red-500" />
-              ML risk zone grid
+              ML risk point grid
             </label>
             <hr className="my-2" />
             <label className="flex items-center gap-2 text-sm cursor-pointer">
