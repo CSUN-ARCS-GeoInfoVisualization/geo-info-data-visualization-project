@@ -123,23 +123,40 @@ def fetch_firms_california() -> list[tuple[float, float, str]]:
         return points
 
 
+def _random_2020_date(rng: random.Random) -> str:
+    """Return a random date in 2020 as YYYY-MM-DD."""
+    start = datetime(2020, 1, 1)
+    offset = rng.randint(0, 365)
+    return (start + timedelta(days=offset)).strftime("%Y-%m-%d")
+
+
 def generate_nofire_points(
     fire_points: list[tuple[float, float, str]],
     n: int,
     rng: random.Random,
 ) -> list[tuple[float, float, str]]:
+    """
+    Generate n no-fire points at random California locations far from any fire.
+    Each point is assigned a random date spread across 2020 to avoid the
+    seasonal bias that arises from using a single fixed winter date.
+
+    Locations are generated first (before dates) so the rng sequence for
+    lat/lon is identical to previous runs — allowing AppEEARS tasks to be reused.
+    """
     fire_latlons = [(lat, lon) for lat, lon, _ in fire_points]
-    nofire_date  = "2020-03-01"
-    points, attempts = [], 0
+    latlons: list[tuple[float, float]] = []
+    attempts = 0
 
     print(f"Generating {n} no-fire points...")
-    while len(points) < n and attempts < n * 200:
+    while len(latlons) < n and attempts < n * 200:
         attempts += 1
         lat = rng.uniform(CA_LAT_MIN, CA_LAT_MAX)
         lon = rng.uniform(CA_LON_MIN, CA_LON_MAX)
         if not any(_haversine_deg(lat, lon, f, g) < MIN_FIRE_DIST for f, g in fire_latlons):
-            points.append((lat, lon, nofire_date))
+            latlons.append((lat, lon))
 
+    # Assign random dates after location generation to preserve rng state for lat/lon
+    points = [(lat, lon, _random_2020_date(rng)) for lat, lon in latlons]
     print(f"  Generated {len(points)} no-fire points.")
     return points
 

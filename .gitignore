@@ -33,3 +33,10 @@ instance/
 # Migrations cache (if any)
 migrations/__pycache__/
 migrations/versions/__pycache__/
+
+# ML — generated artifacts (do not commit)
+backend/ml/training_data/
+backend/ml/charts/
+backend/ml/models/*_backup_*.pkl
+backend/ml/.appeears_task_id
+backend/ml/__pycache__/
