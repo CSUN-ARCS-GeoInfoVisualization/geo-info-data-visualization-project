@@ -169,7 +169,7 @@ def retrain():
     print_section("FEATURE IMPORTANCES")
     importances = model.feature_importances_
     for name, imp in sorted(zip(FEATURE_COLS, importances), key=lambda x: -x[1]):
-        bar = "█" * int(imp * 40)
+        bar = "#" * int(imp * 40)
         print(f"  {name:<12} {imp:.4f}  {bar}")
 
     # ── Save ───────────────────────────────────────────────────────────
