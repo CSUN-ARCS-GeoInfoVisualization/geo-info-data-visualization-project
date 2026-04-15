@@ -264,22 +264,17 @@ export function FireNews() {
                       : "Local FD"}
                   </Badge>
                 </div>
-                <div className="flex flex-wrap items-center gap-2">
+                <div className="flex flex-wrap items-center gap-1">
                   {hasDirectSource ? (
-                    <Button variant="outline" size="sm" asChild>
-                      <a href={article.url} target="_blank" rel="noopener noreferrer">
-                        <ExternalLink className="h-4 w-4 mr-2 inline" />Original Source
-                      </a>
-                    </Button>
+                    <a href={article.url} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:text-blue-800 hover:underline">Original Source</a>
                   ) : (
-                    <span className="text-xs text-amber-600 font-medium">No direct news reporting — fire is active</span>
+                    <span className="text-sm text-amber-600 font-medium">No direct news reporting — fire is active</span>
                   )}
-                  {searchLinks.map((link) => (
-                    <Button key={link.label} variant="ghost" size="sm" asChild className="text-xs">
-                      <a href={link.href} target="_blank" rel="noopener noreferrer">
-                        <ExternalLink className="h-3 w-3 mr-1 inline" />{link.label}
-                      </a>
-                    </Button>
+                  {searchLinks.map((link, i) => (
+                    <span key={link.label} className="inline-flex items-center">
+                      <span className="text-gray-400 mx-1">|</span>
+                      <a href={link.href} target="_blank" rel="noopener noreferrer" className="text-sm text-blue-600 hover:text-blue-800 hover:underline">{link.label}</a>
+                    </span>
                   ))}
                 </div>
               </div>
@@ -338,12 +333,14 @@ export function FireNews() {
                     {breakingNews[0].summary}
                   </p>
                 ) : null}
-                <div className="flex flex-wrap gap-2 mt-2">
+                <div className="flex flex-wrap items-center gap-1 mt-2">
                   {breakingNews[0].url && (
-                    <a href={breakingNews[0].url} target="_blank" rel="noopener noreferrer" className="text-xs text-red-700 underline hover:text-red-900">Original Source</a>
+                    <a href={breakingNews[0].url} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:text-blue-800 hover:underline">Original Source</a>
                   )}
-                  <a href={`https://news.google.com/search?q=${encodeURIComponent(breakingNews[0].title)}`} target="_blank" rel="noopener noreferrer" className="text-xs text-red-700 underline hover:text-red-900">Google News</a>
-                  <a href={`https://apnews.com/search#?q=${encodeURIComponent(breakingNews[0].title)}`} target="_blank" rel="noopener noreferrer" className="text-xs text-red-700 underline hover:text-red-900">AP News</a>
+                  <span className="text-gray-400 text-xs">|</span>
+                  <a href={`https://news.google.com/search?q=${encodeURIComponent(breakingNews[0].title)}`} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:text-blue-800 hover:underline">Google News</a>
+                  <span className="text-gray-400 text-xs">|</span>
+                  <a href={`https://apnews.com/search#?q=${encodeURIComponent(breakingNews[0].title)}`} target="_blank" rel="noopener noreferrer" className="text-xs text-blue-600 hover:text-blue-800 hover:underline">AP News</a>
                 </div>
               </div>
               <Badge className="bg-red-100 text-red-800 border-red-200 animate-pulse shrink-0">Live</Badge>
