@@ -23,7 +23,8 @@ export function NewsTicker() {
       ? ["No recent fire news"]
       : ["Loading…"];
 
-  const repeated = [...headlines, ...headlines];
+  const joined = headlines.join(" | ");
+  const repeated = [joined, joined];
 
   return (
     <div className="flex items-center gap-3 rounded-lg border bg-card px-3 py-2 overflow-hidden">
@@ -40,9 +41,9 @@ export function NewsTicker() {
             animation: status === "done" ? "ticker-scroll 30s linear infinite" : "none",
           }}
         >
-          {repeated.map((title, i) => (
+          {repeated.map((text, i) => (
             <span key={i} className="text-sm text-muted-foreground shrink-0">
-              {title}
+              {text}
             </span>
           ))}
         </div>
