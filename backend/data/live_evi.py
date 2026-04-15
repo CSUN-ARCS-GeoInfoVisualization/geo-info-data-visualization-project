@@ -49,9 +49,10 @@ def get_evi(lat: float, lon: float) -> float:
         raise ValueError("No EVI data returned from MODIS")
 
     # Walk from most recent to oldest, return the first valid value
+    # Apply MODIS scale factor 0.0001 to match AppEEARS training data encoding
     for entry in reversed(subsets):
         value = entry["data"][0]
         if _EVI_MIN <= value <= _EVI_MAX:
-            return float(value)
+            return float(value) * 0.0001
 
     raise ValueError("No valid EVI value found in MODIS response")

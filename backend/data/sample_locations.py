@@ -2,10 +2,10 @@
 Hardcoded sample California locations with pre-extracted feature values.
 
 Feature values are derived from the 2020 cleaned training dataset
-(clean_data_2020.csv) used to train the predictive model.
+(california_2020.csv) used to train the predictive model.
 
 Feature encoding:
-    EVI       — Raw MODIS Enhanced Vegetation Index pixel value
+    EVI       — Scaled MODIS EVI value (raw * 0.0001), range ~-0.2 to 1.0
     LST       — (T_celsius + 273.15) / 0.02  (matches training data encoding)
     Wind      — Wind speed in m/s
     Elevation — Average terrain elevation in meters
@@ -22,7 +22,7 @@ SAMPLE_LOCATIONS = [
         "name": "High Sierra — Mountain Ridge",
         "lat": 37.5200,
         "lon": -119.2700,
-        "evi": 0,
+        "evi": 0.0,
         "lst": 13200,    # ≈ -8.7°C  (cold mountain winter)
         "wind": 6.0,
         "humidity": 30.0,
@@ -33,7 +33,7 @@ SAMPLE_LOCATIONS = [
         "name": "Coastal San Francisco",
         "lat": 37.7749,
         "lon": -122.4194,
-        "evi": 1200,
+        "evi": 0.12,
         "lst": 13800,    # ≈ 2.9°C   (cool coastal)
         "wind": 5.0,
         "humidity": 80.0,
@@ -44,7 +44,7 @@ SAMPLE_LOCATIONS = [
         "name": "Sacramento Valley",
         "lat": 38.5816,
         "lon": -121.4944,
-        "evi": 600,
+        "evi": 0.06,
         "lst": 13500,    # ≈ -3.6°C  (winter valley)
         "wind": 4.0,
         "humidity": 60.0,
@@ -55,7 +55,7 @@ SAMPLE_LOCATIONS = [
         "name": "Los Angeles Foothills",
         "lat": 34.1900,
         "lon": -118.1300,
-        "evi": 800,
+        "evi": 0.08,
         "lst": 13900,    # ≈ 5.0°C
         "wind": 7.0,
         "humidity": 40.0,
@@ -66,7 +66,7 @@ SAMPLE_LOCATIONS = [
         "name": "San Diego Backcountry",
         "lat": 32.9000,
         "lon": -116.7000,
-        "evi": 500,
+        "evi": 0.05,
         "lst": 14000,    # ≈ 7.0°C
         "wind": 7.0,
         "humidity": 35.0,
