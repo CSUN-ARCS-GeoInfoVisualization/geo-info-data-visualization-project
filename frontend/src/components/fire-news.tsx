@@ -243,26 +243,48 @@ export function FireNews() {
         </CardHeader>
         <CardContent>
           <p className="text-muted-foreground mb-4">{article.summary}</p>
-          <div className="flex items-center justify-between flex-wrap gap-2">
-            <Badge variant="secondary" className="text-xs">
-              {article.source_bucket === "cal_fire" ? "State agency"
-                : article.source_bucket === "nws" ? "Weather"
-                : article.source_bucket === "emergency" ? "Emergency"
-                : article.source_bucket === "web_discovery" ? "Search"
-                : "Local FD"}
-            </Badge>
-            {article.url ? (
-              <Button variant="outline" size="sm" asChild>
-                <a href={article.url} target="_blank" rel="noopener noreferrer">
-                  <ExternalLink className="h-4 w-4 mr-2 inline" />Source
-                </a>
-              </Button>
-            ) : (
-              <Button variant="outline" size="sm" type="button" disabled>
-                <ExternalLink className="h-4 w-4 mr-2 inline" />Source
-              </Button>
-            )}
-          </div>
+          {/* Coverage sources */}
+          {(() => {
+            const q = encodeURIComponent(article.title);
+            const searchLinks = [
+              { label: "Google News", href: `https://news.google.com/search?q=${q}` },
+              { label: "AP News", href: `https://apnews.com/search#?q=${q}` },
+              { label: "CAL FIRE", href: "https://www.fire.ca.gov/incidents/" },
+            ];
+            const hasDirectSource = Boolean(article.url);
+            return (
+              <div className="space-y-2">
+                <div className="flex items-center gap-2 text-xs text-muted-foreground font-medium">
+                  <span>Coverage Sources:</span>
+                  <Badge variant="secondary" className="text-xs">
+                    {article.source_bucket === "cal_fire" ? "State agency"
+                      : article.source_bucket === "nws" ? "Weather"
+                      : article.source_bucket === "emergency" ? "Emergency"
+                      : article.source_bucket === "web_discovery" ? "Search"
+                      : "Local FD"}
+                  </Badge>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  {hasDirectSource ? (
+                    <Button variant="outline" size="sm" asChild>
+                      <a href={article.url} target="_blank" rel="noopener noreferrer">
+                        <ExternalLink className="h-4 w-4 mr-2 inline" />Original Source
+                      </a>
+                    </Button>
+                  ) : (
+                    <span className="text-xs text-amber-600 font-medium">No direct news reporting — fire is active</span>
+                  )}
+                  {searchLinks.map((link) => (
+                    <Button key={link.label} variant="ghost" size="sm" asChild className="text-xs">
+                      <a href={link.href} target="_blank" rel="noopener noreferrer">
+                        <ExternalLink className="h-3 w-3 mr-1 inline" />{link.label}
+                      </a>
+                    </Button>
+                  ))}
+                </div>
+              </div>
+            );
+          })()}
         </CardContent>
       </Card>
     );
@@ -316,6 +338,13 @@ export function FireNews() {
                     {breakingNews[0].summary}
                   </p>
                 ) : null}
+                <div className="flex flex-wrap gap-2 mt-2">
+                  {breakingNews[0].url && (
+                    <a href={breakingNews[0].url} target="_blank" rel="noopener noreferrer" className="text-xs text-red-700 underline hover:text-red-900">Original Source</a>
+                  )}
+                  <a href={`https://news.google.com/search?q=${encodeURIComponent(breakingNews[0].title)}`} target="_blank" rel="noopener noreferrer" className="text-xs text-red-700 underline hover:text-red-900">Google News</a>
+                  <a href={`https://apnews.com/search#?q=${encodeURIComponent(breakingNews[0].title)}`} target="_blank" rel="noopener noreferrer" className="text-xs text-red-700 underline hover:text-red-900">AP News</a>
+                </div>
               </div>
               <Badge className="bg-red-100 text-red-800 border-red-200 animate-pulse shrink-0">Live</Badge>
             </div>
