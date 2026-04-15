@@ -4,7 +4,7 @@ import {
 } from "lucide-react";
 import { Map, useMap } from "@vis.gl/react-google-maps";
 import { GoogleMapsOverlay } from "@deck.gl/google-maps";
-import { ScatterplotLayer, GeoJsonLayer } from "@deck.gl/layers";
+import { ScatterplotLayer } from "@deck.gl/layers";
 import { HeatmapLayer } from "@deck.gl/aggregation-layers";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Badge } from "./ui/badge";
@@ -132,7 +132,7 @@ function RequestAccessView() {
 /* ------------------------------------------------------------------ */
 /*  deck.gl overlay — renders inside <Map> using useMap()              */
 /* ------------------------------------------------------------------ */
-function ResearchOverlay({ features, showHeatmap, riskGrid }: { features: any[]; showHeatmap: boolean; riskGrid: any[] }) {
+function ResearchOverlay({ features, showHeatmap }: { features: any[]; showHeatmap: boolean }) {
   const map = useMap();
   const overlayRef = useRef<GoogleMapsOverlay | null>(null);
 
@@ -203,54 +203,7 @@ function ResearchOverlay({ features, showHeatmap, riskGrid }: { features: any[];
       );
     }
 
-    // Risk prediction grid — zone polygons with colored fills and white/grey borders
-    if (riskGrid.length > 0) {
-      const HALF_LAT = 0.4;
-      const HALF_LON = 0.4;
-      const zoneGeoJson = {
-        type: "FeatureCollection" as const,
-        features: riskGrid.map((pt: any) => {
-          const [lon, lat] = pt.geometry.coordinates;
-          return {
-            type: "Feature" as const,
-            geometry: {
-              type: "Polygon" as const,
-              coordinates: [[
-                [lon - HALF_LON, lat - HALF_LAT],
-                [lon + HALF_LON, lat - HALF_LAT],
-                [lon + HALF_LON, lat + HALF_LAT],
-                [lon - HALF_LON, lat + HALF_LAT],
-                [lon - HALF_LON, lat - HALF_LAT],
-              ]],
-            },
-            properties: pt.properties,
-          };
-        }),
-      };
-      layers.push(
-        new GeoJsonLayer({
-          id: "risk-zones",
-          data: zoneGeoJson,
-          pickable: true,
-          stroked: true,
-          filled: true,
-          extruded: false,
-          lineWidthMinPixels: 1,
-          getLineColor: [200, 200, 200, 180],
-          getLineWidth: 1,
-          getFillColor: (f: any) => {
-            const s = f.properties.risk_score || 0;
-            if (s >= 0.75) return [153, 27, 27, 100];
-            if (s >= 0.50) return [220, 38, 38, 90];
-            if (s >= 0.25) return [234, 179, 8, 80];
-            return [34, 197, 94, 60];
-          },
-          updateTriggers: {
-            getFillColor: [riskGrid.length, riskGrid[0]?.properties?.risk_score],
-          },
-        })
-      );
-    }
+    // Old square grid removed — using county/zip/tract/neighborhood overlays instead
 
     const overlay = new GoogleMapsOverlay({ layers });
     overlay.setMap(map);
@@ -263,7 +216,7 @@ function ResearchOverlay({ features, showHeatmap, riskGrid }: { features: any[];
         overlayRef.current = null;
       }
     };
-  }, [map, features, showHeatmap, riskGrid]);
+  }, [map, features, showHeatmap]);
 
   return null;
 }
@@ -276,11 +229,9 @@ function ResearchMapView() {
   const [confidenceMin, setConfidenceMin] = useState(0);
   const [frpMin, setFrpMin] = useState(0);
   const [features, setFeatures] = useState<any[]>([]);
-  const [riskGrid, setRiskGrid] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [showHeatmap, setShowHeatmap] = useState(true);
-  const [showRiskGrid, setShowRiskGrid] = useState(true);
-  const [showCountyZones, setShowCountyZones] = useState(true);
+  const [showZones, setShowZones] = useState(true);
   const [zoneLevel, setZoneLevel] = useState<"counties" | "zip-codes" | "census-tracts" | "neighborhoods">("counties");
   const [selectedZone, setSelectedZone] = useState<string | null>(null);
   const [selectedZoneRisk, setSelectedZoneRisk] = useState<{ risk_score: number; label: string } | null>(null);
@@ -307,33 +258,10 @@ function ResearchMapView() {
     setLoading(false);
   }, [days, confidenceMin, frpMin]);
 
-  const fetchRiskGrid = useCallback(async () => {
-    if (!showRiskGrid) { setRiskGrid([]); return; }
-    try {
-      const params = new URLSearchParams();
-      if (useOverrides) {
-        params.set("evi", String(eviSlider));
-        params.set("lst", String(lstSlider));
-        params.set("wind", String(windSlider));
-        params.set("elevation", String(elevSlider));
-      }
-      const r = await apiFetch(`/research/risk-grid?${params}`);
-      if (r.ok) {
-        const data = await r.json();
-        setRiskGrid(data.features || []);
-      }
-    } catch (e) { console.warn("research fetch error:", e); }
-  }, [showRiskGrid, useOverrides, eviSlider, lstSlider, windSlider, elevSlider]);
-
   useEffect(() => {
     const timer = setTimeout(fetchData, 500);
     return () => clearTimeout(timer);
   }, [fetchData]);
-
-  useEffect(() => {
-    const timer = setTimeout(fetchRiskGrid, 800);
-    return () => clearTimeout(timer);
-  }, [fetchRiskGrid]);
 
   // Convert LST encoded value to Celsius for display
   const lstCelsius = Math.round((lstSlider * 0.02 - 273.15) * 10) / 10;
@@ -344,7 +272,7 @@ function ResearchMapView() {
       <div>
         <h1 className="text-3xl font-bold mb-2">Research Map</h1>
         <p className="text-muted-foreground">
-          {features.length} hotspots · {riskGrid.length} risk zones
+          {features.length} hotspots
           {loading && <Loader2 className="inline h-4 w-4 ml-2 animate-spin" />}
         </p>
       </div>
@@ -358,22 +286,22 @@ function ResearchMapView() {
               gestureHandling="greedy"
               mapTypeId="terrain"
             >
-              {showCountyZones && zoneLevel === "counties" && (
+              {showZones && zoneLevel === "counties" && (
                 <CountyRiskOverlay
                   overrides={useOverrides ? { evi: eviSlider, lst: lstSlider, wind: windSlider, elevation: elevSlider } : undefined}
                   onCountyClick={(name, risk) => { setSelectedZone(name); setSelectedZoneRisk(risk); }}
                 />
               )}
-              {showCountyZones && zoneLevel === "zip-codes" && (
+              {showZones && zoneLevel === "zip-codes" && (
                 <ZipCodeRiskOverlay onZoneClick={(name, risk) => { setSelectedZone(name); setSelectedZoneRisk(risk); }} />
               )}
-              {showCountyZones && zoneLevel === "census-tracts" && (
+              {showZones && zoneLevel === "census-tracts" && (
                 <CensusTractRiskOverlay onZoneClick={(name, risk) => { setSelectedZone(name); setSelectedZoneRisk(risk); }} />
               )}
-              {showCountyZones && zoneLevel === "neighborhoods" && (
+              {showZones && zoneLevel === "neighborhoods" && (
                 <NeighborhoodRiskOverlay onZoneClick={(name, risk) => { setSelectedZone(name); setSelectedZoneRisk(risk); }} />
               )}
-              <ResearchOverlay features={features} showHeatmap={showHeatmap} riskGrid={showRiskGrid ? riskGrid : []} />
+              <ResearchOverlay features={features} showHeatmap={showHeatmap} />
             </Map>
             {/* Selected zone info */}
             {selectedZone && selectedZoneRisk && (
@@ -437,10 +365,10 @@ function ResearchMapView() {
               FIRMS heatmap overlay
             </label>
             <label className="flex items-center gap-2 text-sm cursor-pointer">
-              <input type="checkbox" checked={showCountyZones} onChange={(e) => setShowCountyZones(e.target.checked)} className="accent-red-500" />
+              <input type="checkbox" checked={showZones} onChange={(e) => setShowCountyZones(e.target.checked)} className="accent-red-500" />
               Risk zones (click to select)
             </label>
-            {showCountyZones && (
+            {showZones && (
               <select value={zoneLevel} onChange={(e) => setZoneLevel(e.target.value as any)} className="text-xs border rounded px-2 py-1 w-full bg-background">
                 <option value="counties">Counties (58)</option>
                 <option value="zip-codes">ZIP Codes (1,769)</option>
@@ -448,10 +376,6 @@ function ResearchMapView() {
                 <option value="census-tracts">Census Tracts (8,041)</option>
               </select>
             )}
-            <label className="flex items-center gap-2 text-sm cursor-pointer">
-              <input type="checkbox" checked={showRiskGrid} onChange={(e) => setShowRiskGrid(e.target.checked)} className="accent-red-500" />
-              ML risk point grid
-            </label>
             <hr className="my-2" />
             <label className="flex items-center gap-2 text-sm cursor-pointer">
               <input type="checkbox" checked={useOverrides} onChange={(e) => setUseOverrides(e.target.checked)} className="accent-red-500" />

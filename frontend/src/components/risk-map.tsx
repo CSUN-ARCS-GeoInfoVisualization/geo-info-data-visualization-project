@@ -41,6 +41,10 @@ import { Map as GoogleMap, useMap } from '@vis.gl/react-google-maps';
 import { GoogleMapsOverlay } from '@deck.gl/google-maps';
 import { GeoJsonLayer } from '@deck.gl/layers';
 import { apiFetch } from "../services/api";
+import { CountyRiskOverlay } from "./CountyRiskOverlay";
+import { ZipCodeRiskOverlay } from "./ZipCodeRiskOverlay";
+import { CensusTractRiskOverlay } from "./CensusTractRiskOverlay";
+import { NeighborhoodRiskOverlay } from "./NeighborhoodRiskOverlay";
 
 interface MapLayer {
   id: string;
@@ -73,81 +77,9 @@ interface WeatherStation {
   lastReading: string;
 }
 
-interface RiskGridCell {
-  lat: number;
-  lng: number;
-  risk: number; // 0-100
-}
+// Old square grid removed — using county/zip/tract/neighborhood overlays
 
-function getRiskColor(risk: number): [number, number, number, number] {
-  if (risk >= 75) return [139, 0, 0, 160];    // dark red - extreme
-  if (risk >= 50) return [220, 38, 38, 140];   // red - high
-  if (risk >= 25) return [234, 179, 8, 120];   // yellow - medium
-  return [34, 197, 94, 100];                    // green - low
-}
-
-function getRiskLabel(risk: number): string {
-  if (risk >= 75) return "Extreme";
-  if (risk >= 50) return "High";
-  if (risk >= 25) return "Moderate";
-  return "Low";
-}
-
-function buildRiskGeoJson(cells: RiskGridCell[]) {
-  const halfLat = 0.4;
-  const halfLng = 0.4;
-  return {
-    type: "FeatureCollection" as const,
-    features: cells.map((cell, i) => ({
-      type: "Feature" as const,
-      properties: { risk: cell.risk, id: i },
-      geometry: {
-        type: "Polygon" as const,
-        coordinates: [[
-          [cell.lng - halfLng, cell.lat - halfLat],
-          [cell.lng + halfLng, cell.lat - halfLat],
-          [cell.lng + halfLng, cell.lat + halfLat],
-          [cell.lng - halfLng, cell.lat + halfLat],
-          [cell.lng - halfLng, cell.lat - halfLat],
-        ]],
-      },
-    })),
-  };
-}
-
-// Risk zone overlay component
-function RiskZoneOverlay({ riskCells }: { riskCells: RiskGridCell[] }) {
-  const map = useMap();
-  const overlayRef = useRef<GoogleMapsOverlay | null>(null);
-
-  useEffect(() => {
-    if (!map || riskCells.length === 0) return;
-
-    const geojson = buildRiskGeoJson(riskCells);
-    const layer = new GeoJsonLayer({
-      id: "risk-zones",
-      data: geojson,
-      filled: true,
-      stroked: true,
-      getFillColor: (f: any) => getRiskColor(f.properties.risk),
-      getLineColor: [220, 220, 220, 180],
-      getLineWidth: 1,
-      lineWidthUnits: "pixels" as const,
-      pickable: true,
-    });
-
-    const overlay = new GoogleMapsOverlay({ layers: [layer] });
-    overlay.setMap(map);
-    overlayRef.current = overlay;
-
-    return () => {
-      overlay.setMap(null);
-      overlayRef.current = null;
-    };
-  }, [map, riskCells]);
-
-  return null;
-}
+type ZoneLevel = "counties" | "zip-codes" | "census-tracts" | "neighborhoods";
 
 async function fetchCalFireIncidents(): Promise<FireIncident[]> {
   try {
@@ -173,26 +105,6 @@ async function fetchCalFireIncidents(): Promise<FireIncident[]> {
               : "low" as const,
       }));
   } catch {
-    return [];
-  }
-}
-
-async function fetchRiskGrid(): Promise<RiskGridCell[]> {
-  try {
-    const res = await apiFetch("/research/risk-grid");
-    if (!res.ok) return [];
-    const data = await res.json();
-    // Backend returns GeoJSON FeatureCollection — convert to RiskGridCell[]
-    if (data?.features && Array.isArray(data.features)) {
-      return data.features.map((f: any) => ({
-        lat: f.geometry.coordinates[1],
-        lng: f.geometry.coordinates[0],
-        risk: Math.round((f.properties.risk_score || 0) * 100),
-      }));
-    }
-    return [];
-  } catch (e) {
-    console.warn("fetchRiskGrid failed:", e);
     return [];
   }
 }
@@ -282,20 +194,16 @@ export function RiskMap() {
   const [timeframe, setTimeframe] = useState<"current" | "forecast-6h" | "forecast-24h">("current");
   const [searchQuery, setSearchQuery] = useState("");
   const [fireIncidents, setFireIncidents] = useState<FireIncident[]>([]);
-  const [riskCells, setRiskCells] = useState<RiskGridCell[]>([]);
+  const [zoneLevel, setZoneLevel] = useState<ZoneLevel>("counties");
   const [loadingFires, setLoadingFires] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
     async function load() {
       setLoadingFires(true);
-      const [fires, grid] = await Promise.all([
-        fetchCalFireIncidents(),
-        fetchRiskGrid(),
-      ]);
+      const fires = await fetchCalFireIncidents();
       if (cancelled) return;
       setFireIncidents(fires);
-      setRiskCells(grid);
       setLoadingFires(false);
     }
     load();
@@ -417,7 +325,10 @@ export function RiskMap() {
                     disableDefaultUI={false}
                   >
                     {/* Risk Zone Overlay */}
-                    {riskCells.length > 0 && <RiskZoneOverlay riskCells={riskCells} />}
+                    {zoneLevel === "counties" && <CountyRiskOverlay />}
+                    {zoneLevel === "zip-codes" && <ZipCodeRiskOverlay />}
+                    {zoneLevel === "census-tracts" && <CensusTractRiskOverlay />}
+                    {zoneLevel === "neighborhoods" && <NeighborhoodRiskOverlay />}
 
                     {/* Live Fire Incidents from CAL FIRE */}
                     {layers.find(l => l.id === "fire-incidents")?.enabled &&
@@ -476,6 +387,21 @@ export function RiskMap() {
 
           {/* Sidebar */}
           <div className="space-y-4">
+            {/* Zone Level */}
+            <Card>
+              <CardHeader>
+                <CardTitle className="text-sm">Risk Zone Level</CardTitle>
+              </CardHeader>
+              <CardContent>
+                <select value={zoneLevel} onChange={(e) => setZoneLevel(e.target.value as ZoneLevel)} className="w-full text-sm border rounded px-2 py-1.5 bg-background">
+                  <option value="counties">Counties (58)</option>
+                  <option value="zip-codes">ZIP Codes (1,769)</option>
+                  <option value="neighborhoods">Neighborhoods (1,521)</option>
+                  <option value="census-tracts">Census Tracts (8,041)</option>
+                </select>
+              </CardContent>
+            </Card>
+
             {/* Map Layers */}
             <Card>
               <CardHeader>
@@ -608,7 +534,7 @@ export function RiskMap() {
               <div className="flex items-center gap-2">
                 <Map className="h-5 w-5 text-purple-500" />
                 <div>
-                  <div className="text-2xl font-bold">{riskCells.length || "-"}</div>
+                  <div className="text-2xl font-bold">Active</div>
                   <div className="text-sm text-muted-foreground">Risk Zones</div>
                 </div>
               </div>
