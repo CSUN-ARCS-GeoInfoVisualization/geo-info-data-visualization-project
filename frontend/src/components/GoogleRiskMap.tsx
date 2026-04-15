@@ -4,6 +4,9 @@ import { GoogleMapsOverlay } from '@deck.gl/google-maps';
 import { ScatterplotLayer } from '@deck.gl/layers';
 import { apiFetch } from '../services/api';
 import { CountyRiskOverlay } from './CountyRiskOverlay';
+import { ZipCodeRiskOverlay } from './ZipCodeRiskOverlay';
+import { CensusTractRiskOverlay } from './CensusTractRiskOverlay';
+import { NeighborhoodRiskOverlay } from './NeighborhoodRiskOverlay';
 
 interface CalFireIncident {
   Name: string;
@@ -76,23 +79,45 @@ interface GoogleRiskMapProps {
   height?: string;
 }
 
+type ZoneLevel = "counties" | "zip-codes" | "census-tracts" | "neighborhoods";
+
 export function GoogleRiskMap({
   center = { lat: 36.7783, lng: -119.4179 },
   zoom = 6,
   height = "h-[420px]",
 }: GoogleRiskMapProps) {
+  const [zoneLevel, setZoneLevel] = useState<ZoneLevel>("counties");
+
   return (
-    <div className={`w-full ${height} rounded-lg overflow-hidden border`}>
-      <Map
-        style={{ width: '100%', height: '100%' }}
-        defaultCenter={center}
-        defaultZoom={zoom}
-        gestureHandling="greedy"
-        disableDefaultUI
-      >
-        <CountyRiskOverlay />
-        <ActiveFiresOverlay />
-      </Map>
+    <div className="space-y-2">
+      <div className="flex items-center justify-between">
+        <span className="text-xs text-muted-foreground">Risk Zone Level:</span>
+        <select
+          value={zoneLevel}
+          onChange={(e) => setZoneLevel(e.target.value as ZoneLevel)}
+          className="text-xs border rounded px-2 py-1 bg-background"
+        >
+          <option value="counties">Counties (58)</option>
+          <option value="zip-codes">ZIP Codes (1,769)</option>
+          <option value="neighborhoods">Neighborhoods (1,521)</option>
+          <option value="census-tracts">Census Tracts (8,041)</option>
+        </select>
+      </div>
+      <div style={{ height: 420 }} className="w-full rounded-lg overflow-hidden border">
+        <Map
+          style={{ width: '100%', height: '100%' }}
+          defaultCenter={center}
+          defaultZoom={zoom}
+          gestureHandling="greedy"
+          disableDefaultUI
+        >
+          {zoneLevel === "counties" && <CountyRiskOverlay />}
+          {zoneLevel === "zip-codes" && <ZipCodeRiskOverlay />}
+          {zoneLevel === "census-tracts" && <CensusTractRiskOverlay />}
+          {zoneLevel === "neighborhoods" && <NeighborhoodRiskOverlay />}
+          <ActiveFiresOverlay />
+        </Map>
+      </div>
     </div>
   );
 }

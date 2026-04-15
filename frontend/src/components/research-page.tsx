@@ -11,6 +11,9 @@ import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { apiFetch } from "../services/api";
 import { CountyRiskOverlay } from "./CountyRiskOverlay";
+import { ZipCodeRiskOverlay } from "./ZipCodeRiskOverlay";
+import { CensusTractRiskOverlay } from "./CensusTractRiskOverlay";
+import { NeighborhoodRiskOverlay } from "./NeighborhoodRiskOverlay";
 
 interface ResearchPageProps {
   userRole: string | null;
@@ -278,8 +281,9 @@ function ResearchMapView() {
   const [showHeatmap, setShowHeatmap] = useState(true);
   const [showRiskGrid, setShowRiskGrid] = useState(true);
   const [showCountyZones, setShowCountyZones] = useState(true);
-  const [selectedCounty, setSelectedCounty] = useState<string | null>(null);
-  const [selectedCountyRisk, setSelectedCountyRisk] = useState<{ risk_score: number; label: string } | null>(null);
+  const [zoneLevel, setZoneLevel] = useState<"counties" | "zip-codes" | "census-tracts" | "neighborhoods">("counties");
+  const [selectedZone, setSelectedZone] = useState<string | null>(null);
+  const [selectedZoneRisk, setSelectedZoneRisk] = useState<{ risk_score: number; label: string } | null>(null);
   const [useOverrides, setUseOverrides] = useState(false);
   const [eviSlider, setEviSlider] = useState(500);
   const [lstSlider, setLstSlider] = useState(14000);
@@ -354,20 +358,30 @@ function ResearchMapView() {
               gestureHandling="greedy"
               mapTypeId="terrain"
             >
-              {showCountyZones && (
+              {showCountyZones && zoneLevel === "counties" && (
                 <CountyRiskOverlay
                   overrides={useOverrides ? { evi: eviSlider, lst: lstSlider, wind: windSlider, elevation: elevSlider } : undefined}
-                  onCountyClick={(name, risk) => { setSelectedCounty(name); setSelectedCountyRisk(risk); }}
+                  onCountyClick={(name, risk) => { setSelectedZone(name); setSelectedZoneRisk(risk); }}
                 />
+              )}
+              {showCountyZones && zoneLevel === "zip-codes" && (
+                <ZipCodeRiskOverlay onZoneClick={(name, risk) => { setSelectedZone(name); setSelectedZoneRisk(risk); }} />
+              )}
+              {showCountyZones && zoneLevel === "census-tracts" && (
+                <CensusTractRiskOverlay onZoneClick={(name, risk) => { setSelectedZone(name); setSelectedZoneRisk(risk); }} />
+              )}
+              {showCountyZones && zoneLevel === "neighborhoods" && (
+                <NeighborhoodRiskOverlay onZoneClick={(name, risk) => { setSelectedZone(name); setSelectedZoneRisk(risk); }} />
               )}
               <ResearchOverlay features={features} showHeatmap={showHeatmap} riskGrid={showRiskGrid ? riskGrid : []} />
             </Map>
-            {/* Selected county info */}
-            {selectedCounty && selectedCountyRisk && (
-              <div className="absolute top-3 right-3 bg-white/95 backdrop-blur-sm rounded-lg p-3 shadow-lg text-sm z-10 max-w-[200px]">
-                <div className="font-bold">{selectedCounty} County</div>
-                <div className="text-muted-foreground">Risk: {Math.round(selectedCountyRisk.risk_score * 100)}% ({selectedCountyRisk.label})</div>
-                <button onClick={() => { setSelectedCounty(null); setSelectedCountyRisk(null); }} className="text-xs text-blue-600 hover:underline mt-1">Clear selection</button>
+            {/* Selected zone info */}
+            {selectedZone && selectedZoneRisk && (
+              <div className="absolute top-3 right-3 bg-white/95 backdrop-blur-sm rounded-lg p-3 shadow-lg text-sm z-10 max-w-[220px]">
+                <div className="font-bold">{selectedZone}</div>
+                <div className="text-muted-foreground">Risk: {Math.round(selectedZoneRisk.risk_score * 100)}% ({selectedZoneRisk.label})</div>
+                <p className="text-xs text-muted-foreground mt-1">Use sliders below to adjust model parameters for this zone.</p>
+                <button onClick={() => { setSelectedZone(null); setSelectedZoneRisk(null); }} className="text-xs text-blue-600 hover:underline mt-1">Clear selection</button>
               </div>
             )}
             {/* Map overlay legend */}
@@ -424,8 +438,16 @@ function ResearchMapView() {
             </label>
             <label className="flex items-center gap-2 text-sm cursor-pointer">
               <input type="checkbox" checked={showCountyZones} onChange={(e) => setShowCountyZones(e.target.checked)} className="accent-red-500" />
-              County risk zones (click to select)
+              Risk zones (click to select)
             </label>
+            {showCountyZones && (
+              <select value={zoneLevel} onChange={(e) => setZoneLevel(e.target.value as any)} className="text-xs border rounded px-2 py-1 w-full bg-background">
+                <option value="counties">Counties (58)</option>
+                <option value="zip-codes">ZIP Codes (1,769)</option>
+                <option value="neighborhoods">Neighborhoods (1,521)</option>
+                <option value="census-tracts">Census Tracts (8,041)</option>
+              </select>
+            )}
             <label className="flex items-center gap-2 text-sm cursor-pointer">
               <input type="checkbox" checked={showRiskGrid} onChange={(e) => setShowRiskGrid(e.target.checked)} className="accent-red-500" />
               ML risk point grid
