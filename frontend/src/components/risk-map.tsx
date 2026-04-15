@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import {
   Map,
   Layers,
@@ -40,6 +40,7 @@ import { Alert, AlertDescription } from "./ui/alert";
 import { Map as GoogleMap, useMap } from '@vis.gl/react-google-maps';
 import { GoogleMapsOverlay } from '@deck.gl/google-maps';
 import { GeoJsonLayer } from '@deck.gl/layers';
+import { apiFetch } from "../services/api";
 
 interface MapLayer {
   id: string;
@@ -72,9 +73,124 @@ interface WeatherStation {
   lastReading: string;
 }
 
-// No mock data - will load from real sources
+interface RiskGridCell {
+  lat: number;
+  lng: number;
+  risk: number; // 0-100
+}
 
-// No mock data - will load from real sources
+function getRiskColor(risk: number): [number, number, number, number] {
+  if (risk >= 75) return [139, 0, 0, 160];    // dark red - extreme
+  if (risk >= 50) return [220, 38, 38, 140];   // red - high
+  if (risk >= 25) return [234, 179, 8, 120];   // yellow - medium
+  return [34, 197, 94, 100];                    // green - low
+}
+
+function getRiskLabel(risk: number): string {
+  if (risk >= 75) return "Extreme";
+  if (risk >= 50) return "High";
+  if (risk >= 25) return "Moderate";
+  return "Low";
+}
+
+function buildRiskGeoJson(cells: RiskGridCell[]) {
+  const halfLat = 0.4;
+  const halfLng = 0.4;
+  return {
+    type: "FeatureCollection" as const,
+    features: cells.map((cell, i) => ({
+      type: "Feature" as const,
+      properties: { risk: cell.risk, id: i },
+      geometry: {
+        type: "Polygon" as const,
+        coordinates: [[
+          [cell.lng - halfLng, cell.lat - halfLat],
+          [cell.lng + halfLng, cell.lat - halfLat],
+          [cell.lng + halfLng, cell.lat + halfLat],
+          [cell.lng - halfLng, cell.lat + halfLat],
+          [cell.lng - halfLng, cell.lat - halfLat],
+        ]],
+      },
+    })),
+  };
+}
+
+// Risk zone overlay component
+function RiskZoneOverlay({ riskCells }: { riskCells: RiskGridCell[] }) {
+  const map = useMap();
+  const overlayRef = useRef<GoogleMapsOverlay | null>(null);
+
+  useEffect(() => {
+    if (!map || riskCells.length === 0) return;
+
+    const geojson = buildRiskGeoJson(riskCells);
+    const layer = new GeoJsonLayer({
+      id: "risk-zones",
+      data: geojson,
+      filled: true,
+      stroked: true,
+      getFillColor: (f: any) => getRiskColor(f.properties.risk),
+      getLineColor: [220, 220, 220, 180],
+      getLineWidth: 1,
+      lineWidthUnits: "pixels" as const,
+      pickable: true,
+    });
+
+    const overlay = new GoogleMapsOverlay({ layers: [layer] });
+    overlay.setMap(map);
+    overlayRef.current = overlay;
+
+    return () => {
+      overlay.setMap(null);
+      overlayRef.current = null;
+    };
+  }, [map, riskCells]);
+
+  return null;
+}
+
+async function fetchCalFireIncidents(): Promise<FireIncident[]> {
+  try {
+    const res = await fetch(
+      "https://incidents.fire.ca.gov/umbraco/api/IncidentApi/List?inactive=false"
+    );
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data as any[])
+      .filter((d: any) => d.Latitude && d.Longitude)
+      .map((d: any, i: number) => ({
+        id: d.UniqueId || String(i),
+        name: d.Name || "Unknown Fire",
+        status: d.IsActive ? "active" as const : "contained" as const,
+        acres: d.AcresBurned ?? 0,
+        containment: d.PercentContained ?? 0,
+        coordinates: { lat: d.Latitude, lng: d.Longitude },
+        startDate: d.StartedDateOnly || d.Started || "",
+        threatLevel: (d.AcresBurned ?? 0) > 10000
+          ? "extreme" as const
+          : (d.AcresBurned ?? 0) > 1000
+            ? "high" as const
+            : (d.AcresBurned ?? 0) > 100
+              ? "moderate" as const
+              : "low" as const,
+      }));
+  } catch {
+    return [];
+  }
+}
+
+async function fetchRiskGrid(): Promise<RiskGridCell[]> {
+  try {
+    const res = await apiFetch("/research/risk-grid");
+    if (!res.ok) return [];
+    const data = await res.json();
+    if (Array.isArray(data)) return data as RiskGridCell[];
+    if (data?.cells && Array.isArray(data.cells)) return data.cells as RiskGridCell[];
+    return [];
+  } catch {
+    return [];
+  }
+}
 
 // Fire Perimeters component removed - use History tab for perimeter data
 
@@ -97,11 +213,15 @@ function FireIncidentMarker({ incident, selected, onClick }: { incident: FireInc
       map,
       icon: {
         path: google.maps.SymbolPath.CIRCLE,
-        scale: selected ? 12 : 10,
-        fillColor: getIncidentColor(),
-        fillOpacity: 1,
-        strokeColor: '#ffffff',
+        scale: selected ? 16 : 13,
+        fillColor: '#f5f5f5',
+        fillOpacity: 0.9,
+        strokeColor: getIncidentColor(),
         strokeWeight: 2
+      },
+      label: {
+        text: '\uD83D\uDD25',
+        fontSize: selected ? '18px' : '14px',
       },
       title: incident.name
     });
@@ -156,6 +276,26 @@ export function RiskMap() {
   const [mapTypeId, setMapTypeId] = useState<'roadmap' | 'satellite' | 'hybrid' | 'terrain'>('satellite');
   const [timeframe, setTimeframe] = useState<"current" | "forecast-6h" | "forecast-24h">("current");
   const [searchQuery, setSearchQuery] = useState("");
+  const [fireIncidents, setFireIncidents] = useState<FireIncident[]>([]);
+  const [riskCells, setRiskCells] = useState<RiskGridCell[]>([]);
+  const [loadingFires, setLoadingFires] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      setLoadingFires(true);
+      const [fires, grid] = await Promise.all([
+        fetchCalFireIncidents(),
+        fetchRiskGrid(),
+      ]);
+      if (cancelled) return;
+      setFireIncidents(fires);
+      setRiskCells(grid);
+      setLoadingFires(false);
+    }
+    load();
+    return () => { cancelled = true; };
+  }, []);
 
   const [layers, setLayers] = useState<MapLayer[]>([
     { id: "fire-incidents", name: "Fire Incidents", icon: Flame, enabled: true, opacity: 100, color: "red" },
@@ -177,8 +317,8 @@ export function RiskMap() {
     ));
   };
 
-  const selectedIncidentData = null; // Will be populated with real data
-  const selectedStationData = null; // Will be populated with real data
+  const selectedIncidentData = fireIncidents.find(f => f.id === selectedIncident) ?? null;
+  const selectedStationData = null; // Will be populated with real weather data
 
   return (
     <TooltipProvider>
@@ -271,27 +411,54 @@ export function RiskMap() {
                     gestureHandling="greedy"
                     disableDefaultUI={false}
                   >
-                    {/* Fire Perimeters removed - use History tab for perimeter data */}
+                    {/* Risk Zone Overlay */}
+                    {riskCells.length > 0 && <RiskZoneOverlay riskCells={riskCells} />}
 
-                    {/* Fire Incidents - removed mock data */}
-                    {/* Add real fire incident data source here */}
+                    {/* Live Fire Incidents from CAL FIRE */}
+                    {layers.find(l => l.id === "fire-incidents")?.enabled &&
+                      fireIncidents.map((incident) => (
+                        <FireIncidentMarker
+                          key={incident.id}
+                          incident={incident}
+                          selected={selectedIncident === incident.id}
+                          onClick={() => setSelectedIncident(
+                            selectedIncident === incident.id ? null : incident.id
+                          )}
+                        />
+                      ))
+                    }
 
-                    {/* Weather Stations - removed mock data */}
-                    {/* Add real weather station data source here */}
+                    {/* Weather Stations - awaiting real data source */}
                   </GoogleMap>
                 </div>
 
                 {/* Map Legend */}
                 <div className="mt-4 bg-gray-50 rounded-lg p-4">
                   <h4 className="font-semibold text-sm mb-3">Map Legend</h4>
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
                     <div className="flex items-center gap-2">
-                      <div className="w-4 h-4 bg-red-600 rounded-full border-2 border-white"></div>
+                      <span className="text-base">🔥</span>
                       <span>Active Fire</span>
                     </div>
                     <div className="flex items-center gap-2">
                       <div className="w-3 h-3 bg-blue-500 border-2 border-white rounded-full"></div>
                       <span>Weather Station</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-4 h-3 bg-green-500 rounded border border-gray-300 opacity-70"></div>
+                      <span>Low Risk</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-4 h-3 bg-yellow-400 rounded border border-gray-300 opacity-70"></div>
+                      <span>Moderate</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-4 h-3 bg-red-600 rounded border border-gray-300 opacity-70"></div>
+                      <span>High Risk</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="w-4 h-3 bg-red-900 rounded border border-gray-300 opacity-70"></div>
+                      <span>Extreme</span>
                     </div>
                   </div>
                   <p className="text-xs text-muted-foreground mt-3">
@@ -408,8 +575,10 @@ export function RiskMap() {
               <div className="flex items-center gap-2">
                 <AlertTriangle className="h-5 w-5 text-red-500" />
                 <div>
-                  <div className="text-2xl font-bold">-</div>
-                  <div className="text-sm text-muted-foreground">Active Fires (Load Data)</div>
+                  <div className="text-2xl font-bold">
+                    {loadingFires ? "..." : fireIncidents.filter(f => f.status === "active").length}
+                  </div>
+                  <div className="text-sm text-muted-foreground">Active Fires</div>
                 </div>
               </div>
             </CardContent>
@@ -420,7 +589,9 @@ export function RiskMap() {
               <div className="flex items-center gap-2">
                 <Flame className="h-5 w-5 text-orange-500" />
                 <div>
-                  <div className="text-2xl font-bold">-</div>
+                  <div className="text-2xl font-bold">
+                    {loadingFires ? "..." : fireIncidents.length}
+                  </div>
                   <div className="text-sm text-muted-foreground">Total Incidents</div>
                 </div>
               </div>
@@ -430,10 +601,10 @@ export function RiskMap() {
           <Card>
             <CardContent className="pt-6">
               <div className="flex items-center gap-2">
-                <Thermometer className="h-5 w-5 text-blue-500" />
+                <Map className="h-5 w-5 text-purple-500" />
                 <div>
-                  <div className="text-2xl font-bold">-</div>
-                  <div className="text-sm text-muted-foreground">Weather Stations</div>
+                  <div className="text-2xl font-bold">{riskCells.length || "-"}</div>
+                  <div className="text-sm text-muted-foreground">Risk Zones</div>
                 </div>
               </div>
             </CardContent>
@@ -444,7 +615,7 @@ export function RiskMap() {
               <div className="flex items-center gap-2">
                 <Clock className="h-5 w-5 text-green-500" />
                 <div>
-                  <div className="text-2xl font-bold">Live</div>
+                  <div className="text-2xl font-bold">{loadingFires ? "Loading" : "Live"}</div>
                   <div className="text-sm text-muted-foreground">Data Feed</div>
                 </div>
               </div>
