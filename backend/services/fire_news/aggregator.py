@@ -19,6 +19,7 @@ import requests
 
 from data.fire_news_feeds import (
     CAL_FIRE_INCIDENTS_JSON,
+    GNEWS_SEARCH_URL,
     NWS_CA_ALERTS_ATOM,
     RSS_FEED_SOURCES,
 )
@@ -27,7 +28,7 @@ logger = logging.getLogger(__name__)
 
 # 0 = refetch allowlisted feeds on every get_articles_cached() call (no in-process cache).
 # Set e.g. 900 to cache for 15 minutes and reduce load on upstream APIs.
-CACHE_TTL_SEC = int(os.getenv("FIRE_NEWS_CACHE_TTL_SEC", "0"))
+CACHE_TTL_SEC = int(os.getenv("FIRE_NEWS_CACHE_TTL_SEC", "900"))
 _REQUEST_TIMEOUT = 25
 
 _cache: dict[str, Any] = {"expires": 0.0, "articles": []}
@@ -441,10 +442,55 @@ def _dedupe_by_url(articles: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return list(seen.values())
 
 
+def _fetch_gnews() -> list[dict[str, Any]]:
+    """Fetch California wildfire news from GNews API (free tier: 100 req/day)."""
+    api_key = os.getenv("GNEWS_API_KEY", "")
+    if not api_key:
+        return []
+    out: list[dict[str, Any]] = []
+    try:
+        r = requests.get(
+            GNEWS_SEARCH_URL,
+            params={
+                "q": "California wildfire OR brush fire OR CAL FIRE",
+                "lang": "en",
+                "country": "us",
+                "max": "10",
+                "apikey": api_key,
+            },
+            timeout=_REQUEST_TIMEOUT,
+        )
+        r.raise_for_status()
+        data = r.json()
+    except Exception as e:
+        logger.warning("GNews fetch failed: %s", e)
+        return out
+    for item in data.get("articles", []):
+        title = item.get("title", "")
+        desc = item.get("description", "")
+        url = item.get("url", "")
+        pub = _parse_dt(item.get("publishedAt"))
+        if not is_fire_related(title, desc):
+            continue
+        art = _normalize_article(
+            title=title,
+            summary=desc,
+            url=url,
+            published_at=pub,
+            source_bucket="web_discovery",
+            source_label=item.get("source", {}).get("name", "News"),
+            default_category="updates",
+        )
+        if art:
+            out.append(art)
+    return out
+
+
 def _collect_all_raw() -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     items.extend(_fetch_cal_fire_incidents())
     items.extend(_fetch_nws_atom())
+    items.extend(_fetch_gnews())
     for src in RSS_FEED_SOURCES:
         items.extend(
             _fetch_rss_feed(

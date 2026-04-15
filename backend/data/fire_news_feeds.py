@@ -10,7 +10,7 @@ NWS_CA_ALERTS_ATOM = "https://api.weather.gov/alerts/active.atom?area=CA"
 
 # CAL FIRE / statewide incidents (JSON API, not RSS).
 CAL_FIRE_INCIDENTS_JSON = (
-    "https://incidents.fire.ca.gov/umbraco/api/IncidentApi/List?inactive=false"
+    "https://incidents.fire.ca.gov/umbraco/api/IncidentApi/List?inactive=true"
 )
 
 # Los Angeles Fire Department — regional fire updates (Drupal RSS).
@@ -21,6 +21,12 @@ CAL_OES_NEWS_RSS = "https://www.news.caloes.ca.gov/feed/"
 
 # (feed_url, source_bucket, default_category)
 # default_category: breaking | updates | safety | research — refined by keyword rules in aggregator
+# GNews search API — free tier: 100 req/day. Requires GNEWS_API_KEY env var.
+GNEWS_SEARCH_URL = "https://gnews.io/api/v4/search"
+
+# InciWeb — national incident information system (RSS).
+INCIWEB_RSS = "https://inciweb.nwcg.gov/feeds/rss/incidents/"
+
 RSS_FEED_SOURCES = [
     {
         "feed_url": LAFD_RSS,
@@ -33,5 +39,11 @@ RSS_FEED_SOURCES = [
         "source_bucket": "emergency",
         "default_category": "updates",
         "source_label": "Cal OES",
+    },
+    {
+        "feed_url": INCIWEB_RSS,
+        "source_bucket": "cal_fire",
+        "default_category": "updates",
+        "source_label": "InciWeb",
     },
 ]

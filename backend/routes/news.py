@@ -70,7 +70,7 @@ def _merge_fire_news_90d(
 
 
 @news_bp.route("/news", methods=["GET"])
-@jwt_required()
+@jwt_required(optional=True)
 def list_news():
     category = (request.args.get("category") or "all").lower().strip()
     segment = (request.args.get("segment") or "recent").lower().strip()
