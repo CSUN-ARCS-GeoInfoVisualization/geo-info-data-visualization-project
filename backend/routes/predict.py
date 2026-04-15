@@ -1,7 +1,11 @@
+import logging
 import math
+import requests as http_requests
 from flask import Blueprint, request, jsonify
 from ml.inference import predict_from_features
 from data.sample_locations import SAMPLE_LOCATIONS
+
+logger = logging.getLogger(__name__)
 
 from data.live_weather import get_weather
 from data.live_elevation import get_elevation
@@ -119,3 +123,20 @@ def predict_batch():
         results.append(_run(lat, lon))
 
     return jsonify({'results': results})
+
+
+@predict_bp.route('/calfire/incidents', methods=['GET'])
+def calfire_incidents():
+    """Proxy CAL FIRE incidents API to avoid browser CORS restrictions."""
+    inactive = request.args.get('inactive', 'false')
+    try:
+        r = http_requests.get(
+            f'https://incidents.fire.ca.gov/umbraco/api/IncidentApi/List?inactive={inactive}',
+            timeout=15,
+            headers={'User-Agent': 'FireScopeProxy/1.0'},
+        )
+        r.raise_for_status()
+        return jsonify(r.json())
+    except Exception as e:
+        logger.warning('CAL FIRE proxy failed: %s', e)
+        return jsonify([]), 200

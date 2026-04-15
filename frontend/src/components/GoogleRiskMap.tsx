@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import { Map, useMap } from '@vis.gl/react-google-maps';
 import { GoogleMapsOverlay } from '@deck.gl/google-maps';
 import { ScatterplotLayer } from '@deck.gl/layers';
+import { apiFetch } from '../services/api';
 
 interface CalFireIncident {
   Name: string;
@@ -18,7 +19,7 @@ function ActiveFiresOverlay() {
   const [fires, setFires] = useState<CalFireIncident[]>([]);
 
   useEffect(() => {
-    fetch('https://incidents.fire.ca.gov/umbraco/api/IncidentApi/List?inactive=false')
+    apiFetch('/calfire/incidents?inactive=false')
       .then((r) => r.json())
       .then((data) => {
         if (Array.isArray(data)) {

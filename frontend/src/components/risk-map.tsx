@@ -151,9 +151,7 @@ function RiskZoneOverlay({ riskCells }: { riskCells: RiskGridCell[] }) {
 
 async function fetchCalFireIncidents(): Promise<FireIncident[]> {
   try {
-    const res = await fetch(
-      "https://incidents.fire.ca.gov/umbraco/api/IncidentApi/List?inactive=false"
-    );
+    const res = await apiFetch("/calfire/incidents?inactive=false");
     if (!res.ok) return [];
     const data = await res.json();
     return (data as any[])

@@ -342,7 +342,7 @@ function ResearchMapView() {
       </div>
 
       {/* Full-width Map */}
-      <div className="w-full h-[500px] rounded-lg overflow-hidden border relative">
+      <div className="w-full rounded-lg overflow-hidden border relative" style={{ height: 500 }}>
             <Map
               style={{ width: "100%", height: "100%" }}
               defaultCenter={{ lat: 36.7783, lng: -119.4179 }}
