@@ -39,14 +39,14 @@ type Page =
 
 type SettingsTab = "profile" | "locations" | "notifications";
 
-const BASE_NAV: { page: Page; label: string }[] = [
+// Original 6 nav items — GooeyNav animation is tuned for exactly these
+const NAV_LINKS: { page: Page; label: string }[] = [
   { page: "dashboard", label: "Dashboard" },
   { page: "evacuation-routes", label: "Evacuation Routes" },
   { page: "news", label: "News" },
   { page: "risk-map", label: "Risk Map" },
   { page: "alerts", label: "Alerts" },
   { page: "history", label: "History" },
-  { page: "research", label: "Research" },
 ];
 
 export default function App() {
@@ -74,11 +74,17 @@ export default function App() {
     if (isAuthenticated) fetchUserRole();
   }, [isAuthenticated, fetchUserRole]);
 
-  const NAV_LINKS = useMemo(() => {
-    const links = [...BASE_NAV];
+  // Extra nav items based on role (rendered separately from GooeyNav)
+  const extraNavLinks = useMemo(() => {
+    const links: { page: Page; label: string }[] = [
+      { page: "research", label: "Research" },
+    ];
     if (userRole === "Admin") links.push({ page: "admin", label: "Admin" });
     return links;
   }, [userRole]);
+
+  // All links combined for mobile dropdown
+  const allNavLinks = useMemo(() => [...NAV_LINKS, ...extraNavLinks], [extraNavLinks]);
 
   const onAuthSuccess = () => {
     setAuthToken(localStorage.getItem("token"));
@@ -123,7 +129,7 @@ export default function App() {
                   className="min-w-0 shrink-0"
                 />
 
-                <div className="ml-8 hidden md:flex items-center overflow-visible" aria-label="Main">
+                <div className="ml-8 hidden md:flex items-center overflow-visible gap-2" aria-label="Main">
                   <GooeyNav
                     items={NAV_LINKS.map(({ page, label }) => ({
                       label,
@@ -138,6 +144,17 @@ export default function App() {
                     timeVariance={150}
                     colors={[1, 2, 3, 1, 2, 3, 1, 4]}
                   />
+                  {extraNavLinks.map(({ page, label }) => (
+                    <Button
+                      key={page}
+                      variant={currentPage === page ? "default" : "ghost"}
+                      size="sm"
+                      onClick={() => setCurrentPage(page)}
+                      className="ml-1"
+                    >
+                      {label}
+                    </Button>
+                  ))}
                 </div>
               </div>
 
@@ -192,7 +209,7 @@ export default function App() {
                   >
                     <DropdownMenuLabel>Navigate</DropdownMenuLabel>
                     <DropdownMenuSeparator />
-                    {NAV_LINKS.map(({ page, label }) => (
+                    {allNavLinks.map(({ page, label }) => (
                       <DropdownMenuItem
                         key={page}
                         onSelect={() => goToPage(page)}
