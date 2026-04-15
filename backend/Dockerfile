@@ -12,4 +12,4 @@ ENV PYTHONPATH=/app
 
 EXPOSE 5000
 
-CMD ["sh", "-c", "flask db upgrade && python seed.py && python app.py"]
+CMD ["sh", "-c", "flask db upgrade && python seed.py && gunicorn 'app:create_app()' --bind 0.0.0.0:${PORT:-5000}"]
