@@ -55,14 +55,9 @@ OUT_CSV = os.path.join(OUT_DIR, "california_2020.csv")
 CSV_COLS = ["lat", "lon", "acq_date", "evi", "lst", "wind", "humidity", "elevation", "fire"]
 
 APPEEARS_URL = "https://appeears.earthdatacloud.nasa.gov/api"
-
-# ---------------------------------------------------------------------------
-# FIRMS — fire detection points
-# ---------------------------------------------------------------------------
-FIRMS_URL = (
-    "https://firms.modaps.eosdis.nasa.gov/data/active_fire/"
-    "modis-c6.1/csv/MODIS_C6_1_USA_contiguous_and_Hawaii_2020.csv"
-)
+FIRMS_API_URL = "https://firms.modaps.eosdis.nasa.gov/api/area/csv"
+# California bounding box: west,south,east,north
+CA_BBOX = f"{CA_LON_MIN},{CA_LAT_MIN},{CA_LON_MAX},{CA_LAT_MAX}"
 
 _FALLBACK_FIRES = [
     (37.10, -119.22, "2020-09-05"),
@@ -92,35 +87,66 @@ def _haversine_deg(lat1, lon1, lat2, lon2) -> float:
 
 
 def fetch_firms_california() -> list[tuple[float, float, str]]:
-    print("Downloading FIRMS 2020 fire detections...")
+    """
+    Fetch 2020 California MODIS C6.1 fire detections via FIRMS area API.
+    Paginates in 10-day windows across all of 2020 (~37 requests).
+    Falls back to hardcoded locations if MAP_KEY is missing or API fails.
+    """
+    map_key = os.environ.get("FIRMS_MAP_KEY", "")
+    if not map_key:
+        print("  FIRMS_MAP_KEY not set. Using fallback locations.")
+        return _firms_fallback()
+
+    print("Downloading FIRMS 2020 fire detections via API...")
+    points = []
+    start  = datetime(2020, 1, 1)
+    end    = datetime(2020, 12, 31)
+    cursor = start
+
     try:
-        resp = requests.get(FIRMS_URL, timeout=60, stream=True)
-        resp.raise_for_status()
-        reader = csv.DictReader(io.StringIO(resp.content.decode("utf-8")))
-        points = []
-        for row in reader:
-            try:
-                lat  = float(row["latitude"])
-                lon  = float(row["longitude"])
-                date = row["acq_date"]
-                conf = row.get("confidence", "").strip().upper()
-                if conf not in ("", "L") and _in_california(lat, lon):
-                    points.append((lat, lon, date))
-            except (KeyError, ValueError):
-                continue
+        while cursor <= end:
+            days     = min(5, (end - cursor).days + 1)
+            date_str = cursor.strftime("%Y-%m-%d")
+            url = f"{FIRMS_API_URL}/{map_key}/MODIS_SP/{CA_BBOX}/{days}/{date_str}"
+            for attempt in range(3):
+                try:
+                    resp = requests.get(url, timeout=60)
+                    resp.raise_for_status()
+                    break
+                except Exception:
+                    if attempt == 2:
+                        raise
+                    time.sleep(5)
+            reader = csv.DictReader(io.StringIO(resp.content.decode("utf-8")))
+            for row in reader:
+                try:
+                    lat  = float(row["latitude"])
+                    lon  = float(row["longitude"])
+                    date = row["acq_date"]
+                    conf = row.get("confidence", "").strip().upper()
+                    if conf not in ("", "L"):
+                        points.append((lat, lon, date))
+                except (KeyError, ValueError):
+                    continue
+            cursor += timedelta(days=5)
+
         print(f"  FIRMS: {len(points):,} California detections.")
         return points
     except Exception as e:
-        print(f"  FIRMS failed ({e}). Using fallback locations.")
-        rng = random.Random(RANDOM_SEED)
-        points = []
-        for lat, lon, date in _FALLBACK_FIRES:
-            for _ in range(35):
-                jlat = lat + rng.uniform(-0.4, 0.4)
-                jlon = lon + rng.uniform(-0.4, 0.4)
-                if _in_california(jlat, jlon):
-                    points.append((jlat, jlon, date))
-        return points
+        print(f"  FIRMS API failed ({e}). Using fallback locations.")
+        return _firms_fallback()
+
+
+def _firms_fallback() -> list[tuple[float, float, str]]:
+    rng = random.Random(RANDOM_SEED)
+    points = []
+    for lat, lon, date in _FALLBACK_FIRES:
+        for _ in range(35):
+            jlat = lat + rng.uniform(-0.4, 0.4)
+            jlon = lon + rng.uniform(-0.4, 0.4)
+            if _in_california(jlat, jlon):
+                points.append((jlat, jlon, date))
+    return points
 
 
 def _random_2020_date(rng: random.Random) -> str:
@@ -321,22 +347,26 @@ def fetch_evi_batch(
         date_str = row.get("Date", "")
         try:
             val = float(raw)
-            if -2000 <= val <= 10000:
+            # Scaled EVI valid range: -0.2 to 1.0 (raw: -2000 to 10000 * 0.0001)
+            if -0.2 <= val <= 1.0:
                 by_id.setdefault(pid, []).append((date_str, val))
         except (ValueError, TypeError):
             continue
 
-    # For each point, pick EVI closest to its acquisition date
+    # Use spring EVI (closest composite to May 1) as pre-fire-season fuel load indicator.
+    # This captures vegetation stress before fire season rather than at fire time,
+    # which provides better discriminative signal between fire and no-fire locations.
+    SPRING_TARGET = datetime(2020, 5, 1)
+
     result: dict[tuple[float, float], float] = {}
     for i, (lat, lon, acq_date) in enumerate(points):
         values = by_id.get(str(i), [])
         if not values:
             continue
-        target = datetime.strptime(acq_date, "%Y-%m-%d")
         best = min(
             values,
             key=lambda x: abs(
-                (datetime.strptime(x[0], "%Y-%m-%d") - target).days
+                (datetime.strptime(x[0], "%Y-%m-%d") - SPRING_TARGET).days
             ) if x[0] else 9999,
         )
         result[(round(lat, 6), round(lon, 6))] = best[1]
@@ -363,26 +393,32 @@ def fetch_weather_historical(lat: float, lon: float, date_str: str) -> dict | No
         "wind_speed_unit": "ms",
         "timezone":        "America/Los_Angeles",
     }
-    try:
-        resp = requests.get(
-            "https://archive-api.open-meteo.com/v1/archive",
-            params=params,
-            timeout=15,
-        )
-        resp.raise_for_status()
-        data  = resp.json().get("daily", {})
-        winds = [v for v in data.get("wind_speed_10m_max", [])          if v is not None]
-        temps = [v for v in data.get("temperature_2m_mean", [])         if v is not None]
-        humid = [v for v in data.get("relative_humidity_2m_mean", [])   if v is not None]
-        if not winds or not temps or not humid:
-            return None
-        return {
-            "wind":                float(np.mean(winds)),
-            "temperature_celsius": float(np.mean(temps)),
-            "humidity":            float(np.mean(humid)),
-        }
-    except Exception:
-        return None
+    for attempt in range(4):
+        try:
+            resp = requests.get(
+                "https://archive-api.open-meteo.com/v1/archive",
+                params=params,
+                timeout=20,
+            )
+            if resp.status_code == 429:
+                time.sleep(5 * (attempt + 1))
+                continue
+            resp.raise_for_status()
+            data  = resp.json().get("daily", {})
+            winds = [v for v in data.get("wind_speed_10m_max", [])          if v is not None]
+            temps = [v for v in data.get("temperature_2m_mean", [])         if v is not None]
+            humid = [v for v in data.get("relative_humidity_2m_mean", [])   if v is not None]
+            if not winds or not temps or not humid:
+                return None
+            return {
+                "wind":                float(np.mean(winds)),
+                "temperature_celsius": float(np.mean(temps)),
+                "humidity":            float(np.mean(humid)),
+            }
+        except Exception:
+            if attempt < 3:
+                time.sleep(3 * (attempt + 1))
+    return None
 
 
 # ---------------------------------------------------------------------------
