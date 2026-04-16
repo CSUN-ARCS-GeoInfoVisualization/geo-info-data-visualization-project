@@ -1,4 +1,5 @@
 import math
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from flask import Blueprint, request, jsonify
 from ml.inference import predict_from_features
 from data.sample_locations import SAMPLE_LOCATIONS
@@ -6,6 +7,9 @@ from data.sample_locations import SAMPLE_LOCATIONS
 from data.live_weather import get_weather
 from data.live_elevation import get_elevation
 from data.live_evi import get_evi
+
+BATCH_MAX_SIZE   = 500
+BATCH_WORKERS    = 8
 
 predict_bp = Blueprint('predict', __name__)
 
@@ -123,7 +127,11 @@ def predict_batch():
     if not isinstance(items, list) or len(items) == 0:
         return jsonify({'error': 'items must be a non-empty list'}), 400
 
-    results = []
+    if len(items) > BATCH_MAX_SIZE:
+        return jsonify({'error': f'batch size cannot exceed {BATCH_MAX_SIZE}'}), 400
+
+    # Validate all inputs before running any predictions
+    coords = []
     for i, item in enumerate(items):
         lat = item.get('lat')
         lon = item.get('lon')
@@ -137,6 +145,14 @@ def predict_batch():
             _validate_coords(lat, lon)
         except ValueError as e:
             return jsonify({'error': f'items[{i}]: {e}'}), 400
-        results.append(_run(lat, lon))
+        coords.append((i, lat, lon))
+
+    # Run predictions in parallel — each location fetches weather/EVI/elevation concurrently
+    results = [None] * len(coords)
+    with ThreadPoolExecutor(max_workers=BATCH_WORKERS) as executor:
+        futures = {executor.submit(_run, lat, lon): i for i, lat, lon in coords}
+        for future in as_completed(futures):
+            idx = futures[future]
+            results[idx] = future.result()
 
     return jsonify({'results': results})
