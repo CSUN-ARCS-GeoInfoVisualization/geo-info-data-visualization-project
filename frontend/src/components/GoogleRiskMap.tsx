@@ -19,7 +19,7 @@ interface CalFireIncident {
   PercentContained: number | null;
 }
 
-function ActiveFiresOverlay() {
+export function FirePerimetersOverlay() {
   const map = useMap();
   const overlayRef = useRef<GoogleMapsOverlay | null>(null);
   const [fires, setFires] = useState<CalFireIncident[]>([]);
@@ -293,7 +293,6 @@ export function GoogleRiskMap({
           {zoneLevel === "zip-codes" && <ZipCodeRiskOverlay />}
           {zoneLevel === "census-tracts" && <CensusTractRiskOverlay />}
           {zoneLevel === "neighborhoods" && <NeighborhoodRiskOverlay />}
-          <ActiveFiresOverlay />
         </Map>
       </div>
     </div>
