@@ -23,7 +23,7 @@ interface SavedLocation { id: number; name: string; lat: number; lon: number; }
 
 export function SavedLocationsOverlay() {
   const map = useMap();
-  const overlayRef = useRef<GoogleMapsOverlay | null>(null);
+  const markersRef = useRef<google.maps.Marker[]>([]);
   const [locations, setLocations] = useState<SavedLocation[]>([]);
 
   useEffect(() => {
@@ -40,36 +40,32 @@ export function SavedLocationsOverlay() {
   }, []);
 
   useEffect(() => {
-    if (!map || locations.length === 0) return;
-    if (overlayRef.current) {
-      overlayRef.current.setMap(null);
-      overlayRef.current.finalize();
-    }
-    const overlay = new GoogleMapsOverlay({
-      layers: [
-        new ScatterplotLayer({
-          id: 'saved-locations',
-          data: locations,
-          pickable: false,
-          stroked: true,
-          filled: true,
-          radiusMinPixels: 7,
-          radiusMaxPixels: 12,
-          lineWidthMinPixels: 2,
-          getPosition: (d: SavedLocation) => [d.lon, d.lat],
-          getFillColor: [37, 99, 235, 230],
-          getLineColor: [255, 255, 255, 255],
-        }),
-      ],
-    });
-    overlay.setMap(map);
-    overlayRef.current = overlay;
+    if (!map) return;
+    markersRef.current.forEach((m) => m.setMap(null));
+    markersRef.current = [];
+    if (locations.length === 0) return;
+
+    const markers = locations.map((loc) =>
+      new google.maps.Marker({
+        position: { lat: loc.lat, lng: loc.lon },
+        map,
+        title: loc.name,
+        zIndex: 9999,
+        icon: {
+          path: google.maps.SymbolPath.CIRCLE,
+          scale: 9,
+          fillColor: '#2563eb',
+          fillOpacity: 1,
+          strokeColor: '#ffffff',
+          strokeWeight: 2,
+        },
+      })
+    );
+    markersRef.current = markers;
+
     return () => {
-      if (overlayRef.current) {
-        overlayRef.current.setMap(null);
-        overlayRef.current.finalize();
-        overlayRef.current = null;
-      }
+      markers.forEach((m) => m.setMap(null));
+      markersRef.current = [];
     };
   }, [map, locations]);
 
