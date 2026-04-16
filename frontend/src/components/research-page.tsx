@@ -211,7 +211,7 @@ function UnifiedResearchOverlay({ features, showHeatmap, zoneGeoJson, zoneRiskDa
               });
             }
           },
-          updateTriggers: { getFillColor: [Object.keys(zoneRiskData).length] },
+          updateTriggers: { getFillColor: [JSON.stringify(zoneRiskData)] },
         })
       );
     }
@@ -307,6 +307,7 @@ function ResearchMapView() {
   const [lstSlider, setLstSlider] = useState(14000);
   const [windSlider, setWindSlider] = useState(7);
   const [elevSlider, setElevSlider] = useState(500);
+  const [zoneOverrides, setZoneOverrides] = useState<Record<string, { evi: number; lst: number; wind: number; elevation: number }>>({});
 
   useEffect(() => {
     apiFetch("/fire-perimeters")
@@ -350,22 +351,53 @@ function ResearchMapView() {
     setZoneRiskData({}); // Clear old risk data
   }, [zoneLevel]);
 
-  // Load risk data for zones
+  // Load risk data for zones (bulk), then apply per-zone overrides
   useEffect(() => {
     if (!zoneGeoJson?.features) return;
     const endpoint = zoneLevel === "counties"
-      ? `/research/risk-by-county${useOverrides ? `?evi=${eviSlider}&lst=${lstSlider}&wind=${windSlider}&elevation=${elevSlider}` : ""}`
+      ? `/research/risk-by-county`
       : `/research/risk-by-zone/${zoneLevel}`;
     apiFetch(endpoint)
       .then((r) => r.json())
-      .then((data) => {
-        const zones = data?.counties || data?.zones || {};
+      .then(async (data) => {
+        const zones = { ...(data?.counties || data?.zones || {}) };
+        // Apply per-zone overrides
+        const overrideEntries = Object.entries(zoneOverrides);
+        if (useOverrides && overrideEntries.length > 0) {
+          const results = await Promise.all(
+            overrideEntries.map(async ([name, ov]) => {
+              try {
+                const r = await apiFetch("/predict-custom", {
+                  method: "POST",
+                  body: JSON.stringify(ov),
+                });
+                if (r.ok) return { name, ...(await r.json()) };
+              } catch {}
+              return null;
+            })
+          );
+          for (const r of results) {
+            if (r) zones[r.name] = { risk_score: r.risk_score, label: r.label };
+          }
+        }
         setZoneRiskData(zones);
       })
       .catch((e) => console.warn("Risk data load failed:", e));
-  }, [zoneGeoJson, zoneLevel, useOverrides, eviSlider, lstSlider, windSlider, elevSlider]);
+  }, [zoneGeoJson, zoneLevel, useOverrides, zoneOverrides]);
 
   const zoneNameKey = zoneLevel === "counties" ? "name" : zoneLevel === "zip-codes" ? "zip" : zoneLevel === "census-tracts" ? "tract" : "name";
+
+  const updateZoneOverride = (field: string, val: number) => {
+    if (!selectedZone || !useOverrides) return;
+    setZoneOverrides((prev) => ({
+      ...prev,
+      [selectedZone]: {
+        evi: eviSlider, lst: lstSlider, wind: windSlider, elevation: elevSlider,
+        ...prev[selectedZone],
+        [field]: val,
+      },
+    }));
+  };
 
   // Convert LST encoded value to Celsius for display
   const lstCelsius = Math.round((lstSlider * 0.02 - 273.15) * 10) / 10;
@@ -396,7 +428,17 @@ function ResearchMapView() {
                 zoneGeoJson={showZones ? zoneGeoJson : null}
                 zoneRiskData={zoneRiskData}
                 zoneNameKey={zoneNameKey}
-                onZoneClick={(name, risk) => { setSelectedZone(name); setSelectedZoneRisk(risk); }}
+                onZoneClick={(name, risk) => {
+                  setSelectedZone(name);
+                  setSelectedZoneRisk(risk);
+                  const ov = zoneOverrides[name];
+                  if (ov) {
+                    setEviSlider(ov.evi);
+                    setLstSlider(ov.lst);
+                    setWindSlider(ov.wind);
+                    setElevSlider(ov.elevation);
+                  }
+                }}
                 nifcPerimeters={nifcPerimeters}
                 showPerimeters={showPerimeters}
                 onPerimeterClick={(props) => setSelectedPerimeter(props)}
@@ -558,29 +600,60 @@ function ResearchMapView() {
         {/* Model Parameter Sliders */}
         <Card>
           <CardHeader className="pb-3">
-            <CardTitle className="text-sm">Model Parameters {!useOverrides && <Badge variant="outline" className="ml-2 text-[10px]">Live Data</Badge>}</CardTitle>
+            <CardTitle className="text-sm">
+              Model Parameters
+              {!useOverrides && <Badge variant="outline" className="ml-2 text-[10px]">Live Data</Badge>}
+              {useOverrides && selectedZone && (
+                <Badge className="ml-2 text-[10px] bg-red-100 text-red-700 border-red-200">
+                  {selectedZone} {zoneOverrides[selectedZone] ? "(custom)" : "(default)"}
+                </Badge>
+              )}
+            </CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
             <div>
               <label className="text-xs font-medium flex justify-between">Vegetation (EVI) <span className="text-muted-foreground">{eviSlider}</span></label>
-              <input type="range" min={0} max={5000} step={100} value={eviSlider} onChange={(e) => setEviSlider(Number(e.target.value))} disabled={!useOverrides} className="w-full mt-1 accent-green-500 disabled:opacity-40" />
+              <input type="range" min={0} max={5000} step={100} value={eviSlider} onChange={(e) => {
+                const val = Number(e.target.value); setEviSlider(val); updateZoneOverride("evi", val);
+              }} disabled={!useOverrides} className="w-full mt-1 accent-green-500 disabled:opacity-40" />
               <div className="flex justify-between text-[10px] text-muted-foreground"><span>Bare</span><span>Dense</span></div>
             </div>
             <div>
               <label className="text-xs font-medium flex justify-between">Temperature <span className="text-muted-foreground">{lstCelsius}°C</span></label>
-              <input type="range" min={13000} max={15500} step={50} value={lstSlider} onChange={(e) => setLstSlider(Number(e.target.value))} disabled={!useOverrides} className="w-full mt-1 accent-orange-500 disabled:opacity-40" />
+              <input type="range" min={13000} max={15500} step={50} value={lstSlider} onChange={(e) => {
+                const val = Number(e.target.value); setLstSlider(val); updateZoneOverride("lst", val);
+              }} disabled={!useOverrides} className="w-full mt-1 accent-orange-500 disabled:opacity-40" />
               <div className="flex justify-between text-[10px] text-muted-foreground"><span>-10°C</span><span>35°C</span></div>
             </div>
             <div>
               <label className="text-xs font-medium flex justify-between">Wind Speed <span className="text-muted-foreground">{windSlider} m/s</span></label>
-              <input type="range" min={0} max={30} step={1} value={windSlider} onChange={(e) => setWindSlider(Number(e.target.value))} disabled={!useOverrides} className="w-full mt-1 accent-blue-500 disabled:opacity-40" />
+              <input type="range" min={0} max={30} step={1} value={windSlider} onChange={(e) => {
+                const val = Number(e.target.value); setWindSlider(val); updateZoneOverride("wind", val);
+              }} disabled={!useOverrides} className="w-full mt-1 accent-blue-500 disabled:opacity-40" />
               <div className="flex justify-between text-[10px] text-muted-foreground"><span>Calm</span><span>Storm</span></div>
             </div>
             <div>
               <label className="text-xs font-medium flex justify-between">Elevation <span className="text-muted-foreground">{elevSlider}m</span></label>
-              <input type="range" min={0} max={3000} step={50} value={elevSlider} onChange={(e) => setElevSlider(Number(e.target.value))} disabled={!useOverrides} className="w-full mt-1 accent-gray-500 disabled:opacity-40" />
+              <input type="range" min={0} max={3000} step={50} value={elevSlider} onChange={(e) => {
+                const val = Number(e.target.value); setElevSlider(val); updateZoneOverride("elevation", val);
+              }} disabled={!useOverrides} className="w-full mt-1 accent-gray-500 disabled:opacity-40" />
               <div className="flex justify-between text-[10px] text-muted-foreground"><span>Sea level</span><span>Mountain</span></div>
             </div>
+            {useOverrides && selectedZone && zoneOverrides[selectedZone] && (
+              <button
+                onClick={() => {
+                  setZoneOverrides((prev) => { const next = { ...prev }; delete next[selectedZone!]; return next; });
+                }}
+                className="w-full text-xs text-red-500 hover:text-red-700 font-medium py-1.5 border border-red-200 rounded-md hover:bg-red-50 transition-colors"
+              >
+                Reset {selectedZone} to live data
+              </button>
+            )}
+            {useOverrides && Object.keys(zoneOverrides).length > 0 && (
+              <p className="text-[10px] text-muted-foreground">
+                {Object.keys(zoneOverrides).length} zone(s) with custom overrides
+              </p>
+            )}
           </CardContent>
         </Card>
       </div>

@@ -142,6 +142,21 @@ def calfire_incidents():
         return jsonify([]), 200
 
 
+@predict_bp.route('/predict-custom', methods=['POST'])
+def predict_custom():
+    """Predict risk from raw feature values (no location lookup)."""
+    data = request.get_json() or {}
+    try:
+        evi = float(data['evi'])
+        lst = float(data['lst'])
+        wind = float(data['wind'])
+        elevation = float(data['elevation'])
+    except (KeyError, TypeError, ValueError):
+        return jsonify({'error': 'evi, lst, wind, elevation are required numbers'}), 400
+    result = predict_from_features(evi=evi, lst=lst, wind=wind, elevation=elevation)
+    return jsonify({'risk_score': result['risk_score'], 'label': result['label']})
+
+
 @predict_bp.route('/fire-perimeters', methods=['GET'])
 def nifc_fire_perimeters():
     """Proxy NIFC WFIGS fire perimeters API (CORS blocked from frontend)."""
