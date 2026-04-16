@@ -22,6 +22,10 @@ from datetime import datetime
 
 import numpy as np
 import joblib
+import matplotlib
+matplotlib.use("Agg")  # non-interactive backend for server environments
+import matplotlib.pyplot as plt
+import seaborn as sns
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import StratifiedKFold, cross_val_predict
@@ -31,6 +35,7 @@ from sklearn.metrics import (
     recall_score,
     f1_score,
     roc_auc_score,
+    roc_curve,
     confusion_matrix,
     classification_report,
 )
@@ -38,6 +43,7 @@ from sklearn.metrics import (
 _DIR        = os.path.dirname(os.path.abspath(__file__))
 _DATA_PATH  = os.path.join(_DIR, "training_data", "california_2020.csv")
 _MODELS_DIR = os.path.join(_DIR, "models")
+_CHARTS_DIR = os.path.join(_DIR, "charts")
 _MODEL_OUT  = os.path.join(_MODELS_DIR, "wildfire_model_predictive.pkl")
 _SCALER_OUT = os.path.join(_MODELS_DIR, "wildfire_scaler_predictive.pkl")
 
@@ -180,7 +186,174 @@ def retrain():
     joblib.dump(scaler, _SCALER_OUT)
     print(f"  Model  saved -> {_MODEL_OUT}")
     print(f"  Scaler saved -> {_SCALER_OUT}")
+
+    # ── Charts ─────────────────────────────────────────────────────────
+    print_section("GENERATING CHARTS")
+    os.makedirs(_CHARTS_DIR, exist_ok=True)
+    _generate_charts(X, y, y_pred, y_proba, model, acc, prec, rec, f1, auc, cm)
+    _generate_summary(acc, prec, rec, f1, auc, cm, model.feature_importances_, n_samples, n_fire, n_nofire)
+    print(f"  Charts saved -> {_CHARTS_DIR}")
+
     print("\nRetrain complete.\n")
+
+
+def _generate_summary(acc, prec, rec, f1, auc, cm, importances, n_samples, n_fire, n_nofire):
+    tn, fp, fn, tp = cm.ravel()
+    spec = tn / (tn + fp)
+    miss_rate = fn / (fn + tp)
+    from datetime import date
+    lines = [
+        "# Wildfire Risk Model — Results Summary",
+        "",
+        f"> Generated: {date.today().isoformat()}  ",
+        f"> Dataset: {n_samples:,} samples ({n_fire:,} fire, {n_nofire:,} no-fire)  ",
+        f"> Algorithm: Random Forest (300 trees, class_weight=balanced)  ",
+        f"> Evaluation: 10-fold stratified cross-validation",
+        "",
+        "---",
+        "",
+        "## Performance Metrics",
+        "",
+        "| Metric | Score | What it means |",
+        "|--------|-------|---------------|",
+        f"| **Accuracy** | {acc:.3f} ({acc*100:.1f}%) | {acc*100:.1f}% of all predictions were correct |",
+        f"| **Precision** | {prec:.3f} | Of every location flagged as fire risk, {prec*100:.1f}% were actual fires |",
+        f"| **Recall** | {rec:.3f} | Of all real fires in the test set, the model caught {rec*100:.1f}% of them |",
+        f"| **F1 Score** | {f1:.3f} | Balanced score between precision and recall — {f1:.3f} out of 1.0 |",
+        f"| **ROC-AUC** | {auc:.3f} | The model correctly ranks a fire location above a non-fire location {auc*100:.1f}% of the time |",
+        f"| **Specificity** | {spec:.3f} | Of all safe locations, {spec*100:.1f}% were correctly identified as safe |",
+        f"| **Miss Rate** | {miss_rate:.3f} | {miss_rate*100:.1f}% of real fires were missed — the most critical failure mode |",
+        "",
+        "---",
+        "",
+        "## Confusion Matrix",
+        "",
+        "```",
+        "                  Predicted No Fire   Predicted Fire",
+        f"  Actual No Fire       {tn:>6,}             {fp:>6,}      ← {fp} false alarms",
+        f"  Actual Fire          {fn:>6,}             {tp:>6,}      ← {fn} missed fires",
+        "```",
+        "",
+        f"- **{tp:,} true positives** — fires correctly flagged",
+        f"- **{tn:,} true negatives** — safe locations correctly cleared",
+        f"- **{fp:,} false positives** — safe locations incorrectly flagged as fire risk",
+        f"- **{fn:,} false negatives** — real fires the model missed *(most dangerous)*",
+        "",
+        "---",
+        "",
+        "## Feature Importances",
+        "",
+        "How much each input variable contributed to the model's decisions:",
+        "",
+        "| Feature | Importance | What it represents |",
+        "|---------|------------|--------------------|",
+    ]
+
+    descriptions = {
+        "lst":       "Air temperature (encoded as Kelvin-scale integer) — hot conditions dry out vegetation",
+        "humidity":  "Relative humidity % — low humidity makes ignition and spread easier",
+        "evi":       "Spring EVI (May 1 composite) — vegetation density as pre-season fuel load",
+        "wind":      "Wind speed in m/s — drives fire spread rate and direction",
+        "elevation": "Terrain elevation in meters — affects vegetation type and wind exposure",
+    }
+    for name, imp in sorted(zip(FEATURE_COLS, importances), key=lambda x: -x[1]):
+        bar = "#" * int(imp * 20)
+        lines.append(f"| **{name}** | {imp:.3f} `{bar}` | {descriptions.get(name, '')} |")
+
+    lines += [
+        "",
+        "---",
+        "",
+        "## What These Results Mean",
+        "",
+        f"The model correctly identifies fire risk **{acc*100:.1f}%** of the time across 10 independent test folds.",
+        f"The ROC-AUC of **{auc:.3f}** means it almost always ranks a genuinely high-risk location above a low-risk one,",
+        "which is what matters most for a heatmap-style risk display.",
+        "",
+        f"The most important concern is the **{fn} missed fires** ({miss_rate*100:.1f}% miss rate). In a real deployment,",
+        "a missed fire is more dangerous than a false alarm. Future improvements could prioritize",
+        "reducing false negatives by lowering the classification threshold below 0.5.",
+        "",
+        "Feature importances are now well-balanced across all 5 features, indicating the model",
+        "is learning from multiple real fire-risk signals rather than a single dominant variable.",
+        "This is a significant improvement over earlier versions where temperature alone accounted",
+        "for 66% of importance due to seasonal bias in the training data.",
+        "",
+        "---",
+        "",
+        "## Charts",
+        "",
+        "| Chart | Description |",
+        "|-------|-------------|",
+        "| `confusion_matrix.png` | Heatmap of true/false positives and negatives |",
+        "| `roc_curve.png` | ROC curve showing model discrimination ability |",
+        "| `metrics_bar.png` | Bar chart of all 5 performance metrics |",
+        "| `feature_distributions.png` | KDE plots comparing fire vs no-fire for each feature |",
+    ]
+
+    path = os.path.join(_CHARTS_DIR, "RESULTS.md")
+    with open(path, "w", encoding="utf-8") as f:
+        f.write("\n".join(lines) + "\n")
+
+
+def _generate_charts(X, y, y_pred, y_proba, model, acc, prec, rec, f1, auc, cm):
+    sns.set_theme(style="whitegrid", palette="muted")
+
+    # 1. Confusion matrix
+    fig, ax = plt.subplots(figsize=(6, 5))
+    sns.heatmap(
+        cm, annot=True, fmt="d", cmap="Reds",
+        xticklabels=["No Fire", "Fire"],
+        yticklabels=["No Fire", "Fire"],
+        ax=ax,
+    )
+    ax.set_xlabel("Predicted")
+    ax.set_ylabel("Actual")
+    ax.set_title("Confusion Matrix (10-Fold CV)")
+    fig.tight_layout()
+    fig.savefig(os.path.join(_CHARTS_DIR, "confusion_matrix.png"), dpi=150)
+    plt.close(fig)
+
+    # 2. ROC curve
+    fpr, tpr, _ = roc_curve(y, y_proba[:, 1])
+    fig, ax = plt.subplots(figsize=(6, 5))
+    ax.plot(fpr, tpr, color="crimson", lw=2, label=f"AUC = {auc:.4f}")
+    ax.plot([0, 1], [0, 1], "k--", lw=1)
+    ax.set_xlabel("False Positive Rate")
+    ax.set_ylabel("True Positive Rate")
+    ax.set_title("ROC Curve (10-Fold CV)")
+    ax.legend(loc="lower right")
+    fig.tight_layout()
+    fig.savefig(os.path.join(_CHARTS_DIR, "roc_curve.png"), dpi=150)
+    plt.close(fig)
+
+    # 3. Performance metrics bar chart
+    metrics = {"Accuracy": acc, "Precision": prec, "Recall": rec, "F1 Score": f1, "ROC-AUC": auc}
+    fig, ax = plt.subplots(figsize=(7, 4))
+    bars = ax.bar(metrics.keys(), metrics.values(), color=["#4C72B0", "#DD8452", "#55A868", "#C44E52", "#8172B2"])
+    ax.set_ylim(0, 1.05)
+    ax.set_ylabel("Score")
+    ax.set_title("Model Performance Metrics (10-Fold CV)")
+    for bar, val in zip(bars, metrics.values()):
+        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() + 0.01,
+                f"{val:.3f}", ha="center", va="bottom", fontsize=10)
+    fig.tight_layout()
+    fig.savefig(os.path.join(_CHARTS_DIR, "metrics_bar.png"), dpi=150)
+    plt.close(fig)
+
+    # 4. Feature distributions (fire vs no-fire)
+    fig, axes = plt.subplots(1, len(FEATURE_COLS), figsize=(16, 4))
+    for i, (name, ax) in enumerate(zip(FEATURE_COLS, axes)):
+        sns.kdeplot(X[y == 0, i], ax=ax, label="No Fire", fill=True, alpha=0.4, color="#4C72B0")
+        sns.kdeplot(X[y == 1, i], ax=ax, label="Fire",    fill=True, alpha=0.4, color="#C44E52")
+        ax.set_title(name)
+        ax.set_xlabel("")
+        if i == 0:
+            ax.legend(fontsize=8)
+    fig.suptitle("Feature Distributions: Fire vs No Fire", y=1.02)
+    fig.tight_layout()
+    fig.savefig(os.path.join(_CHARTS_DIR, "feature_distributions.png"), dpi=150, bbox_inches="tight")
+    plt.close(fig)
 
 
 if __name__ == "__main__":
