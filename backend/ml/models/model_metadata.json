@@ -1,0 +1,12 @@
+{
+  "data_year": 2020,
+  "evi_spring_target": "2020-05-01",
+  "feature_cols": [
+    "evi",
+    "air_temp_encoded",
+    "wind",
+    "humidity",
+    "elevation"
+  ],
+  "trained_at": "2026-04-16T13:28:15"
+}
