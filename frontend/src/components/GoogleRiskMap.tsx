@@ -19,6 +19,63 @@ interface CalFireIncident {
   PercentContained: number | null;
 }
 
+interface SavedLocation { id: number; name: string; lat: number; lon: number; }
+
+export function SavedLocationsOverlay() {
+  const map = useMap();
+  const overlayRef = useRef<GoogleMapsOverlay | null>(null);
+  const [locations, setLocations] = useState<SavedLocation[]>([]);
+
+  useEffect(() => {
+    apiFetch('/me/locations')
+      .then((r) => (r.ok ? r.json() : []))
+      .then((data) => {
+        if (Array.isArray(data)) {
+          setLocations(
+            data.filter((l: any) => typeof l?.lat === 'number' && typeof l?.lon === 'number')
+          );
+        }
+      })
+      .catch(() => {});
+  }, []);
+
+  useEffect(() => {
+    if (!map || locations.length === 0) return;
+    if (overlayRef.current) {
+      overlayRef.current.setMap(null);
+      overlayRef.current.finalize();
+    }
+    const overlay = new GoogleMapsOverlay({
+      layers: [
+        new ScatterplotLayer({
+          id: 'saved-locations',
+          data: locations,
+          pickable: false,
+          stroked: true,
+          filled: true,
+          radiusMinPixels: 7,
+          radiusMaxPixels: 12,
+          lineWidthMinPixels: 2,
+          getPosition: (d: SavedLocation) => [d.lon, d.lat],
+          getFillColor: [37, 99, 235, 230],
+          getLineColor: [255, 255, 255, 255],
+        }),
+      ],
+    });
+    overlay.setMap(map);
+    overlayRef.current = overlay;
+    return () => {
+      if (overlayRef.current) {
+        overlayRef.current.setMap(null);
+        overlayRef.current.finalize();
+        overlayRef.current = null;
+      }
+    };
+  }, [map, locations]);
+
+  return null;
+}
+
 export function FirePerimetersOverlay() {
   const map = useMap();
   const overlayRef = useRef<GoogleMapsOverlay | null>(null);
@@ -345,6 +402,7 @@ export function GoogleRiskMap({
               }
             />
           )}
+          <SavedLocationsOverlay />
         </Map>
         {selectedZone && (
           <div
@@ -433,6 +491,7 @@ export function ActiveFiresMap({
           mapTypeId="roadmap"
         >
           <FirePerimetersOverlay />
+          <SavedLocationsOverlay />
         </Map>
       </div>
     </div>
