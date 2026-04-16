@@ -4,7 +4,7 @@ import { RiskLevelBadge, RiskLevel } from "./risk-level-badge";
 import { ConditionCard } from "./condition-card";
 import { RiskChart } from "./risk-chart";
 import { ActiveAlerts } from "./active-alerts";
-import { GoogleRiskMap } from "./GoogleRiskMap";
+import { GoogleRiskMap, ActiveFiresMap } from "./GoogleRiskMap";
 import { SavedLocationsWidget } from "./saved-locations-widget";
 import { FIRMSMap } from "./FIRMSMap";
 import { NewsTicker } from "./news-ticker";
@@ -257,8 +257,8 @@ export function Dashboard({ onAddLocation }: DashboardProps) {
         <SavedLocationsWidget onAddLocation={onAddLocation} />
       </div>
 
-      {/* Active Fires (NASA FIRMS) */}
-      <FIRMSMap />
+      {/* Active Fires */}
+      <ActiveFiresMap />
 
       {/* 7-Day Forecast + Active Alerts */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

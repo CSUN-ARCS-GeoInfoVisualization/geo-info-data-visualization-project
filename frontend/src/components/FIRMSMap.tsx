@@ -3,7 +3,6 @@ import { Map as GoogleMap, useMap } from '@vis.gl/react-google-maps';
 import { GoogleMapsOverlay } from '@deck.gl/google-maps';
 import { ScatterplotLayer } from '@deck.gl/layers';
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
-import { FirePerimetersOverlay } from "./GoogleRiskMap";
 import { Flame, RefreshCw, Info, AlertTriangle } from "lucide-react";
 import { Button } from "./ui/button";
 import { Badge } from "./ui/badge";
@@ -368,7 +367,6 @@ export function FIRMSMap() {
             disableDefaultUI={false}
           >
             <ActiveFiresOverlay fires={fires} enabled={showFires} />
-            <FirePerimetersOverlay />
           </GoogleMap>
         </div>
 

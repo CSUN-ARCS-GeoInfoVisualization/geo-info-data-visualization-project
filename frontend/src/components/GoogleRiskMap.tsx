@@ -298,3 +298,25 @@ export function GoogleRiskMap({
     </div>
   );
 }
+
+export function ActiveFiresMap({
+  center = { lat: 36.7783, lng: -119.4179 },
+  zoom = 6,
+}: { center?: { lat: number; lng: number }; zoom?: number } = {}) {
+  return (
+    <div className="space-y-2">
+      <div style={{ height: 420 }} className="w-full rounded-lg overflow-hidden border">
+        <Map
+          style={{ width: '100%', height: '100%' }}
+          defaultCenter={center}
+          defaultZoom={zoom}
+          gestureHandling="greedy"
+          disableDefaultUI
+          mapTypeId="roadmap"
+        >
+          <FirePerimetersOverlay />
+        </Map>
+      </div>
+    </div>
+  );
+}
