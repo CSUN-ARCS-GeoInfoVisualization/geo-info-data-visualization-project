@@ -286,6 +286,9 @@ function ResearchMapView() {
               gestureHandling="greedy"
               mapTypeId="terrain"
             >
+              {/* FIRMS heatmap/scatter renders first (bottom layer) */}
+              <ResearchOverlay features={features} showHeatmap={showHeatmap} />
+              {/* Zone overlays render on top so they receive click events */}
               {showZones && zoneLevel === "counties" && (
                 <CountyRiskOverlay
                   overrides={useOverrides ? { evi: eviSlider, lst: lstSlider, wind: windSlider, elevation: elevSlider } : undefined}
@@ -301,7 +304,6 @@ function ResearchMapView() {
               {showZones && zoneLevel === "neighborhoods" && (
                 <NeighborhoodRiskOverlay onZoneClick={(name, risk) => { setSelectedZone(name); setSelectedZoneRisk(risk); }} />
               )}
-              <ResearchOverlay features={features} showHeatmap={showHeatmap} />
             </Map>
             {/* Selected zone info with shine border */}
             {selectedZone && selectedZoneRisk && (
