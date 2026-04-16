@@ -147,7 +147,7 @@ function FireFacilitiesOverlay({ smallDots = false }: { smallDots?: boolean }) {
 
   // Load GeoJSON data
   useEffect(() => {
-    apiFetch('/api/shelters?state=CA')
+    apiFetch('/shelters?state=CA')
       .then(response => response.json())
       .then(data => {
         console.log('Loaded shelters:', data.features.length);
