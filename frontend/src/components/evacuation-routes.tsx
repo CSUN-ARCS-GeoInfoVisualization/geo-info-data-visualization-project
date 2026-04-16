@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect } from "react";
 import {
   MapPin,
   Navigation,
@@ -503,189 +503,11 @@ function FireFacilitiesOverlay({ smallDots = false }: { smallDots?: boolean }) {
   );
 }
 
-/* ------------------------------------------------------------------ */
-/*  Directions panel — routes to nearest shelter via Google Directions */
-/* ------------------------------------------------------------------ */
-function DirectionsPanel({
-  open,
-  onClose,
-}: {
-  open: boolean;
-  onClose: () => void;
-}) {
-  const map = useMap();
-  const [userLat, setUserLat] = useState<number | null>(null);
-  const [userLng, setUserLng] = useState<number | null>(null);
-  const [destination, setDestination] = useState("");
-  const [routeInfo, setRouteInfo] = useState<{
-    distance: string;
-    duration: string;
-    durationInTraffic?: string;
-    steps: string[];
-    summary: string;
-  } | null>(null);
-  const [error, setError] = useState("");
-  const [loading, setLoading] = useState(false);
-  const rendererRef = useRef<google.maps.DirectionsRenderer | null>(null);
-
-  // Get user location on mount
-  useEffect(() => {
-    if (open && !userLat) {
-      navigator.geolocation?.getCurrentPosition(
-        (pos) => {
-          setUserLat(pos.coords.latitude);
-          setUserLng(pos.coords.longitude);
-        },
-        () => {
-          // Default to LA if geolocation fails
-          setUserLat(34.0522);
-          setUserLng(-118.2437);
-        }
-      );
-    }
-  }, [open, userLat]);
-
-  // Cleanup renderer on close
-  useEffect(() => {
-    if (!open && rendererRef.current) {
-      rendererRef.current.setMap(null);
-      rendererRef.current = null;
-      setRouteInfo(null);
-    }
-  }, [open]);
-
-  const calculateRoute = async () => {
-    if (!map || !userLat || !userLng || !destination.trim()) return;
-    setLoading(true);
-    setError("");
-    setRouteInfo(null);
-
-    try {
-      const service = new google.maps.DirectionsService();
-      const result = await service.route({
-        origin: { lat: userLat, lng: userLng },
-        destination: destination,
-        travelMode: google.maps.TravelMode.DRIVING,
-        provideRouteAlternatives: true,
-        drivingOptions: {
-          departureTime: new Date(),
-          trafficModel: google.maps.TrafficModel.BEST_GUESS,
-        },
-      });
-
-      if (result.routes.length > 0) {
-        const route = result.routes[0];
-        const leg = route.legs[0];
-
-        // Render route on map
-        if (rendererRef.current) rendererRef.current.setMap(null);
-        const renderer = new google.maps.DirectionsRenderer({
-          map,
-          directions: result,
-          polylineOptions: { strokeColor: "#dc2626", strokeWeight: 5 },
-        });
-        rendererRef.current = renderer;
-
-        setRouteInfo({
-          distance: leg.distance?.text || "Unknown",
-          duration: leg.duration?.text || "Unknown",
-          durationInTraffic: leg.duration_in_traffic?.text,
-          steps: leg.steps.map((s) => s.instructions.replace(/<[^>]+>/g, "")),
-          summary: route.summary,
-        });
-      }
-    } catch (e: any) {
-      setError(e.message || "Failed to calculate route");
-    }
-    setLoading(false);
-  };
-
-  const findNearestShelter = () => {
-    setDestination("nearest emergency shelter California");
-    // Will trigger route calculation on next click
-  };
-
-  if (!open) return null;
-
-  return (
-    <Card className="border-red-200">
-      <CardHeader className="pb-3">
-        <div className="flex items-center justify-between">
-          <CardTitle className="text-sm flex items-center gap-2">
-            <Navigation className="h-4 w-4" /> Evacuation Directions
-          </CardTitle>
-          <Button variant="ghost" size="sm" onClick={onClose}>Close</Button>
-        </div>
-      </CardHeader>
-      <CardContent className="space-y-3">
-        <div>
-          <label className="text-xs font-medium">Your Location</label>
-          <div className="flex gap-2 mt-1">
-            <input
-              type="text"
-              value={userLat && userLng ? `${userLat.toFixed(4)}, ${userLng.toFixed(4)}` : "Detecting..."}
-              readOnly
-              className="flex-1 rounded-md border px-2 py-1 text-sm bg-muted"
-            />
-          </div>
-        </div>
-        <div>
-          <label className="text-xs font-medium">Destination</label>
-          <div className="flex gap-2 mt-1">
-            <input
-              type="text"
-              value={destination}
-              onChange={(e) => setDestination(e.target.value)}
-              placeholder="Shelter address or name..."
-              className="flex-1 rounded-md border px-2 py-1 text-sm"
-            />
-            <Button size="sm" variant="outline" onClick={findNearestShelter}>Nearest</Button>
-          </div>
-        </div>
-        <Button
-          size="sm"
-          className="w-full"
-          onClick={calculateRoute}
-          disabled={loading || !destination.trim()}
-        >
-          {loading ? "Calculating..." : "Get Route"}
-        </Button>
-
-        {error && <p className="text-sm text-red-600">{error}</p>}
-
-        {routeInfo && (
-          <div className="space-y-2 pt-2 border-t">
-            <div className="flex items-center justify-between">
-              <div>
-                <span className="text-lg font-bold">{routeInfo.duration}</span>
-                {routeInfo.durationInTraffic && routeInfo.durationInTraffic !== routeInfo.duration && (
-                  <span className="text-sm text-orange-600 ml-2">({routeInfo.durationInTraffic} with traffic)</span>
-                )}
-              </div>
-              <Badge variant="outline">{routeInfo.distance}</Badge>
-            </div>
-            <p className="text-xs text-muted-foreground">via {routeInfo.summary}</p>
-            <div className="max-h-48 overflow-y-auto space-y-1">
-              {routeInfo.steps.map((step, i) => (
-                <div key={i} className="text-xs text-muted-foreground flex gap-2">
-                  <span className="text-foreground font-medium shrink-0">{i + 1}.</span>
-                  <span>{step}</span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-      </CardContent>
-    </Card>
-  );
-}
-
 export function EvacuationRoutes() {
   const [selectedZone, setSelectedZone] = useState<string | null>(null);
   const [checklistLevel, setChecklistLevel] = useState<'prepare' | 'fireWatch' | 'evacuationWarning' | 'evacuateNow'>('prepare');
   const [checkedItems, setCheckedItems] = useState<{[key: string]: boolean}>({});
   const [smallDots, setSmallDots] = useState(false);
-  const [directionsOpen, setDirectionsOpen] = useState(false);
 
   const toggleCheckbox = (level: string, index: number) => {
     const key = `${level}-${index}`;
@@ -725,9 +547,9 @@ export function EvacuationRoutes() {
           </p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" size="sm" onClick={() => setDirectionsOpen(!directionsOpen)}>
+          <Button variant="outline" size="sm">
             <Navigation className="h-4 w-4 mr-2" />
-            {directionsOpen ? "Hide Directions" : "Get Directions"}
+            Get Directions
           </Button>
           <Button size="sm">
             <Phone className="h-4 w-4 mr-2" />
@@ -751,9 +573,6 @@ export function EvacuationRoutes() {
           </div>
         </AlertDescription>
       </Alert>
-
-      {/* Directions Panel */}
-      <DirectionsPanel open={directionsOpen} onClose={() => setDirectionsOpen(false)} />
 
       {/* Interactive Map with Fire Facilities */}
       <Card>
