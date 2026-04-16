@@ -295,15 +295,15 @@ function ResearchMapView() {
   const [frpMin, setFrpMin] = useState(0);
   const [features, setFeatures] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
-  const [activeLayer, setActiveLayer] = useState<"fires" | "zones">("zones");
-  const showHeatmap = activeLayer === "fires";
-  const showZones = activeLayer === "zones";
+  const [activeLayer, setActiveLayer] = useState<"fires" | "zones" | "mixed">("zones");
+  const showHeatmap = activeLayer !== "zones";
+  const showZones = activeLayer !== "fires";
   const [zoneLevel, setZoneLevel] = useState<"counties" | "zip-codes" | "census-tracts" | "neighborhoods">("counties");
   const [selectedZone, setSelectedZone] = useState<string | null>(null);
   const [selectedZoneRisk, setSelectedZoneRisk] = useState<{ risk_score: number; label: string } | null>(null);
   const [zoneGeoJson, setZoneGeoJson] = useState<any>(countyGeoJson);
   const [zoneRiskData, setZoneRiskData] = useState<Record<string, { risk_score: number; label: string }>>({});
-  const showPerimeters = activeLayer === "fires";
+  const showPerimeters = activeLayer !== "zones";
   const [nifcPerimeters, setNifcPerimeters] = useState<any>(null);
   const [selectedPerimeter, setSelectedPerimeter] = useState<any>(null);
   const [useOverrides, setUseOverrides] = useState(false);
@@ -457,21 +457,21 @@ function ResearchMapView() {
               <div className="p-4 space-y-4 text-sm">
                 <div>
                   <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">Map view</div>
-                  <div className="grid grid-cols-2 gap-1 p-1 bg-muted rounded-md">
-                    {(["fires", "zones"] as const).map((opt) => (
+                  <div className="grid grid-cols-3 gap-1 p-1 bg-muted rounded-md">
+                    {(["fires", "zones", "mixed"] as const).map((opt) => (
                       <button
                         key={opt}
                         type="button"
                         onClick={() => { setActiveLayer(opt); if (opt === "fires") { setSelectedZone(null); setSelectedZoneRisk(null); } }}
                         className={`text-xs py-1.5 rounded ${activeLayer === opt ? "bg-white shadow-sm font-semibold" : "text-muted-foreground"}`}
                       >
-                        {opt === "fires" ? "Fire view" : "Risk zone view"}
+                        {opt === "fires" ? "Fire" : opt === "zones" ? "Risk zone" : "Mixed"}
                       </button>
                     ))}
                   </div>
                 </div>
 
-                {activeLayer === "zones" && (
+                {activeLayer !== "fires" && (
                   <>
                     <div>
                       <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">Zone level</div>
