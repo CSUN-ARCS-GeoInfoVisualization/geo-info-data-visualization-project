@@ -40,6 +40,86 @@ def get_boundaries(name):
     return jsonify(data)
 
 
+def _get_centroid(coords):
+    """Calculate centroid from GeoJSON coordinates."""
+    lat_sum, lon_sum, count = 0.0, 0.0, 0
+    def _flatten(c):
+        nonlocal lat_sum, lon_sum, count
+        if isinstance(c[0], (int, float)):
+            lon_sum += c[0]; lat_sum += c[1]; count += 1
+        else:
+            for sub in c:
+                _flatten(sub)
+    _flatten(coords)
+    return (lat_sum / count, lon_sum / count) if count > 0 else None
+
+
+_zone_risk_cache: dict = {}
+
+
+@research_bp.route('/risk-by-zone/<zone_type>', methods=['GET'])
+def risk_by_zone(zone_type):
+    """Compute ML risk per zone — single request replaces 35+ batch calls."""
+    if zone_type not in _VALID_BOUNDARIES:
+        return jsonify({'error': 'Invalid zone type'}), 404
+
+    now = time.time()
+    cache_key = zone_type
+    cached = _zone_risk_cache.get(cache_key)
+    if cached and cached['expires'] > now:
+        return jsonify(cached['data'])
+
+    filepath = os.path.join(_BOUNDARIES_DIR, f'{zone_type}.json')
+    if not os.path.exists(filepath):
+        return jsonify({'error': 'Boundary data not found'}), 404
+
+    import json as json_mod
+    with open(filepath) as f:
+        geo = json_mod.load(f)
+
+    # Determine zone name field
+    name_key = 'zip' if zone_type == 'zip-codes' else 'name' if zone_type == 'neighborhoods' else 'tract'
+
+    results = {}
+    # Sample for large datasets to keep response fast
+    features = geo.get('features', [])
+    step = max(1, len(features) // 500)  # Max ~500 predictions
+
+    for i in range(0, len(features), step):
+        f = features[i]
+        name = f.get('properties', {}).get(name_key, str(i))
+        coords = f.get('geometry', {}).get('coordinates')
+        if not coords:
+            continue
+        centroid = _get_centroid(coords)
+        if not centroid:
+            continue
+        lat, lon = centroid
+        evi = _interpolate_feature(lat, lon, "evi")
+        lst = _interpolate_feature(lat, lon, "lst")
+        wind = _interpolate_feature(lat, lon, "wind")
+        elev = _interpolate_feature(lat, lon, "elevation")
+        try:
+            result = predict_from_features(evi, lst, wind, elev)
+            results[name] = {"risk_score": result["risk_score"], "label": result["label"]}
+        except Exception:
+            results[name] = {"risk_score": 0, "label": "Low"}
+
+    # Propagate sampled results to unsampled zones
+    if step > 1:
+        all_results = {}
+        for i, f in enumerate(features):
+            name = f.get('properties', {}).get(name_key, str(i))
+            sampled_idx = (i // step) * step
+            sampled_name = features[sampled_idx].get('properties', {}).get(name_key, str(sampled_idx))
+            all_results[name] = results.get(sampled_name, {"risk_score": 0, "label": "Low"})
+        results = all_results
+
+    data = {"zones": results, "zone_type": zone_type, "total": len(results)}
+    _zone_risk_cache[cache_key] = {'data': data, 'expires': now + _GRID_CACHE_TTL}
+    return jsonify(data)
+
+
 def _require_researcher_or_admin():
     role = get_jwt().get('role', '')
     return role in ('Researcher', 'Admin')

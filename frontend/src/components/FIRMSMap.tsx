@@ -191,7 +191,7 @@ export function FIRMSMap() {
   const [error, setError] = useState<string | null>(null);
   const [lastUpdate, setLastUpdate] = useState<Date | null>(null);
   const [showFires, setShowFires] = useState(true);
-  const [dayRange, setDayRange] = useState(1); // Day range selector
+  const [dayRange, setDayRange] = useState(2); // Default 2 days for better coverage
 
   // Fetch active fires from NASA FIRMS API
   const fetchActiveFires = async () => {

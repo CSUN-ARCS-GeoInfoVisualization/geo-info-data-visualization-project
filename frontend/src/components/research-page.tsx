@@ -404,7 +404,7 @@ function ResearchMapView() {
               FIRMS heatmap overlay
             </label>
             <label className="flex items-center gap-2 text-sm cursor-pointer">
-              <input type="checkbox" checked={showZones} onChange={(e) => setShowCountyZones(e.target.checked)} className="accent-red-500" />
+              <input type="checkbox" checked={showZones} onChange={(e) => setShowZones(e.target.checked)} className="accent-red-500" />
               Risk zones (click to select)
             </label>
             {showZones && (
