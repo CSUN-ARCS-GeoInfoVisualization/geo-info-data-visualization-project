@@ -303,13 +303,52 @@ function ResearchMapView() {
               )}
               <ResearchOverlay features={features} showHeatmap={showHeatmap} />
             </Map>
-            {/* Selected zone info */}
+            {/* Selected zone info with shine border */}
             {selectedZone && selectedZoneRisk && (
-              <div className="absolute top-3 right-3 bg-white/95 backdrop-blur-sm rounded-lg p-3 shadow-lg text-sm z-10 max-w-[220px]">
-                <div className="font-bold">{selectedZone}</div>
-                <div className="text-muted-foreground">Risk: {Math.round(selectedZoneRisk.risk_score * 100)}% ({selectedZoneRisk.label})</div>
-                <p className="text-xs text-muted-foreground mt-1">Use sliders below to adjust model parameters for this zone.</p>
-                <button onClick={() => { setSelectedZone(null); setSelectedZoneRisk(null); }} className="text-xs text-blue-600 hover:underline mt-1">Clear selection</button>
+              <div className="absolute top-3 right-3 z-10 max-w-[240px]">
+                <div className="relative rounded-xl overflow-hidden">
+                  {/* Animated shine border */}
+                  <div
+                    className="absolute inset-0 rounded-xl"
+                    style={{
+                      padding: 2,
+                      background: `conic-gradient(from var(--shine-angle, 0deg), #ef4444, #f97316, #eab308, #22c55e, #3b82f6, #8b5cf6, #ef4444)`,
+                      mask: "linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)",
+                      maskComposite: "exclude",
+                      WebkitMaskComposite: "xor",
+                      animation: "shine-rotate 3s linear infinite",
+                    }}
+                  />
+                  <div className="relative bg-white/95 backdrop-blur-sm rounded-xl p-4 text-sm">
+                    <div className="flex items-center gap-2 mb-2">
+                      <div
+                        className="w-3 h-3 rounded-full shrink-0"
+                        style={{
+                          backgroundColor: selectedZoneRisk.risk_score >= 0.75 ? "#991b1b"
+                            : selectedZoneRisk.risk_score >= 0.5 ? "#dc2626"
+                            : selectedZoneRisk.risk_score >= 0.25 ? "#eab308"
+                            : "#22c55e",
+                        }}
+                      />
+                      <div className="font-bold text-base">{selectedZone}</div>
+                    </div>
+                    <div className="font-semibold text-lg">
+                      {Math.round(selectedZoneRisk.risk_score * 100)}% Risk
+                      <span className="text-sm font-normal text-muted-foreground ml-1">({selectedZoneRisk.label})</span>
+                    </div>
+                    <p className="text-xs text-muted-foreground mt-2">Adjust sliders below to see how conditions affect this zone's risk.</p>
+                    <button
+                      onClick={() => { setSelectedZone(null); setSelectedZoneRisk(null); }}
+                      className="mt-2 text-xs text-red-500 hover:text-red-700 font-medium"
+                    >
+                      Deselect Zone
+                    </button>
+                  </div>
+                </div>
+                <style>{`
+                  @property --shine-angle { syntax: "<angle>"; initial-value: 0deg; inherits: false; }
+                  @keyframes shine-rotate { to { --shine-angle: 360deg; } }
+                `}</style>
               </div>
             )}
             {/* Map overlay legend */}

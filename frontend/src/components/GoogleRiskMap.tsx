@@ -115,7 +115,6 @@ export function GoogleRiskMap({
           {zoneLevel === "zip-codes" && <ZipCodeRiskOverlay />}
           {zoneLevel === "census-tracts" && <CensusTractRiskOverlay />}
           {zoneLevel === "neighborhoods" && <NeighborhoodRiskOverlay />}
-          <ActiveFiresOverlay />
         </Map>
       </div>
     </div>
