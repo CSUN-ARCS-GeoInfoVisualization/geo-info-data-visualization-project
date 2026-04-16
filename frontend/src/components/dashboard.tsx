@@ -249,16 +249,22 @@ export function Dashboard({ onAddLocation }: DashboardProps) {
         )}
       </div>
 
-      {/* Map + My Locations */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2">
-          <GoogleRiskMap height="h-[420px]" />
+      {/* Risk Zone & Active Fire Maps */}
+      <section className="space-y-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-xl font-semibold tracking-tight">Risk Zone & Active Fire Maps</h2>
+            <p className="text-sm text-muted-foreground">California-wide wildfire risk and live fire activity</p>
+          </div>
         </div>
-        <SavedLocationsWidget onAddLocation={onAddLocation} />
-      </div>
-
-      {/* Active Fires */}
-      <ActiveFiresMap />
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-2">
+            <GoogleRiskMap />
+          </div>
+          <SavedLocationsWidget onAddLocation={onAddLocation} />
+        </div>
+        <ActiveFiresMap />
+      </section>
 
       {/* 7-Day Forecast + Active Alerts */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

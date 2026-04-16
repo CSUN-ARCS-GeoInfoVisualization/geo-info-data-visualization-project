@@ -312,7 +312,13 @@ def risk_by_county():
         batch = predict_batch_features(inputs)
     except Exception:
         batch = [{"risk_score": 0, "label": "Low"}] * len(inputs)
-    results = dict(zip(names, batch))
+    results = {
+        name: {
+            **risk,
+            "features": {"evi": evi, "lst": lst, "wind": wind, "elevation": elev},
+        }
+        for name, risk, (evi, lst, wind, elev) in zip(names, batch, inputs)
+    }
 
     data = {"counties": results, "overrides": {"evi": evi_ov, "lst": lst_ov, "wind": wind_ov, "elevation": elev_ov}}
     _county_cache["data"] = data

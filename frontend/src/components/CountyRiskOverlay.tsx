@@ -10,8 +10,13 @@ import { GeoJsonLayer } from "@deck.gl/layers";
 import { apiFetch } from "../services/api";
 import countyGeoJson from "../Data/california-counties.json";
 
+interface CountyRisk {
+  risk_score: number;
+  label: string;
+  features?: { evi: number; lst: number; wind: number; elevation: number };
+}
 interface CountyRiskData {
-  [county: string]: { risk_score: number; label: string };
+  [county: string]: CountyRisk;
 }
 
 function getRiskColor(score: number): [number, number, number, number] {
@@ -23,7 +28,7 @@ function getRiskColor(score: number): [number, number, number, number] {
 
 interface Props {
   overrides?: { evi?: number; lst?: number; wind?: number; elevation?: number };
-  onCountyClick?: (county: string, risk: { risk_score: number; label: string }) => void;
+  onCountyClick?: (county: string, risk: CountyRisk) => void;
 }
 
 export function CountyRiskOverlay({ overrides, onCountyClick }: Props) {

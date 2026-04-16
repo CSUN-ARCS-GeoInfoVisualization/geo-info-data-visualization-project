@@ -196,8 +196,9 @@ export function FirePerimetersOverlay() {
         <div
           style={{
             position: 'absolute',
-            left: selected.x + 10,
-            top: selected.y + 10,
+            left: '50%',
+            top: 12,
+            transform: 'translateX(-50%)',
             zIndex: 1000,
             background: 'white',
             border: '1px solid #e5e7eb',
@@ -223,8 +224,9 @@ export function FirePerimetersOverlay() {
         <div
           style={{
             position: 'absolute',
-            left: (selectedPerimeter.x ?? 0) + 10,
-            top: (selectedPerimeter.y ?? 0) + 10,
+            left: '50%',
+            top: 12,
+            transform: 'translateX(-50%)',
             zIndex: 1000,
             background: 'white',
             border: '1px solid #e5e7eb',
@@ -258,29 +260,55 @@ interface GoogleRiskMapProps {
 
 type ZoneLevel = "counties" | "zip-codes" | "census-tracts" | "neighborhoods";
 
+interface SelectedZone {
+  name: string;
+  risk_score: number;
+  label: string;
+  features?: { evi: number; lst: number; wind: number; elevation: number };
+  level: string;
+}
+
+function labelColor(label: string) {
+  const l = label.toLowerCase();
+  if (l.includes("extreme")) return "#7f1d1d";
+  if (l.includes("high")) return "#dc2626";
+  if (l.includes("moderate") || l.includes("medium")) return "#ca8a04";
+  return "#16a34a";
+}
+
 export function GoogleRiskMap({
   center = { lat: 36.7783, lng: -119.4179 },
   zoom = 6,
-  height = "h-[420px]",
 }: GoogleRiskMapProps) {
   const [zoneLevel, setZoneLevel] = useState<ZoneLevel>("counties");
+  const [selectedZone, setSelectedZone] = useState<SelectedZone | null>(null);
+
+  const levelLabel: Record<ZoneLevel, string> = {
+    "counties": "Counties (58)",
+    "zip-codes": "ZIP Codes (1,769)",
+    "neighborhoods": "Neighborhoods (1,521)",
+    "census-tracts": "Census Tracts (8,041)",
+  };
 
   return (
-    <div className="space-y-2">
-      <div className="flex items-center justify-between">
-        <span className="text-xs text-muted-foreground">Risk Zone Level:</span>
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-end justify-between gap-2">
+        <div>
+          <h3 className="text-sm font-semibold tracking-tight">Risk Zones</h3>
+          <p className="text-xs text-muted-foreground">ML-predicted wildfire risk — click a zone for details</p>
+        </div>
         <select
           value={zoneLevel}
-          onChange={(e) => setZoneLevel(e.target.value as ZoneLevel)}
-          className="text-xs border rounded px-2 py-1 bg-background"
+          onChange={(e) => { setZoneLevel(e.target.value as ZoneLevel); setSelectedZone(null); }}
+          className="text-xs border rounded-md px-2 py-1.5 bg-background shadow-sm"
+          aria-label="Risk zone level"
         >
-          <option value="counties">Counties (58)</option>
-          <option value="zip-codes">ZIP Codes (1,769)</option>
-          <option value="neighborhoods">Neighborhoods (1,521)</option>
-          <option value="census-tracts">Census Tracts (8,041)</option>
+          {(Object.keys(levelLabel) as ZoneLevel[]).map((k) => (
+            <option key={k} value={k}>{levelLabel[k]}</option>
+          ))}
         </select>
       </div>
-      <div style={{ height: 420 }} className="w-full rounded-lg overflow-hidden border">
+      <div style={{ height: 420, position: 'relative' }} className="w-full rounded-lg overflow-hidden border shadow-sm">
         <Map
           style={{ width: '100%', height: '100%' }}
           defaultCenter={center}
@@ -289,11 +317,82 @@ export function GoogleRiskMap({
           disableDefaultUI
           mapTypeId="roadmap"
         >
-          {zoneLevel === "counties" && <CountyRiskOverlay />}
-          {zoneLevel === "zip-codes" && <ZipCodeRiskOverlay />}
-          {zoneLevel === "census-tracts" && <CensusTractRiskOverlay />}
-          {zoneLevel === "neighborhoods" && <NeighborhoodRiskOverlay />}
+          {zoneLevel === "counties" && (
+            <CountyRiskOverlay
+              onCountyClick={(name, risk) =>
+                setSelectedZone({ name, risk_score: risk.risk_score, label: risk.label, features: risk.features, level: "County" })
+              }
+            />
+          )}
+          {zoneLevel === "zip-codes" && (
+            <ZipCodeRiskOverlay
+              onZoneClick={(name, risk) =>
+                setSelectedZone({ name, risk_score: risk.risk_score, label: risk.label, level: "ZIP Code" })
+              }
+            />
+          )}
+          {zoneLevel === "census-tracts" && (
+            <CensusTractRiskOverlay
+              onZoneClick={(name, risk) =>
+                setSelectedZone({ name, risk_score: risk.risk_score, label: risk.label, level: "Census Tract" })
+              }
+            />
+          )}
+          {zoneLevel === "neighborhoods" && (
+            <NeighborhoodRiskOverlay
+              onZoneClick={(name, risk) =>
+                setSelectedZone({ name, risk_score: risk.risk_score, label: risk.label, level: "Neighborhood" })
+              }
+            />
+          )}
         </Map>
+        {selectedZone && (
+          <div
+            style={{
+              position: 'absolute',
+              left: '50%',
+              top: 12,
+              transform: 'translateX(-50%)',
+              zIndex: 1000,
+              background: 'white',
+              border: '1px solid #e5e7eb',
+              borderRadius: 8,
+              padding: 14,
+              minWidth: 260,
+              maxWidth: 340,
+              boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1), 0 4px 6px -4px rgba(0,0,0,0.05)',
+              fontSize: 12,
+              lineHeight: 1.55,
+            }}
+          >
+            <button
+              onClick={() => setSelectedZone(null)}
+              aria-label="Close"
+              style={{ position: 'absolute', top: 6, right: 10, background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: '#6b7280' }}
+            >×</button>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6, paddingRight: 20 }}>
+              <span style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.5, color: '#6b7280' }}>{selectedZone.level}</span>
+            </div>
+            <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 8 }}>{selectedZone.name}</div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+              <span style={{ background: labelColor(selectedZone.label), color: 'white', padding: '2px 8px', borderRadius: 999, fontSize: 11, fontWeight: 600 }}>
+                {selectedZone.label}
+              </span>
+              <span style={{ color: '#374151', fontWeight: 600 }}>{(selectedZone.risk_score * 100).toFixed(0)}% risk</span>
+            </div>
+            {selectedZone.features && (
+              <>
+                <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.5, color: '#6b7280', marginBottom: 4 }}>Why this risk</div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 12px' }}>
+                  <div><strong>EVI:</strong> {selectedZone.features.evi?.toFixed(3)}</div>
+                  <div><strong>LST:</strong> {((selectedZone.features.lst * 0.02) - 273.15).toFixed(1)}°C</div>
+                  <div><strong>Wind:</strong> {selectedZone.features.wind?.toFixed(1)} m/s</div>
+                  <div><strong>Elev:</strong> {Math.round(selectedZone.features.elevation ?? 0)} m</div>
+                </div>
+              </>
+            )}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -304,8 +403,12 @@ export function ActiveFiresMap({
   zoom = 6,
 }: { center?: { lat: number; lng: number }; zoom?: number } = {}) {
   return (
-    <div className="space-y-2">
-      <div style={{ height: 420 }} className="w-full rounded-lg overflow-hidden border">
+    <div className="space-y-3">
+      <div>
+        <h3 className="text-sm font-semibold tracking-tight">Active Fires</h3>
+        <p className="text-xs text-muted-foreground">CAL FIRE incidents, NIFC perimeters, and NASA FIRMS hotspots — click any fire for details</p>
+      </div>
+      <div style={{ height: 420, position: 'relative' }} className="w-full rounded-lg overflow-hidden border shadow-sm">
         <Map
           style={{ width: '100%', height: '100%' }}
           defaultCenter={center}
