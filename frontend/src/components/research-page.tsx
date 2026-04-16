@@ -4,16 +4,13 @@ import {
 } from "lucide-react";
 import { Map, useMap } from "@vis.gl/react-google-maps";
 import { GoogleMapsOverlay } from "@deck.gl/google-maps";
-import { ScatterplotLayer } from "@deck.gl/layers";
+import { ScatterplotLayer, GeoJsonLayer } from "@deck.gl/layers";
 import { HeatmapLayer } from "@deck.gl/aggregation-layers";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
 import { apiFetch } from "../services/api";
-import { CountyRiskOverlay } from "./CountyRiskOverlay";
-import { ZipCodeRiskOverlay } from "./ZipCodeRiskOverlay";
-import { CensusTractRiskOverlay } from "./CensusTractRiskOverlay";
-import { NeighborhoodRiskOverlay } from "./NeighborhoodRiskOverlay";
+import countyGeoJson from "../Data/california-counties.json";
 
 interface ResearchPageProps {
   userRole: string | null;
@@ -132,7 +129,23 @@ function RequestAccessView() {
 /* ------------------------------------------------------------------ */
 /*  deck.gl overlay — renders inside <Map> using useMap()              */
 /* ------------------------------------------------------------------ */
-function ResearchOverlay({ features, showHeatmap }: { features: any[]; showHeatmap: boolean }) {
+interface UnifiedOverlayProps {
+  features: any[];
+  showHeatmap: boolean;
+  zoneGeoJson: any;
+  zoneRiskData: Record<string, { risk_score: number; label: string }>;
+  zoneNameKey: string;
+  onZoneClick?: (name: string, risk: { risk_score: number; label: string }) => void;
+}
+
+function getRiskColor(score: number): [number, number, number, number] {
+  if (score >= 0.75) return [139, 0, 0, 140];
+  if (score >= 0.50) return [220, 38, 38, 120];
+  if (score >= 0.25) return [234, 179, 8, 100];
+  return [34, 197, 94, 70];
+}
+
+function UnifiedResearchOverlay({ features, showHeatmap, zoneGeoJson, zoneRiskData, zoneNameKey, onZoneClick }: UnifiedOverlayProps) {
   const map = useMap();
   const overlayRef = useRef<GoogleMapsOverlay | null>(null);
 
@@ -146,39 +159,7 @@ function ResearchOverlay({ features, showHeatmap }: { features: any[]; showHeatm
 
     const layers: any[] = [];
 
-    // Scatterplot layer — individual colored circles
-    if (features.length > 0) {
-      layers.push(
-        new ScatterplotLayer({
-          id: "research-scatter",
-          data: features,
-          pickable: true,
-          opacity: 0.85,
-          stroked: true,
-          filled: true,
-          radiusMinPixels: 4,
-          radiusMaxPixels: 25,
-          lineWidthMinPixels: 1,
-          getPosition: (d: any) => d.geometry.coordinates,
-          getRadius: (d: any) => Math.sqrt(d.properties.frp || 1) * 400,
-          getFillColor: (d: any) => {
-            const c = d.properties.confidence || 50;
-            if (c >= 80) return [220, 38, 38, 200];   // red
-            if (c >= 60) return [234, 88, 12, 200];    // orange
-            if (c >= 40) return [234, 179, 8, 200];    // yellow
-            return [34, 197, 94, 200];                  // green
-          },
-          getLineColor: [255, 255, 255, 200],
-          getLineWidth: 1,
-          updateTriggers: {
-            getRadius: [features.length],
-            getFillColor: [features.length],
-          },
-        })
-      );
-    }
-
-    // Heatmap layer — risk gradient overlay
+    // 1. FIRMS heatmap (bottom layer)
     if (showHeatmap && features.length > 0) {
       layers.push(
         new HeatmapLayer({
@@ -186,24 +167,74 @@ function ResearchOverlay({ features, showHeatmap }: { features: any[]; showHeatm
           data: features,
           getPosition: (d: any) => d.geometry.coordinates,
           getWeight: (d: any) => (d.properties.confidence || 50) * (d.properties.frp || 1),
-          radiusPixels: 60,
-          intensity: 1.5,
-          threshold: 0.05,
+          radiusPixels: 60, intensity: 1.5, threshold: 0.05,
           colorRange: [
-            [34, 197, 94, 80],     // green
-            [234, 179, 8, 120],    // yellow
-            [234, 88, 12, 160],    // orange
-            [220, 38, 38, 200],    // red
-            [153, 27, 27, 220],    // dark red
+            [34, 197, 94, 80], [234, 179, 8, 120], [234, 88, 12, 160],
+            [220, 38, 38, 200], [153, 27, 27, 220],
           ],
-          updateTriggers: {
-            getWeight: [features.length],
-          },
+          updateTriggers: { getWeight: [features.length] },
         })
       );
     }
 
-    // Old square grid removed — using county/zip/tract/neighborhood overlays instead
+    // 2. Risk zone polygons (middle layer — clickable)
+    if (zoneGeoJson?.features && Object.keys(zoneRiskData).length > 0) {
+      const enriched = {
+        ...zoneGeoJson,
+        features: zoneGeoJson.features.map((f: any) => {
+          const name = f.properties?.[zoneNameKey] || f.properties?.name || "";
+          const risk = zoneRiskData[name] || { risk_score: 0, label: "Low" };
+          return { ...f, properties: { ...f.properties, risk_score: risk.risk_score, risk_label: risk.label, zone_name: name } };
+        }),
+      };
+      layers.push(
+        new GeoJsonLayer({
+          id: "risk-zones",
+          data: enriched,
+          pickable: true,
+          stroked: true,
+          filled: true,
+          lineWidthMinPixels: 1,
+          getLineColor: [255, 255, 255, 160],
+          getLineWidth: 1,
+          getFillColor: (f: any) => getRiskColor(f.properties.risk_score || 0),
+          onClick: (info: any) => {
+            if (onZoneClick && info.object) {
+              const name = info.object.properties?.zone_name || "";
+              onZoneClick(name, {
+                risk_score: info.object.properties?.risk_score || 0,
+                label: info.object.properties?.risk_label || "Low",
+              });
+            }
+          },
+          updateTriggers: { getFillColor: [Object.keys(zoneRiskData).length] },
+        })
+      );
+    }
+
+    // 3. FIRMS scatter points (top layer — visible dots)
+    if (features.length > 0) {
+      layers.push(
+        new ScatterplotLayer({
+          id: "research-scatter",
+          data: features,
+          pickable: false, // Don't intercept clicks
+          opacity: 0.85, stroked: true, filled: true,
+          radiusMinPixels: 4, radiusMaxPixels: 25, lineWidthMinPixels: 1,
+          getPosition: (d: any) => d.geometry.coordinates,
+          getRadius: (d: any) => Math.sqrt(d.properties.frp || 1) * 400,
+          getFillColor: (d: any) => {
+            const c = d.properties.confidence || 50;
+            if (c >= 80) return [220, 38, 38, 200];
+            if (c >= 60) return [234, 88, 12, 200];
+            if (c >= 40) return [234, 179, 8, 200];
+            return [34, 197, 94, 200];
+          },
+          getLineColor: [255, 255, 255, 200], getLineWidth: 1,
+          updateTriggers: { getFillColor: [features.length] },
+        })
+      );
+    }
 
     const overlay = new GoogleMapsOverlay({ layers });
     overlay.setMap(map);
@@ -216,7 +247,7 @@ function ResearchOverlay({ features, showHeatmap }: { features: any[]; showHeatm
         overlayRef.current = null;
       }
     };
-  }, [map, features, showHeatmap]);
+  }, [map, features, showHeatmap, zoneGeoJson, zoneRiskData, zoneNameKey, onZoneClick]);
 
   return null;
 }
@@ -235,6 +266,8 @@ function ResearchMapView() {
   const [zoneLevel, setZoneLevel] = useState<"counties" | "zip-codes" | "census-tracts" | "neighborhoods">("counties");
   const [selectedZone, setSelectedZone] = useState<string | null>(null);
   const [selectedZoneRisk, setSelectedZoneRisk] = useState<{ risk_score: number; label: string } | null>(null);
+  const [zoneGeoJson, setZoneGeoJson] = useState<any>(countyGeoJson);
+  const [zoneRiskData, setZoneRiskData] = useState<Record<string, { risk_score: number; label: string }>>({});
   const [useOverrides, setUseOverrides] = useState(false);
   const [eviSlider, setEviSlider] = useState(500);
   const [lstSlider, setLstSlider] = useState(14000);
@@ -263,6 +296,36 @@ function ResearchMapView() {
     return () => clearTimeout(timer);
   }, [fetchData]);
 
+  // Load zone boundaries when level changes
+  useEffect(() => {
+    if (zoneLevel === "counties") {
+      setZoneGeoJson(countyGeoJson);
+    } else {
+      apiFetch(`/research/boundaries/${zoneLevel}`)
+        .then((r) => r.json())
+        .then((data) => { if (data?.features) setZoneGeoJson(data); })
+        .catch((e) => console.warn(`Failed to load ${zoneLevel}:`, e));
+    }
+    setZoneRiskData({}); // Clear old risk data
+  }, [zoneLevel]);
+
+  // Load risk data for zones
+  useEffect(() => {
+    if (!zoneGeoJson?.features) return;
+    const endpoint = zoneLevel === "counties"
+      ? `/research/risk-by-county${useOverrides ? `?evi=${eviSlider}&lst=${lstSlider}&wind=${windSlider}&elevation=${elevSlider}` : ""}`
+      : `/research/risk-by-zone/${zoneLevel}`;
+    apiFetch(endpoint)
+      .then((r) => r.json())
+      .then((data) => {
+        const zones = data?.counties || data?.zones || {};
+        setZoneRiskData(zones);
+      })
+      .catch((e) => console.warn("Risk data load failed:", e));
+  }, [zoneGeoJson, zoneLevel, useOverrides, eviSlider, lstSlider, windSlider, elevSlider]);
+
+  const zoneNameKey = zoneLevel === "counties" ? "name" : zoneLevel === "zip-codes" ? "zip" : zoneLevel === "census-tracts" ? "tract" : "name";
+
   // Convert LST encoded value to Celsius for display
   const lstCelsius = Math.round((lstSlider * 0.02 - 273.15) * 10) / 10;
 
@@ -286,24 +349,14 @@ function ResearchMapView() {
               gestureHandling="greedy"
               mapTypeId="terrain"
             >
-              {/* FIRMS heatmap/scatter renders first (bottom layer) */}
-              <ResearchOverlay features={features} showHeatmap={showHeatmap} />
-              {/* Zone overlays render on top so they receive click events */}
-              {showZones && zoneLevel === "counties" && (
-                <CountyRiskOverlay
-                  overrides={useOverrides ? { evi: eviSlider, lst: lstSlider, wind: windSlider, elevation: elevSlider } : undefined}
-                  onCountyClick={(name, risk) => { setSelectedZone(name); setSelectedZoneRisk(risk); }}
-                />
-              )}
-              {showZones && zoneLevel === "zip-codes" && (
-                <ZipCodeRiskOverlay onZoneClick={(name, risk) => { setSelectedZone(name); setSelectedZoneRisk(risk); }} />
-              )}
-              {showZones && zoneLevel === "census-tracts" && (
-                <CensusTractRiskOverlay onZoneClick={(name, risk) => { setSelectedZone(name); setSelectedZoneRisk(risk); }} />
-              )}
-              {showZones && zoneLevel === "neighborhoods" && (
-                <NeighborhoodRiskOverlay onZoneClick={(name, risk) => { setSelectedZone(name); setSelectedZoneRisk(risk); }} />
-              )}
+              <UnifiedResearchOverlay
+                features={features}
+                showHeatmap={showHeatmap}
+                zoneGeoJson={showZones ? zoneGeoJson : null}
+                zoneRiskData={zoneRiskData}
+                zoneNameKey={zoneNameKey}
+                onZoneClick={(name, risk) => { setSelectedZone(name); setSelectedZoneRisk(risk); }}
+              />
             </Map>
             {/* Selected zone info with shine border */}
             {selectedZone && selectedZoneRisk && (
