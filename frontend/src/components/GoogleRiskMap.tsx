@@ -380,21 +380,21 @@ export function GoogleRiskMap({
           {zoneLevel === "zip-codes" && (
             <ZipCodeRiskOverlay
               onZoneClick={(name, risk) =>
-                setSelectedZone({ name, risk_score: risk.risk_score, label: risk.label, level: "ZIP Code" })
+                setSelectedZone({ name, risk_score: risk.risk_score, label: risk.label, features: risk.features, level: "ZIP Code" })
               }
             />
           )}
           {zoneLevel === "census-tracts" && (
             <CensusTractRiskOverlay
               onZoneClick={(name, risk) =>
-                setSelectedZone({ name, risk_score: risk.risk_score, label: risk.label, level: "Census Tract" })
+                setSelectedZone({ name, risk_score: risk.risk_score, label: risk.label, features: risk.features, level: "Census Tract" })
               }
             />
           )}
           {zoneLevel === "neighborhoods" && (
             <NeighborhoodRiskOverlay
               onZoneClick={(name, risk) =>
-                setSelectedZone({ name, risk_score: risk.risk_score, label: risk.label, level: "Neighborhood" })
+                setSelectedZone({ name, risk_score: risk.risk_score, label: risk.label, features: risk.features, level: "Neighborhood" })
               }
             />
           )}
@@ -458,7 +458,7 @@ export function GoogleRiskMap({
                 <div style={{ marginTop: 8, fontSize: 10, color: '#9ca3af' }}>ML model: gradient-boosted on NASA MODIS + NOAA reanalysis.</div>
               </>
             ) : (
-              <div style={{ fontSize: 11, color: '#6b7280' }}>Parameter breakdown loading — switch to Counties for full detail.</div>
+              <div style={{ fontSize: 11, color: '#6b7280' }}>Parameter breakdown loading…</div>
             )}
           </div>
         )}
