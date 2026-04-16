@@ -33,3 +33,25 @@ instance/
 # Migrations cache (if any)
 migrations/__pycache__/
 migrations/versions/__pycache__/
+
+# ── GSD baseline (auto-generated) ──
+.gsd
+.gsd-id
+.bg-shell/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.vscode/
+*.code-workspace
+.env.*
+!.env.example
+.next/
+*.pyc
+target/
+vendor/
+*.log
+coverage/
+.cache/
+tmp/

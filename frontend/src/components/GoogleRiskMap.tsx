@@ -27,7 +27,7 @@ function ActiveFiresOverlay() {
       .then((r) => r.json())
       .then((data) => {
         if (Array.isArray(data)) {
-          setFires(data.filter((f: any) => f.Latitude && f.Longitude));
+          setFires(data.filter((f: any) => f.Latitude && f.Longitude && (f.PercentContained ?? 0) < 100));
         }
       })
       .catch((e) => console.warn("CAL FIRE fetch failed:", e));
