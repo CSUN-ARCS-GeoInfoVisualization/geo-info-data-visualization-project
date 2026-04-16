@@ -160,7 +160,10 @@ function ActiveFiresOverlay() {
           getLineColor: [220, 38, 38, 220],
           getFillColor: (f: any) => {
             const pct = f.properties?.attr_PercentContained ?? 0;
-            return pct >= 100 ? [251, 146, 60, 50] : [220, 38, 38, 60];
+            if (pct >= 100) return [255, 255, 255, 160];
+            if (pct >= 50) return [250, 204, 21, 160];
+            if (pct >= 25) return [249, 115, 22, 160];
+            return [220, 38, 38, 180];
           },
           getLineWidth: 2,
           onClick: (info: any) => {
@@ -237,10 +240,10 @@ function ActiveFiresOverlay() {
             onClick={() => setSelectedPerimeter(null)}
             style={{ position: 'absolute', top: 4, right: 8, background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: '#6b7280' }}
           >×</button>
-          <div style={{ fontWeight: 700, marginBottom: 4, paddingRight: 16 }}>{selectedPerimeter.attr_IncidentName || selectedPerimeter.poly_IncidentName || 'Fire Perimeter'}</div>
+          <div style={{ fontWeight: 700, marginBottom: 4, paddingRight: 16 }}>{selectedPerimeter.poly_IncidentName || selectedPerimeter.attr_IncidentName || 'Fire Perimeter'}</div>
+          {selectedPerimeter.poly_GISAcres != null && <div><strong>Acres:</strong> {Number(selectedPerimeter.poly_GISAcres).toLocaleString()}</div>}
           {selectedPerimeter.attr_PercentContained != null && <div><strong>Contained:</strong> {selectedPerimeter.attr_PercentContained}%</div>}
-          {selectedPerimeter.attr_DailyAcres != null && <div><strong>Acres:</strong> {Number(selectedPerimeter.attr_DailyAcres).toLocaleString()}</div>}
-          {selectedPerimeter.attr_FireDiscoveryDateTime && <div><strong>Discovered:</strong> {new Date(selectedPerimeter.attr_FireDiscoveryDateTime).toLocaleDateString()}</div>}
+          {selectedPerimeter.poly_FeatureCategory && <div><strong>Category:</strong> {selectedPerimeter.poly_FeatureCategory}</div>}
         </div>
       )}
     </>
@@ -284,6 +287,7 @@ export function GoogleRiskMap({
           defaultZoom={zoom}
           gestureHandling="greedy"
           disableDefaultUI
+          mapTypeId="roadmap"
         >
           {zoneLevel === "counties" && <CountyRiskOverlay />}
           {zoneLevel === "zip-codes" && <ZipCodeRiskOverlay />}

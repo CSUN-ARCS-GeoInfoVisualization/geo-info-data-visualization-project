@@ -229,7 +229,10 @@ function UnifiedResearchOverlay({ features, showHeatmap, zoneGeoJson, zoneRiskDa
           getLineColor: [220, 38, 38, 220],
           getFillColor: (f: any) => {
             const pct = f.properties?.attr_PercentContained ?? 0;
-            return pct >= 100 ? [251, 146, 60, 50] : [220, 38, 38, 60];
+            if (pct >= 100) return [255, 255, 255, 160];
+            if (pct >= 50) return [250, 204, 21, 160];
+            if (pct >= 25) return [249, 115, 22, 160];
+            return [220, 38, 38, 180];
           },
           getLineWidth: 2,
           onClick: (info: any) => {
