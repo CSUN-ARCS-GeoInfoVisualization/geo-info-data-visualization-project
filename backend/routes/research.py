@@ -9,7 +9,7 @@ import requests
 from flask import Blueprint, jsonify, request
 from flask_jwt_extended import jwt_required, get_jwt
 
-from ml.inference import predict_from_features
+from ml.inference import predict_from_features, predict_batch_features
 from data.sample_locations import SAMPLE_LOCATIONS
 
 research_bp = Blueprint('research', __name__)
@@ -80,13 +80,14 @@ def risk_by_zone(zone_type):
     # Determine zone name field
     name_key = 'zip' if zone_type == 'zip-codes' else 'name' if zone_type == 'neighborhoods' else 'tract'
 
-    results = {}
-    # Sample for large datasets to keep response fast
-    features = geo.get('features', [])
-    step = max(1, len(features) // 500)  # Max ~500 predictions
+    features_list = geo.get('features', [])
+    step = max(1, len(features_list) // 500)  # Max ~500 predictions
 
-    for i in range(0, len(features), step):
-        f = features[i]
+    # Collect sampled centroids + their feature vectors
+    sampled_names = []
+    sampled_inputs = []  # (evi, lst, wind, elevation) tuples
+    for i in range(0, len(features_list), step):
+        f = features_list[i]
         name = f.get('properties', {}).get(name_key, str(i))
         coords = f.get('geometry', {}).get('coordinates')
         if not coords:
@@ -99,21 +100,25 @@ def risk_by_zone(zone_type):
         lst = _interpolate_feature(lat, lon, "lst")
         wind = _interpolate_feature(lat, lon, "wind")
         elev = _interpolate_feature(lat, lon, "elevation")
-        try:
-            result = predict_from_features(evi, lst, wind, elev)
-            results[name] = {"risk_score": result["risk_score"], "label": result["label"]}
-        except Exception:
-            results[name] = {"risk_score": 0, "label": "Low"}
+        sampled_names.append(name)
+        sampled_inputs.append((evi, lst, wind, elev))
 
-    # Propagate sampled results to unsampled zones
-    if step > 1:
-        all_results = {}
-        for i, f in enumerate(features):
-            name = f.get('properties', {}).get(name_key, str(i))
-            sampled_idx = (i // step) * step
-            sampled_name = features[sampled_idx].get('properties', {}).get(name_key, str(sampled_idx))
-            all_results[name] = results.get(sampled_name, {"risk_score": 0, "label": "Low"})
-        results = all_results
+    # Single batch prediction call (loads model once, predicts all at once via numpy)
+    try:
+        batch_results = predict_batch_features(sampled_inputs)
+    except Exception as e:
+        logger.warning("Batch prediction failed: %s", e)
+        batch_results = [{"risk_score": 0, "label": "Low"}] * len(sampled_inputs)
+
+    sampled_risk = dict(zip(sampled_names, batch_results))
+
+    # Propagate to all zones
+    results = {}
+    for i, f in enumerate(features_list):
+        name = f.get('properties', {}).get(name_key, str(i))
+        sampled_idx = (i // step) * step
+        sampled_name = features_list[sampled_idx].get('properties', {}).get(name_key, str(sampled_idx)) if sampled_idx < len(features_list) else ""
+        results[name] = sampled_risk.get(sampled_name, {"risk_score": 0, "label": "Low"})
 
     data = {"zones": results, "zone_type": zone_type, "total": len(results)}
     _zone_risk_cache[cache_key] = {'data': data, 'expires': now + _GRID_CACHE_TTL}
@@ -294,20 +299,20 @@ def risk_by_county():
             and _county_cache["params"] == params_key):
         return jsonify(_county_cache["data"])
 
-    results = {}
+    names = []
+    inputs = []
     for name, lat, lon in CA_COUNTY_CENTROIDS:
         evi = evi_ov if evi_ov is not None else _interpolate_feature(lat, lon, "evi")
         lst = lst_ov if lst_ov is not None else _interpolate_feature(lat, lon, "lst")
         wind = wind_ov if wind_ov is not None else _interpolate_feature(lat, lon, "wind")
         elev = elev_ov if elev_ov is not None else _interpolate_feature(lat, lon, "elevation")
-        try:
-            result = predict_from_features(evi, lst, wind, elev)
-            results[name] = {
-                "risk_score": result["risk_score"],
-                "label": result["label"],
-            }
-        except Exception:
-            results[name] = {"risk_score": 0, "label": "Low"}
+        names.append(name)
+        inputs.append((evi, lst, wind, elev))
+    try:
+        batch = predict_batch_features(inputs)
+    except Exception:
+        batch = [{"risk_score": 0, "label": "Low"}] * len(inputs)
+    results = dict(zip(names, batch))
 
     data = {"counties": results, "overrides": {"evi": evi_ov, "lst": lst_ov, "wind": wind_ov, "elevation": elev_ov}}
     _county_cache["data"] = data

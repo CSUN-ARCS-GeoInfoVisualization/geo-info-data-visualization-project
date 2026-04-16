@@ -22,6 +22,17 @@ _MODELS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "models")
 _DEFAULT_MODEL = os.path.join(_MODELS_DIR, "wildfire_model_predictive.pkl")
 _DEFAULT_SCALER = os.path.join(_MODELS_DIR, "wildfire_scaler_predictive.pkl")
 
+# Load model and scaler ONCE at module import time
+_model = None
+_scaler = None
+
+
+def _ensure_loaded():
+    global _model, _scaler
+    if _model is None:
+        _model = joblib.load(_DEFAULT_MODEL)
+        _scaler = joblib.load(_DEFAULT_SCALER)
+
 
 def risk_label(score: float) -> str:
     """Map a 0–1 probability score to a human-readable risk level."""
@@ -43,27 +54,11 @@ def predict_from_features(
     model_path: str = _DEFAULT_MODEL,
     scaler_path: str = _DEFAULT_SCALER,
 ) -> dict:
-    """
-    Run wildfire risk inference from pre-extracted feature values.
-
-    Args:
-        evi:       Enhanced Vegetation Index (raw MODIS value)
-        lst:       Land Surface Temperature encoded value: (T_celsius + 273.15) / 0.02
-        wind:      Wind speed in m/s
-        elevation: Terrain elevation in meters
-        model_path:  Path to the trained .pkl model (optional, uses bundled model)
-        scaler_path: Path to the fitted .pkl scaler (optional, uses bundled scaler)
-
-    Returns:
-        dict with keys: evi, lst, wind, elevation, risk_score, label
-    """
-    scaler = joblib.load(scaler_path)
-    model = joblib.load(model_path)
+    _ensure_loaded()
 
     features = np.array([[evi, lst, wind, elevation]])
-    features_scaled = scaler.transform(features)
-
-    risk_score = float(model.predict_proba(features_scaled)[0][1])
+    features_scaled = _scaler.transform(features)
+    risk_score = float(_model.predict_proba(features_scaled)[0][1])
     label = risk_label(risk_score)
 
     return {
@@ -74,3 +69,23 @@ def predict_from_features(
         "risk_score": risk_score,
         "label": label,
     }
+
+
+def predict_batch_features(items: list[tuple[float, float, float, float]]) -> list[dict]:
+    """Predict risk for multiple locations at once. Much faster than calling predict_from_features in a loop.
+
+    Args:
+        items: list of (evi, lst, wind, elevation) tuples
+    Returns:
+        list of dicts with risk_score and label
+    """
+    _ensure_loaded()
+    if not items:
+        return []
+    features = np.array(items)
+    features_scaled = _scaler.transform(features)
+    probas = _model.predict_proba(features_scaled)[:, 1]
+    return [
+        {"risk_score": float(p), "label": risk_label(float(p))}
+        for p in probas
+    ]
