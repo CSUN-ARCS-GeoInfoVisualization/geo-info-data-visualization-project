@@ -453,7 +453,18 @@ function ResearchMapView() {
               />
             </Map>
             {/* Always-on left in-map control navbar */}
-            <div className="absolute top-3 left-3 bottom-3 z-10 w-[280px] bg-white/95 backdrop-blur-sm rounded-xl shadow-lg border overflow-y-auto">
+            <div
+              className="bg-white/95 backdrop-blur-sm rounded-xl shadow-lg border overflow-y-auto"
+              style={{
+                position: 'absolute',
+                top: 12,
+                left: 12,
+                bottom: 12,
+                width: 280,
+                zIndex: 50,
+                pointerEvents: 'auto',
+              }}
+            >
               <div className="p-4 space-y-4 text-sm">
                 <div>
                   <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">Map view</div>
