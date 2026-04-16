@@ -369,9 +369,12 @@ function ResearchMapView() {
               try {
                 const r = await apiFetch("/predict-custom", {
                   method: "POST",
-                  body: JSON.stringify(ov),
+                  body: JSON.stringify({ ...ov, zone_name: name }),
                 });
-                if (r.ok) return { name, ...(await r.json()) };
+                if (r.ok) {
+                  const resp = await r.json();
+                  return { name, risk_score: resp.risk_score, label: resp.label };
+                }
               } catch {}
               return null;
             })
@@ -431,6 +434,7 @@ function ResearchMapView() {
                 onZoneClick={(name, risk) => {
                   setSelectedZone(name);
                   setSelectedZoneRisk(risk);
+                  setUseOverrides(true);
                   const ov = zoneOverrides[name];
                   if (ov) {
                     setEviSlider(ov.evi);
