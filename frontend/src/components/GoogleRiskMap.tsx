@@ -380,16 +380,31 @@ export function GoogleRiskMap({
               </span>
               <span style={{ color: '#374151', fontWeight: 600 }}>{(selectedZone.risk_score * 100).toFixed(0)}% risk</span>
             </div>
-            {selectedZone.features && (
+            {selectedZone.features ? (
               <>
-                <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.5, color: '#6b7280', marginBottom: 4 }}>Why this risk</div>
-                <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '4px 12px' }}>
-                  <div><strong>EVI:</strong> {selectedZone.features.evi?.toFixed(3)}</div>
-                  <div><strong>LST:</strong> {((selectedZone.features.lst * 0.02) - 273.15).toFixed(1)}°C</div>
-                  <div><strong>Wind:</strong> {selectedZone.features.wind?.toFixed(1)} m/s</div>
-                  <div><strong>Elev:</strong> {Math.round(selectedZone.features.elevation ?? 0)} m</div>
+                <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.5, color: '#6b7280', marginBottom: 6 }}>Why this risk — model inputs</div>
+                <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 6 }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                    <span><strong>🌿 Vegetation (EVI):</strong><br /><span style={{ color: '#6b7280', fontSize: 11 }}>Greener = more fuel</span></span>
+                    <span style={{ fontVariantNumeric: 'tabular-nums' }}>{selectedZone.features.evi?.toFixed(3)}</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                    <span><strong>🌡️ Land Surface Temp:</strong><br /><span style={{ color: '#6b7280', fontSize: 11 }}>Hotter ground dries fuel</span></span>
+                    <span style={{ fontVariantNumeric: 'tabular-nums' }}>{((selectedZone.features.lst * 0.02) - 273.15).toFixed(1)}°C</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                    <span><strong>💨 Wind Speed:</strong><br /><span style={{ color: '#6b7280', fontSize: 11 }}>Faster wind spreads fire</span></span>
+                    <span style={{ fontVariantNumeric: 'tabular-nums' }}>{selectedZone.features.wind?.toFixed(1)} m/s</span>
+                  </div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                    <span><strong>⛰️ Elevation:</strong><br /><span style={{ color: '#6b7280', fontSize: 11 }}>Slope + altitude affect burn</span></span>
+                    <span style={{ fontVariantNumeric: 'tabular-nums' }}>{Math.round(selectedZone.features.elevation ?? 0)} m</span>
+                  </div>
                 </div>
+                <div style={{ marginTop: 8, fontSize: 10, color: '#9ca3af' }}>ML model: gradient-boosted on NASA MODIS + NOAA reanalysis.</div>
               </>
+            ) : (
+              <div style={{ fontSize: 11, color: '#6b7280' }}>Parameter breakdown loading — switch to Counties for full detail.</div>
             )}
           </div>
         )}

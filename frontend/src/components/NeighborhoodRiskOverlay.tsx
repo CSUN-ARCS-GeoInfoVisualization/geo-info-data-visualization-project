@@ -15,12 +15,17 @@ function getRiskColor(score: number): [number, number, number, number] {
   return [34, 197, 94, 70];
 }
 
+interface ZoneRisk {
+  risk_score: number;
+  label: string;
+  features?: { evi: number; lst: number; wind: number; elevation: number };
+}
 interface Props {
-  onZoneClick?: (name: string, risk: { risk_score: number; label: string }) => void;
+  onZoneClick?: (name: string, risk: ZoneRisk) => void;
 }
 
 let _cachedGeo: any = null;
-let _cachedRisk: Record<string, { risk_score: number; label: string }> = {};
+let _cachedRisk: Record<string, ZoneRisk> = {};
 
 export function NeighborhoodRiskOverlay({ onZoneClick }: Props) {
   const map = useMap();
@@ -67,9 +72,12 @@ export function NeighborhoodRiskOverlay({ onZoneClick }: Props) {
         getFillColor: (f: any) => getRiskColor(f.properties.risk_score || 0),
         onClick: (info: any) => {
           if (onZoneClick && info.object) {
-            onZoneClick(info.object.properties?.name || "", {
-              risk_score: info.object.properties?.risk_score || 0,
-              label: info.object.properties?.risk_label || "Low",
+            const name = info.object.properties?.name || "";
+            const r = riskData[name];
+            onZoneClick(name, {
+              risk_score: r?.risk_score ?? info.object.properties?.risk_score ?? 0,
+              label: r?.label ?? info.object.properties?.risk_label ?? "Low",
+              features: r?.features,
             });
           }
         },

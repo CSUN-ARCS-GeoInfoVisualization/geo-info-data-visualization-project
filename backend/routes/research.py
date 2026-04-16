@@ -110,7 +110,10 @@ def risk_by_zone(zone_type):
         logger.warning("Batch prediction failed: %s", e)
         batch_results = [{"risk_score": 0, "label": "Low"}] * len(sampled_inputs)
 
-    sampled_risk = dict(zip(sampled_names, batch_results))
+    sampled_risk = {
+        name: {**risk, "features": {"evi": evi, "lst": lst, "wind": wind, "elevation": elev}}
+        for name, risk, (evi, lst, wind, elev) in zip(sampled_names, batch_results, sampled_inputs)
+    }
 
     # Propagate to all zones
     results = {}
