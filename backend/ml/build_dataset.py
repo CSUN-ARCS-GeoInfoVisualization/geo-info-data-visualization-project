@@ -42,7 +42,8 @@ load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file_
 RANDOM_SEED      = 42
 N_FIRE           = 500
 N_NOFIRE         = 500
-MIN_FIRE_DIST    = 0.5       # degrees (~55 km) minimum separation for no-fire pts
+DATA_YEAR        = 2020   # Year used for EVI spring composite; must match live_evi.py via model_metadata.json
+MIN_FIRE_DIST_KM = 50.0     # km minimum separation between no-fire and fire points
 CHECKPOINT_EVERY = 25
 
 CA_LAT_MIN, CA_LAT_MAX = 32.5, 42.0
@@ -52,7 +53,7 @@ _DIR    = os.path.dirname(os.path.abspath(__file__))
 OUT_DIR = os.path.join(_DIR, "training_data")
 OUT_CSV = os.path.join(OUT_DIR, "california_2020.csv")
 
-CSV_COLS = ["lat", "lon", "acq_date", "evi", "lst", "wind", "humidity", "elevation", "fire"]
+CSV_COLS = ["lat", "lon", "acq_date", "evi", "air_temp_encoded", "wind", "humidity", "elevation", "fire"]
 
 APPEEARS_URL = "https://appeears.earthdatacloud.nasa.gov/api"
 FIRMS_API_URL = "https://firms.modaps.eosdis.nasa.gov/api/area/csv"
@@ -82,8 +83,15 @@ def _in_california(lat: float, lon: float) -> bool:
     return CA_LAT_MIN <= lat <= CA_LAT_MAX and CA_LON_MIN <= lon <= CA_LON_MAX
 
 
-def _haversine_deg(lat1, lon1, lat2, lon2) -> float:
-    return math.sqrt((lat1 - lat2) ** 2 + (lon1 - lon2) ** 2)
+def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Great-circle distance in kilometres between two lat/lon points."""
+    R = 6371.0
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = (math.sin(dlat / 2) ** 2
+         + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2))
+         * math.sin(dlon / 2) ** 2)
+    return 2 * R * math.asin(math.sqrt(a))
 
 
 def fetch_firms_california() -> list[tuple[float, float, str]]:
@@ -178,7 +186,7 @@ def generate_nofire_points(
         attempts += 1
         lat = rng.uniform(CA_LAT_MIN, CA_LAT_MAX)
         lon = rng.uniform(CA_LON_MIN, CA_LON_MAX)
-        if not any(_haversine_deg(lat, lon, f, g) < MIN_FIRE_DIST for f, g in fire_latlons):
+        if not any(_haversine_km(lat, lon, f, g) < MIN_FIRE_DIST_KM for f, g in fire_latlons):
             latlons.append((lat, lon))
 
     # Assign random dates after location generation to preserve rng state for lat/lon
@@ -356,7 +364,9 @@ def fetch_evi_batch(
     # Use spring EVI (closest composite to May 1) as pre-fire-season fuel load indicator.
     # This captures vegetation stress before fire season rather than at fire time,
     # which provides better discriminative signal between fire and no-fire locations.
-    SPRING_TARGET = datetime(2020, 5, 1)
+    # DATA_YEAR is written to model_metadata.json at retrain time so live_evi.py
+    # can fetch the same year's composite during inference.
+    SPRING_TARGET = datetime(DATA_YEAR, 5, 1)
 
     result: dict[tuple[float, float], float] = {}
     for i, (lat, lon, acq_date) in enumerate(points):
@@ -520,7 +530,9 @@ def build():
 
         wind     = weather["wind"]
         humidity = weather["humidity"]
-        lst      = (weather["temperature_celsius"] + 273.15) / 0.02
+        # air_temp_encoded: air temperature encoded as (°C + 273.15) / 0.02 to produce
+        # a Kelvin-scale integer. NOT actual MODIS Land Surface Temperature.
+        air_temp_encoded = (weather["temperature_celsius"] + 273.15) / 0.02
 
         # Elevation
         elevation = fetch_elevation(lat, lon)
@@ -531,14 +543,14 @@ def build():
 
         writer.writerow([
             round(lat, 6), round(lon, 6), date,
-            evi, round(lst, 2), round(wind, 3),
+            evi, round(air_temp_encoded, 2), round(wind, 3),
             round(humidity, 1), round(elevation, 2),
             label,
         ])
         completed += 1
 
         print(
-            f"  {prefix} | EVI={evi:.0f} LST={lst:.0f} "
+            f"  {prefix} | EVI={evi:.0f} air_temp_encoded={air_temp_encoded:.0f} "
             f"wind={wind:.1f} hum={humidity:.0f}% elev={elevation:.0f}m"
         )
 

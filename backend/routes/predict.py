@@ -16,12 +16,20 @@ predict_bp = Blueprint('predict', __name__)
 MODEL_VERSION = "predictive-v1"
 
 
-def _nearest_location(lat: float, lon: float) -> dict:
-    """Return the sample location closest to the given (lat, lon)."""
-    def dist(loc):
-        return math.sqrt((loc["lat"] - lat) ** 2 + (loc["lon"] - lon) ** 2)
+def _haversine_km(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    """Great-circle distance in kilometres between two lat/lon points."""
+    R = 6371.0
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = (math.sin(dlat / 2) ** 2
+         + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2))
+         * math.sin(dlon / 2) ** 2)
+    return 2 * R * math.asin(math.sqrt(a))
 
-    return min(SAMPLE_LOCATIONS, key=dist)
+
+def _nearest_location(lat: float, lon: float) -> dict:
+    """Return the sample location with the shortest great-circle distance to (lat, lon)."""
+    return min(SAMPLE_LOCATIONS, key=lambda loc: _haversine_km(lat, lon, loc["lat"], loc["lon"]))
 
 
 def _validate_coords(lat: float, lon: float):
@@ -36,15 +44,16 @@ def _run(lat: float, lon: float) -> dict:
 
     try:
         weather = get_weather(lat, lon)
-        wind     = weather["wind_speed"]
-        humidity = weather["humidity"]
-        lst      = (weather["temperature_celsius"] + 273.15) / 0.02
-        weather_source = "live"
+        wind             = weather["wind_speed"]
+        humidity         = weather["humidity"]
+        # air_temp_encoded: air temperature as (°C + 273.15) / 0.02 — NOT MODIS LST.
+        air_temp_encoded = (weather["temperature_celsius"] + 273.15) / 0.02
+        weather_source   = "live"
     except Exception:
-        wind     = loc["wind"]
-        humidity = loc["humidity"]
-        lst      = loc["lst"]
-        weather_source = "fallback"
+        wind             = loc["wind"]
+        humidity         = loc["humidity"]
+        air_temp_encoded = loc["air_temp_encoded"]
+        weather_source   = "fallback"
 
     try:
         elevation = get_elevation(lat, lon)
@@ -62,7 +71,7 @@ def _run(lat: float, lon: float) -> dict:
 
     result = predict_from_features(
         evi=evi,
-        lst=lst,
+        air_temp_encoded=air_temp_encoded,
         wind=wind,
         humidity=humidity,
         elevation=elevation,
@@ -85,8 +94,8 @@ def _run(lat: float, lon: float) -> dict:
         "features": {
             "evi": result["evi"],
             "evi_source": evi_source,
-            "lst": result["lst"],
-            "lst_source": weather_source,
+            "air_temp_encoded": result["air_temp_encoded"],
+            "air_temp_encoded_source": weather_source,
             "wind": result["wind"],
             "wind_source": weather_source,
             "humidity": result["humidity"],

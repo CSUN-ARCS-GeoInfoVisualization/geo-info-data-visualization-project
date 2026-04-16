@@ -4,7 +4,7 @@ Wildfire Risk Inference Module
 Loads the trained RandomForest model and runs inference given pre-extracted
 feature values.
 
-Feature order (must match training): EVI, LST, Wind, Humidity, Elevation
+Feature order (must match training): EVI, air_temp_encoded, Wind, Humidity, Elevation
 """
 
 import os
@@ -39,7 +39,7 @@ def risk_label(score: float) -> str:
 
 def predict_from_features(
     evi: float,
-    lst: float,
+    air_temp_encoded: float,
     wind: float,
     humidity: float,
     elevation: float,
@@ -50,29 +50,30 @@ def predict_from_features(
     Run wildfire risk inference from pre-extracted feature values.
 
     Args:
-        evi:       Enhanced Vegetation Index (raw MODIS value)
-        lst:       Land Surface Temperature encoded: (T_celsius + 273.15) / 0.02
-        wind:      Wind speed in m/s
-        humidity:  Relative humidity in % (0–100)
-        elevation: Terrain elevation in meters
+        evi:              Enhanced Vegetation Index (scaled, 0–1 range)
+        air_temp_encoded: Air temperature encoded as (T_celsius + 273.15) / 0.02.
+                          NOT MODIS Land Surface Temperature — derived from Open-Meteo air temp.
+        wind:             Wind speed in m/s
+        humidity:         Relative humidity in % (0–100)
+        elevation:        Terrain elevation in meters
 
     Returns:
-        dict with keys: evi, lst, wind, humidity, elevation, risk_score, label
+        dict with keys: evi, air_temp_encoded, wind, humidity, elevation, risk_score, label
     """
     model, scaler = _load(model_path, scaler_path)
 
-    features        = np.array([[evi, lst, wind, humidity, elevation]])
+    features        = np.array([[evi, air_temp_encoded, wind, humidity, elevation]])
     features_scaled = scaler.transform(features)
 
     risk_score = float(model.predict_proba(features_scaled)[0][1])
     label      = risk_label(risk_score)
 
     return {
-        "evi":       evi,
-        "lst":       lst,
-        "wind":      wind,
-        "humidity":  humidity,
-        "elevation": elevation,
-        "risk_score": risk_score,
-        "label":     label,
+        "evi":              evi,
+        "air_temp_encoded": air_temp_encoded,
+        "wind":             wind,
+        "humidity":         humidity,
+        "elevation":        elevation,
+        "risk_score":       risk_score,
+        "label":            label,
     }

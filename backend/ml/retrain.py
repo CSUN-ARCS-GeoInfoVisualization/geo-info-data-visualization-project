@@ -15,6 +15,7 @@ Run from backend/:
     python -m ml.retrain
 """
 
+import json
 import os
 import sys
 import shutil
@@ -47,7 +48,7 @@ _CHARTS_DIR = os.path.join(_DIR, "charts")
 _MODEL_OUT  = os.path.join(_MODELS_DIR, "wildfire_model_predictive.pkl")
 _SCALER_OUT = os.path.join(_MODELS_DIR, "wildfire_scaler_predictive.pkl")
 
-FEATURE_COLS = ["evi", "lst", "wind", "humidity", "elevation"]
+FEATURE_COLS = ["evi", "air_temp_encoded", "wind", "humidity", "elevation"]
 LABEL_COL    = "fire"
 
 RF_PARAMS = dict(
@@ -75,10 +76,25 @@ def load_data() -> tuple[np.ndarray, np.ndarray]:
             except (KeyError, ValueError):
                 continue
 
-    arr = np.array(rows)
-    X   = arr[:, :-1]
-    y   = arr[:, -1].astype(int)
-    return X, y
+    arr    = np.array(rows)
+    X_all  = arr[:, :-1]
+    y_all  = arr[:, -1].astype(int)
+
+    # Enforce a balanced 50/50 split by downsampling the majority class.
+    # This prevents imbalanced checkpoint merges from skewing metrics.
+    rng       = np.random.default_rng(42)
+    fire_idx  = np.where(y_all == 1)[0]
+    nofire_idx = np.where(y_all == 0)[0]
+    n = min(len(fire_idx), len(nofire_idx))
+    fire_sel   = rng.choice(fire_idx,   size=n, replace=False)
+    nofire_sel = rng.choice(nofire_idx, size=n, replace=False)
+    sel = np.sort(np.concatenate([fire_sel, nofire_sel]))
+
+    if len(fire_idx) != len(nofire_idx):
+        print(f"  NOTE: dataset was imbalanced ({len(fire_idx)} fire, {len(nofire_idx)} no-fire). "
+              f"Downsampled to {n} per class.")
+
+    return X_all[sel], y_all[sel]
 
 
 def print_section(title: str):
@@ -187,6 +203,19 @@ def retrain():
     print(f"  Model  saved -> {_MODEL_OUT}")
     print(f"  Scaler saved -> {_SCALER_OUT}")
 
+    # Write metadata so live_evi.py can fetch the correct spring year at inference.
+    from ml.build_dataset import DATA_YEAR
+    metadata = {
+        "data_year":         DATA_YEAR,
+        "evi_spring_target": f"{DATA_YEAR}-05-01",
+        "feature_cols":      FEATURE_COLS,
+        "trained_at":        datetime.now().isoformat(timespec="seconds"),
+    }
+    metadata_path = os.path.join(_MODELS_DIR, "model_metadata.json")
+    with open(metadata_path, "w") as f:
+        json.dump(metadata, f, indent=2)
+    print(f"  Metadata saved -> {metadata_path}")
+
     # ── Charts ─────────────────────────────────────────────────────────
     print_section("GENERATING CHARTS")
     os.makedirs(_CHARTS_DIR, exist_ok=True)
@@ -250,11 +279,11 @@ def _generate_summary(acc, prec, rec, f1, auc, cm, importances, n_samples, n_fir
     ]
 
     descriptions = {
-        "lst":       "Air temperature (encoded as Kelvin-scale integer) — hot conditions dry out vegetation",
-        "humidity":  "Relative humidity % — low humidity makes ignition and spread easier",
-        "evi":       "Spring EVI (May 1 composite) — vegetation density as pre-season fuel load",
-        "wind":      "Wind speed in m/s — drives fire spread rate and direction",
-        "elevation": "Terrain elevation in meters — affects vegetation type and wind exposure",
+        "air_temp_encoded": "Air temperature encoded as (°C + 273.15) / 0.02 — hot conditions dry out vegetation",
+        "humidity":         "Relative humidity % — low humidity makes ignition and spread easier",
+        "evi":              "Spring EVI (May 1 composite) — vegetation density as pre-season fuel load",
+        "wind":             "Wind speed in m/s — drives fire spread rate and direction",
+        "elevation":        "Terrain elevation in meters — affects vegetation type and wind exposure",
     }
     for name, imp in sorted(zip(FEATURE_COLS, importances), key=lambda x: -x[1]):
         bar = "#" * int(imp * 20)
