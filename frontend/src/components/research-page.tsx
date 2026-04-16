@@ -296,6 +296,7 @@ function ResearchMapView() {
   const [features, setFeatures] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
   const [showHeatmap, setShowHeatmap] = useState(true);
+  const [activeLayer, setActiveLayer] = useState<"both" | "fires" | "zones">("both");
   const [showZones, setShowZones] = useState(true);
   const [zoneLevel, setZoneLevel] = useState<"counties" | "zip-codes" | "census-tracts" | "neighborhoods">("counties");
   const [selectedZone, setSelectedZone] = useState<string | null>(null);
@@ -451,24 +452,20 @@ function ResearchMapView() {
                 onPerimeterClick={(props) => setSelectedPerimeter(props)}
               />
             </Map>
-            {/* Selected zone info with shine border */}
+            {/* Selected zone — left in-map panel with controls */}
             {selectedZone && selectedZoneRisk && (
-              <div className="absolute top-3 right-3 z-10 max-w-[240px]">
-                <div className="relative rounded-xl overflow-hidden">
-                  {/* Animated shine border */}
-                  <div
-                    className="absolute inset-0 rounded-xl"
-                    style={{
-                      padding: 2,
-                      background: `conic-gradient(from var(--shine-angle, 0deg), #ef4444, #f97316, #eab308, #22c55e, #3b82f6, #8b5cf6, #ef4444)`,
-                      mask: "linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0)",
-                      maskComposite: "exclude",
-                      WebkitMaskComposite: "xor",
-                      animation: "shine-rotate 3s linear infinite",
-                    }}
-                  />
-                  <div className="relative bg-white/95 backdrop-blur-sm rounded-xl p-4 text-sm">
-                    <div className="flex items-center gap-2 mb-2">
+              <div className="absolute top-3 left-3 bottom-3 z-10 w-[280px] bg-white/95 backdrop-blur-sm rounded-xl shadow-lg border overflow-y-auto">
+                <div className="p-4 space-y-4 text-sm">
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Selected zone</div>
+                      <button
+                        onClick={() => { setSelectedZone(null); setSelectedZoneRisk(null); }}
+                        aria-label="Close"
+                        className="text-muted-foreground hover:text-foreground text-lg leading-none"
+                      >×</button>
+                    </div>
+                    <div className="flex items-center gap-2 mb-1">
                       <div
                         className="w-3 h-3 rounded-full shrink-0"
                         style={{
@@ -480,23 +477,53 @@ function ResearchMapView() {
                       />
                       <div className="font-bold text-base">{selectedZone}</div>
                     </div>
-                    <div className="font-semibold text-lg">
+                    <div className="font-semibold">
                       {Math.round(selectedZoneRisk.risk_score * 100)}% Risk
-                      <span className="text-sm font-normal text-muted-foreground ml-1">({selectedZoneRisk.label})</span>
+                      <span className="text-xs font-normal text-muted-foreground ml-1">({selectedZoneRisk.label})</span>
                     </div>
-                    <p className="text-xs text-muted-foreground mt-2">Adjust sliders below to see how conditions affect this zone's risk.</p>
-                    <button
-                      onClick={() => { setSelectedZone(null); setSelectedZoneRisk(null); }}
-                      className="mt-2 text-xs text-red-500 hover:text-red-700 font-medium"
-                    >
-                      Deselect Zone
-                    </button>
                   </div>
+
+                  <div className="space-y-2 pt-2 border-t">
+                    <div className="flex items-center justify-between">
+                      <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Model inputs</div>
+                      {useOverrides
+                        ? <Badge className="text-[9px] bg-red-100 text-red-700 border-red-200">Override</Badge>
+                        : <Badge variant="outline" className="text-[9px]">Live</Badge>}
+                    </div>
+                    <label className="flex items-center gap-2 text-xs cursor-pointer">
+                      <input type="checkbox" checked={useOverrides} onChange={(e) => setUseOverrides(e.target.checked)} className="accent-red-500" />
+                      Enable custom overrides
+                    </label>
+                  </div>
+
+                  <div className="space-y-3">
+                    <div>
+                      <label className="text-xs font-medium flex justify-between">🌿 Vegetation (EVI) <span className="text-muted-foreground">{eviSlider}</span></label>
+                      <input type="range" min={0} max={5000} step={100} value={eviSlider} onChange={(e) => { const v = Number(e.target.value); setEviSlider(v); updateZoneOverride("evi", v); }} disabled={!useOverrides} className="w-full mt-1 accent-green-500 disabled:opacity-40" />
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium flex justify-between">🌡️ Temperature <span className="text-muted-foreground">{lstCelsius}°C</span></label>
+                      <input type="range" min={13000} max={15500} step={50} value={lstSlider} onChange={(e) => { const v = Number(e.target.value); setLstSlider(v); updateZoneOverride("lst", v); }} disabled={!useOverrides} className="w-full mt-1 accent-orange-500 disabled:opacity-40" />
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium flex justify-between">💨 Wind <span className="text-muted-foreground">{windSlider} m/s</span></label>
+                      <input type="range" min={0} max={30} step={1} value={windSlider} onChange={(e) => { const v = Number(e.target.value); setWindSlider(v); updateZoneOverride("wind", v); }} disabled={!useOverrides} className="w-full mt-1 accent-blue-500 disabled:opacity-40" />
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium flex justify-between">⛰️ Elevation <span className="text-muted-foreground">{elevSlider}m</span></label>
+                      <input type="range" min={0} max={3000} step={50} value={elevSlider} onChange={(e) => { const v = Number(e.target.value); setElevSlider(v); updateZoneOverride("elevation", v); }} disabled={!useOverrides} className="w-full mt-1 accent-gray-500 disabled:opacity-40" />
+                    </div>
+                  </div>
+
+                  {useOverrides && zoneOverrides[selectedZone] && (
+                    <button
+                      onClick={() => setZoneOverrides((prev) => { const next = { ...prev }; delete next[selectedZone!]; return next; })}
+                      className="w-full text-xs text-red-500 hover:text-red-700 font-medium py-1.5 border border-red-200 rounded-md hover:bg-red-50"
+                    >
+                      Reset {selectedZone} to live data
+                    </button>
+                  )}
                 </div>
-                <style>{`
-                  @property --shine-angle { syntax: "<angle>"; initial-value: 0deg; inherits: false; }
-                  @keyframes shine-rotate { to { --shine-angle: 360deg; } }
-                `}</style>
               </div>
             )}
             {/* Selected fire perimeter info */}
@@ -573,6 +600,27 @@ function ResearchMapView() {
             <CardTitle className="text-sm">Layers & Risk Model</CardTitle>
           </CardHeader>
           <CardContent className="space-y-3">
+            <div>
+              <div className="text-xs text-muted-foreground mb-1.5">Layer focus</div>
+              <div className="grid grid-cols-3 gap-1 p-1 bg-muted rounded-md">
+                {(["both", "fires", "zones"] as const).map((opt) => (
+                  <button
+                    key={opt}
+                    type="button"
+                    onClick={() => {
+                      setActiveLayer(opt);
+                      setShowHeatmap(opt !== "zones");
+                      setShowPerimeters(opt !== "zones");
+                      setShowZones(opt !== "fires");
+                    }}
+                    className={`text-xs py-1 rounded ${activeLayer === opt ? "bg-white shadow-sm font-semibold" : "text-muted-foreground"}`}
+                  >
+                    {opt === "both" ? "Both" : opt === "fires" ? "Fires" : "Risk Zones"}
+                  </button>
+                ))}
+              </div>
+            </div>
+            <hr />
             <label className="flex items-center gap-2 text-sm cursor-pointer">
               <input type="checkbox" checked={showHeatmap} onChange={(e) => setShowHeatmap(e.target.checked)} className="accent-red-500" />
               FIRMS heatmap overlay
