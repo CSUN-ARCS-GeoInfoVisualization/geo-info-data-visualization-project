@@ -136,6 +136,9 @@ interface UnifiedOverlayProps {
   zoneRiskData: Record<string, { risk_score: number; label: string }>;
   zoneNameKey: string;
   onZoneClick?: (name: string, risk: { risk_score: number; label: string }) => void;
+  nifcPerimeters?: any;
+  showPerimeters?: boolean;
+  onPerimeterClick?: (props: any) => void;
 }
 
 function getRiskColor(score: number): [number, number, number, number] {
@@ -145,7 +148,7 @@ function getRiskColor(score: number): [number, number, number, number] {
   return [34, 197, 94, 70];
 }
 
-function UnifiedResearchOverlay({ features, showHeatmap, zoneGeoJson, zoneRiskData, zoneNameKey, onZoneClick }: UnifiedOverlayProps) {
+function UnifiedResearchOverlay({ features, showHeatmap, zoneGeoJson, zoneRiskData, zoneNameKey, onZoneClick, nifcPerimeters, showPerimeters, onPerimeterClick }: UnifiedOverlayProps) {
   const map = useMap();
   const overlayRef = useRef<GoogleMapsOverlay | null>(null);
 
@@ -212,7 +215,33 @@ function UnifiedResearchOverlay({ features, showHeatmap, zoneGeoJson, zoneRiskDa
       );
     }
 
-    // 3. FIRMS scatter points (top layer — visible dots)
+    // 3. NIFC fire perimeters (active fire boundaries)
+    if (showPerimeters && nifcPerimeters?.features?.length) {
+      layers.push(
+        new GeoJsonLayer({
+          id: "nifc-perimeters",
+          data: nifcPerimeters,
+          pickable: true,
+          stroked: true,
+          filled: true,
+          lineWidthMinPixels: 2,
+          getLineColor: [220, 38, 38, 220],
+          getFillColor: (f: any) => {
+            const pct = f.properties?.attr_PercentContained ?? 0;
+            return pct >= 100 ? [251, 146, 60, 50] : [220, 38, 38, 60];
+          },
+          getLineWidth: 2,
+          onClick: (info: any) => {
+            if (info.object && onPerimeterClick) {
+              onPerimeterClick(info.object.properties);
+            }
+          },
+          updateTriggers: { getFillColor: [] },
+        })
+      );
+    }
+
+    // 4. FIRMS scatter points (top layer — visible dots)
     if (features.length > 0) {
       layers.push(
         new ScatterplotLayer({
@@ -247,7 +276,7 @@ function UnifiedResearchOverlay({ features, showHeatmap, zoneGeoJson, zoneRiskDa
         overlayRef.current = null;
       }
     };
-  }, [map, features, showHeatmap, zoneGeoJson, zoneRiskData, zoneNameKey, onZoneClick]);
+  }, [map, features, showHeatmap, zoneGeoJson, zoneRiskData, zoneNameKey, onZoneClick, nifcPerimeters, showPerimeters, onPerimeterClick]);
 
   return null;
 }
@@ -268,11 +297,21 @@ function ResearchMapView() {
   const [selectedZoneRisk, setSelectedZoneRisk] = useState<{ risk_score: number; label: string } | null>(null);
   const [zoneGeoJson, setZoneGeoJson] = useState<any>(countyGeoJson);
   const [zoneRiskData, setZoneRiskData] = useState<Record<string, { risk_score: number; label: string }>>({});
+  const [showPerimeters, setShowPerimeters] = useState(true);
+  const [nifcPerimeters, setNifcPerimeters] = useState<any>(null);
+  const [selectedPerimeter, setSelectedPerimeter] = useState<any>(null);
   const [useOverrides, setUseOverrides] = useState(false);
   const [eviSlider, setEviSlider] = useState(500);
   const [lstSlider, setLstSlider] = useState(14000);
   const [windSlider, setWindSlider] = useState(7);
   const [elevSlider, setElevSlider] = useState(500);
+
+  useEffect(() => {
+    apiFetch("/fire-perimeters")
+      .then((r) => r.json())
+      .then((data) => { if (data?.features) setNifcPerimeters(data); })
+      .catch((e) => console.warn("NIFC perimeters load failed:", e));
+  }, []);
 
   const fetchData = useCallback(async () => {
     setLoading(true);
@@ -356,6 +395,9 @@ function ResearchMapView() {
                 zoneRiskData={zoneRiskData}
                 zoneNameKey={zoneNameKey}
                 onZoneClick={(name, risk) => { setSelectedZone(name); setSelectedZoneRisk(risk); }}
+                nifcPerimeters={nifcPerimeters}
+                showPerimeters={showPerimeters}
+                onPerimeterClick={(props) => setSelectedPerimeter(props)}
               />
             </Map>
             {/* Selected zone info with shine border */}
@@ -404,6 +446,32 @@ function ResearchMapView() {
                   @property --shine-angle { syntax: "<angle>"; initial-value: 0deg; inherits: false; }
                   @keyframes shine-rotate { to { --shine-angle: 360deg; } }
                 `}</style>
+              </div>
+            )}
+            {/* Selected fire perimeter info */}
+            {selectedPerimeter && (
+              <div className="absolute top-3 left-3 z-10 max-w-[260px] bg-white/95 backdrop-blur-sm rounded-xl p-4 shadow-lg text-sm border border-red-200">
+                <div className="flex items-center gap-2 mb-2">
+                  <Flame className="h-4 w-4 text-red-500" />
+                  <span className="font-bold">{selectedPerimeter.poly_IncidentName || "Unknown Fire"}</span>
+                </div>
+                <div className="space-y-1 text-xs text-muted-foreground">
+                  {selectedPerimeter.poly_GISAcres != null && (
+                    <p>Acres: <span className="font-medium text-foreground">{Math.round(selectedPerimeter.poly_GISAcres).toLocaleString()}</span></p>
+                  )}
+                  {selectedPerimeter.attr_PercentContained != null && (
+                    <p>Contained: <span className="font-medium text-foreground">{selectedPerimeter.attr_PercentContained}%</span></p>
+                  )}
+                  {selectedPerimeter.poly_FeatureCategory && (
+                    <p>Type: <span className="font-medium text-foreground">{selectedPerimeter.poly_FeatureCategory}</span></p>
+                  )}
+                </div>
+                <button
+                  onClick={() => setSelectedPerimeter(null)}
+                  className="mt-2 text-xs text-red-500 hover:text-red-700 font-medium"
+                >
+                  Dismiss
+                </button>
               </div>
             )}
             {/* Map overlay legend */}
@@ -461,6 +529,10 @@ function ResearchMapView() {
             <label className="flex items-center gap-2 text-sm cursor-pointer">
               <input type="checkbox" checked={showZones} onChange={(e) => setShowZones(e.target.checked)} className="accent-red-500" />
               Risk zones (click to select)
+            </label>
+            <label className="flex items-center gap-2 text-sm cursor-pointer">
+              <input type="checkbox" checked={showPerimeters} onChange={(e) => setShowPerimeters(e.target.checked)} className="accent-red-500" />
+              NIFC fire perimeters {nifcPerimeters?.features?.length ? <span className="text-xs text-muted-foreground">({nifcPerimeters.features.length})</span> : null}
             </label>
             {showZones && (
               <select value={zoneLevel} onChange={(e) => setZoneLevel(e.target.value as any)} className="text-xs border rounded px-2 py-1 w-full bg-background">

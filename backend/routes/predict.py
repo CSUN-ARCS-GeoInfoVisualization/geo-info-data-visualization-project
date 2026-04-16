@@ -140,3 +140,25 @@ def calfire_incidents():
     except Exception as e:
         logger.warning('CAL FIRE proxy failed: %s', e)
         return jsonify([]), 200
+
+
+@predict_bp.route('/fire-perimeters', methods=['GET'])
+def nifc_fire_perimeters():
+    """Proxy NIFC WFIGS fire perimeters API (CORS blocked from frontend)."""
+    try:
+        r = http_requests.get(
+            'https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services/'
+            'WFIGS_Interagency_Perimeters_YearToDate/FeatureServer/0/query',
+            params={
+                'where': "attr_POOState='US-CA'",
+                'outFields': 'poly_IncidentName,poly_GISAcres,poly_FeatureCategory,attr_PercentContained',
+                'f': 'geojson',
+            },
+            timeout=20,
+            headers={'User-Agent': 'FireScopeProxy/1.0'},
+        )
+        r.raise_for_status()
+        return jsonify(r.json())
+    except Exception as e:
+        logger.warning('NIFC perimeters proxy failed: %s', e)
+        return jsonify({'type': 'FeatureCollection', 'features': []}), 200
