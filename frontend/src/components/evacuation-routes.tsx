@@ -19,6 +19,7 @@ import { Map, Marker, useMap } from '@vis.gl/react-google-maps';
 import { GoogleMapsOverlay } from '@deck.gl/google-maps';
 import { IconLayer } from '@deck.gl/layers';
 import Supercluster from 'supercluster';
+import { apiFetch } from '../services/api';
 
 const evacuationZones = [
   {
@@ -146,7 +147,7 @@ function FireFacilitiesOverlay({ smallDots = false }: { smallDots?: boolean }) {
 
   // Load GeoJSON data
   useEffect(() => {
-    fetch('/Data/National_Shelter_System_Facilities.geojson')
+    apiFetch('/api/shelters?state=CA')
       .then(response => response.json())
       .then(data => {
         console.log('Loaded shelters:', data.features.length);
