@@ -154,7 +154,11 @@ def predict_custom():
     except (KeyError, TypeError, ValueError):
         return jsonify({'error': 'evi, lst, wind, elevation are required numbers'}), 400
     result = predict_from_features(evi=evi, lst=lst, wind=wind, elevation=elevation)
-    return jsonify({'risk_score': result['risk_score'], 'label': result['label']})
+    zone_name = data.get('zone_name')
+    resp = {'risk_score': result['risk_score'], 'label': result['label']}
+    if zone_name is not None:
+        resp['zone_name'] = zone_name
+    return jsonify(resp)
 
 
 @predict_bp.route('/fire-perimeters', methods=['GET'])
