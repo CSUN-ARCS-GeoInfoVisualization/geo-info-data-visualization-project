@@ -295,15 +295,15 @@ function ResearchMapView() {
   const [frpMin, setFrpMin] = useState(0);
   const [features, setFeatures] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
-  const [showHeatmap, setShowHeatmap] = useState(true);
-  const [activeLayer, setActiveLayer] = useState<"both" | "fires" | "zones">("both");
-  const [showZones, setShowZones] = useState(true);
+  const [activeLayer, setActiveLayer] = useState<"fires" | "zones">("zones");
+  const showHeatmap = activeLayer === "fires";
+  const showZones = activeLayer === "zones";
   const [zoneLevel, setZoneLevel] = useState<"counties" | "zip-codes" | "census-tracts" | "neighborhoods">("counties");
   const [selectedZone, setSelectedZone] = useState<string | null>(null);
   const [selectedZoneRisk, setSelectedZoneRisk] = useState<{ risk_score: number; label: string } | null>(null);
   const [zoneGeoJson, setZoneGeoJson] = useState<any>(countyGeoJson);
   const [zoneRiskData, setZoneRiskData] = useState<Record<string, { risk_score: number; label: string }>>({});
-  const [showPerimeters, setShowPerimeters] = useState(true);
+  const showPerimeters = activeLayer === "fires";
   const [nifcPerimeters, setNifcPerimeters] = useState<any>(null);
   const [selectedPerimeter, setSelectedPerimeter] = useState<any>(null);
   const [useOverrides, setUseOverrides] = useState(false);
@@ -452,80 +452,117 @@ function ResearchMapView() {
                 onPerimeterClick={(props) => setSelectedPerimeter(props)}
               />
             </Map>
-            {/* Selected zone — left in-map panel with controls */}
-            {selectedZone && selectedZoneRisk && (
-              <div className="absolute top-3 left-3 bottom-3 z-10 w-[280px] bg-white/95 backdrop-blur-sm rounded-xl shadow-lg border overflow-y-auto">
-                <div className="p-4 space-y-4 text-sm">
-                  <div>
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Selected zone</div>
+            {/* Always-on left in-map control navbar */}
+            <div className="absolute top-3 left-3 bottom-3 z-10 w-[280px] bg-white/95 backdrop-blur-sm rounded-xl shadow-lg border overflow-y-auto">
+              <div className="p-4 space-y-4 text-sm">
+                <div>
+                  <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">Map view</div>
+                  <div className="grid grid-cols-2 gap-1 p-1 bg-muted rounded-md">
+                    {(["fires", "zones"] as const).map((opt) => (
                       <button
-                        onClick={() => { setSelectedZone(null); setSelectedZoneRisk(null); }}
-                        aria-label="Close"
-                        className="text-muted-foreground hover:text-foreground text-lg leading-none"
-                      >×</button>
-                    </div>
-                    <div className="flex items-center gap-2 mb-1">
-                      <div
-                        className="w-3 h-3 rounded-full shrink-0"
-                        style={{
-                          backgroundColor: selectedZoneRisk.risk_score >= 0.75 ? "#991b1b"
-                            : selectedZoneRisk.risk_score >= 0.5 ? "#dc2626"
-                            : selectedZoneRisk.risk_score >= 0.25 ? "#eab308"
-                            : "#22c55e",
-                        }}
-                      />
-                      <div className="font-bold text-base">{selectedZone}</div>
-                    </div>
-                    <div className="font-semibold">
-                      {Math.round(selectedZoneRisk.risk_score * 100)}% Risk
-                      <span className="text-xs font-normal text-muted-foreground ml-1">({selectedZoneRisk.label})</span>
-                    </div>
+                        key={opt}
+                        type="button"
+                        onClick={() => { setActiveLayer(opt); if (opt === "fires") { setSelectedZone(null); setSelectedZoneRisk(null); } }}
+                        className={`text-xs py-1.5 rounded ${activeLayer === opt ? "bg-white shadow-sm font-semibold" : "text-muted-foreground"}`}
+                      >
+                        {opt === "fires" ? "Fire view" : "Risk zone view"}
+                      </button>
+                    ))}
                   </div>
-
-                  <div className="space-y-2 pt-2 border-t">
-                    <div className="flex items-center justify-between">
-                      <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Model inputs</div>
-                      {useOverrides
-                        ? <Badge className="text-[9px] bg-red-100 text-red-700 border-red-200">Override</Badge>
-                        : <Badge variant="outline" className="text-[9px]">Live</Badge>}
-                    </div>
-                    <label className="flex items-center gap-2 text-xs cursor-pointer">
-                      <input type="checkbox" checked={useOverrides} onChange={(e) => setUseOverrides(e.target.checked)} className="accent-red-500" />
-                      Enable custom overrides
-                    </label>
-                  </div>
-
-                  <div className="space-y-3">
-                    <div>
-                      <label className="text-xs font-medium flex justify-between">🌿 Vegetation (EVI) <span className="text-muted-foreground">{eviSlider}</span></label>
-                      <input type="range" min={0} max={5000} step={100} value={eviSlider} onChange={(e) => { const v = Number(e.target.value); setEviSlider(v); updateZoneOverride("evi", v); }} disabled={!useOverrides} className="w-full mt-1 accent-green-500 disabled:opacity-40" />
-                    </div>
-                    <div>
-                      <label className="text-xs font-medium flex justify-between">🌡️ Temperature <span className="text-muted-foreground">{lstCelsius}°C</span></label>
-                      <input type="range" min={13000} max={15500} step={50} value={lstSlider} onChange={(e) => { const v = Number(e.target.value); setLstSlider(v); updateZoneOverride("lst", v); }} disabled={!useOverrides} className="w-full mt-1 accent-orange-500 disabled:opacity-40" />
-                    </div>
-                    <div>
-                      <label className="text-xs font-medium flex justify-between">💨 Wind <span className="text-muted-foreground">{windSlider} m/s</span></label>
-                      <input type="range" min={0} max={30} step={1} value={windSlider} onChange={(e) => { const v = Number(e.target.value); setWindSlider(v); updateZoneOverride("wind", v); }} disabled={!useOverrides} className="w-full mt-1 accent-blue-500 disabled:opacity-40" />
-                    </div>
-                    <div>
-                      <label className="text-xs font-medium flex justify-between">⛰️ Elevation <span className="text-muted-foreground">{elevSlider}m</span></label>
-                      <input type="range" min={0} max={3000} step={50} value={elevSlider} onChange={(e) => { const v = Number(e.target.value); setElevSlider(v); updateZoneOverride("elevation", v); }} disabled={!useOverrides} className="w-full mt-1 accent-gray-500 disabled:opacity-40" />
-                    </div>
-                  </div>
-
-                  {useOverrides && zoneOverrides[selectedZone] && (
-                    <button
-                      onClick={() => setZoneOverrides((prev) => { const next = { ...prev }; delete next[selectedZone!]; return next; })}
-                      className="w-full text-xs text-red-500 hover:text-red-700 font-medium py-1.5 border border-red-200 rounded-md hover:bg-red-50"
-                    >
-                      Reset {selectedZone} to live data
-                    </button>
-                  )}
                 </div>
+
+                {activeLayer === "zones" && (
+                  <>
+                    <div>
+                      <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">Zone level</div>
+                      <select
+                        value={zoneLevel}
+                        onChange={(e) => { setZoneLevel(e.target.value as any); setSelectedZone(null); setSelectedZoneRisk(null); }}
+                        className="text-xs border rounded px-2 py-1.5 w-full bg-background"
+                      >
+                        <option value="counties">Counties (58)</option>
+                        <option value="zip-codes">ZIP Codes (1,769)</option>
+                        <option value="neighborhoods">Neighborhoods (1,521)</option>
+                        <option value="census-tracts">Census Tracts (8,041)</option>
+                      </select>
+                    </div>
+
+                    {selectedZone && selectedZoneRisk && (
+                      <div className="pt-3 border-t">
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Selected</div>
+                          <button
+                            onClick={() => { setSelectedZone(null); setSelectedZoneRisk(null); }}
+                            aria-label="Deselect"
+                            className="text-muted-foreground hover:text-foreground text-lg leading-none"
+                          >×</button>
+                        </div>
+                        <div className="flex items-center gap-2 mb-1">
+                          <div
+                            className="w-3 h-3 rounded-full shrink-0"
+                            style={{
+                              backgroundColor: selectedZoneRisk.risk_score >= 0.75 ? "#991b1b"
+                                : selectedZoneRisk.risk_score >= 0.5 ? "#dc2626"
+                                : selectedZoneRisk.risk_score >= 0.25 ? "#eab308"
+                                : "#22c55e",
+                            }}
+                          />
+                          <div className="font-bold text-sm">{selectedZone}</div>
+                        </div>
+                        <div className="font-semibold text-xs">
+                          {Math.round(selectedZoneRisk.risk_score * 100)}% Risk
+                          <span className="text-[10px] font-normal text-muted-foreground ml-1">({selectedZoneRisk.label})</span>
+                        </div>
+                      </div>
+                    )}
+
+                    <div className="pt-3 border-t space-y-2">
+                      <div className="flex items-center justify-between">
+                        <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Model inputs</div>
+                        {useOverrides
+                          ? <Badge className="text-[9px] bg-red-100 text-red-700 border-red-200">Override</Badge>
+                          : <Badge variant="outline" className="text-[9px]">Live</Badge>}
+                      </div>
+                      <label className="flex items-center gap-2 text-xs cursor-pointer">
+                        <input type="checkbox" checked={useOverrides} onChange={(e) => setUseOverrides(e.target.checked)} className="accent-red-500" />
+                        Enable custom overrides
+                      </label>
+                      {useOverrides && !selectedZone && (
+                        <p className="text-[10px] text-muted-foreground">Click a zone on the map to apply overrides.</p>
+                      )}
+                    </div>
+
+                    <div className="space-y-3">
+                      <div>
+                        <label className="text-xs font-medium flex justify-between">🌿 Vegetation (EVI) <span className="text-muted-foreground">{eviSlider}</span></label>
+                        <input type="range" min={0} max={5000} step={100} value={eviSlider} onChange={(e) => { const v = Number(e.target.value); setEviSlider(v); updateZoneOverride("evi", v); }} disabled={!useOverrides || !selectedZone} className="w-full mt-1 accent-green-500 disabled:opacity-40" />
+                      </div>
+                      <div>
+                        <label className="text-xs font-medium flex justify-between">🌡️ Temperature <span className="text-muted-foreground">{lstCelsius}°C</span></label>
+                        <input type="range" min={13000} max={15500} step={50} value={lstSlider} onChange={(e) => { const v = Number(e.target.value); setLstSlider(v); updateZoneOverride("lst", v); }} disabled={!useOverrides || !selectedZone} className="w-full mt-1 accent-orange-500 disabled:opacity-40" />
+                      </div>
+                      <div>
+                        <label className="text-xs font-medium flex justify-between">💨 Wind <span className="text-muted-foreground">{windSlider} m/s</span></label>
+                        <input type="range" min={0} max={30} step={1} value={windSlider} onChange={(e) => { const v = Number(e.target.value); setWindSlider(v); updateZoneOverride("wind", v); }} disabled={!useOverrides || !selectedZone} className="w-full mt-1 accent-blue-500 disabled:opacity-40" />
+                      </div>
+                      <div>
+                        <label className="text-xs font-medium flex justify-between">⛰️ Elevation <span className="text-muted-foreground">{elevSlider}m</span></label>
+                        <input type="range" min={0} max={3000} step={50} value={elevSlider} onChange={(e) => { const v = Number(e.target.value); setElevSlider(v); updateZoneOverride("elevation", v); }} disabled={!useOverrides || !selectedZone} className="w-full mt-1 accent-gray-500 disabled:opacity-40" />
+                      </div>
+                    </div>
+
+                    {useOverrides && selectedZone && zoneOverrides[selectedZone] && (
+                      <button
+                        onClick={() => setZoneOverrides((prev) => { const next = { ...prev }; delete next[selectedZone!]; return next; })}
+                        className="w-full text-xs text-red-500 hover:text-red-700 font-medium py-1.5 border border-red-200 rounded-md hover:bg-red-50"
+                      >
+                        Reset {selectedZone} to live data
+                      </button>
+                    )}
+                  </>
+                )}
               </div>
-            )}
+            </div>
             {/* Selected fire perimeter info */}
             {selectedPerimeter && (
               <div className="absolute top-3 left-3 z-10 max-w-[260px] bg-white/95 backdrop-blur-sm rounded-xl p-4 shadow-lg text-sm border border-red-200">
@@ -571,147 +608,6 @@ function ResearchMapView() {
             </div>
           </div>
 
-      {/* Controls below map */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-        {/* FIRMS Hotspot Filters */}
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm">FIRMS Hotspot Filters</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-4">
-            <div>
-              <label className="text-sm font-medium flex justify-between">Date Range <span className="text-muted-foreground">{days}d</span></label>
-              <input type="range" min={1} max={30} value={days} onChange={(e) => setDays(Number(e.target.value))} className="w-full mt-1 accent-red-500" />
-            </div>
-            <div>
-              <label className="text-sm font-medium flex justify-between">Min Confidence <span className="text-muted-foreground">{confidenceMin}%</span></label>
-              <input type="range" min={0} max={100} value={confidenceMin} onChange={(e) => setConfidenceMin(Number(e.target.value))} className="w-full mt-1 accent-red-500" />
-            </div>
-            <div>
-              <label className="text-sm font-medium flex justify-between">Min FRP <span className="text-muted-foreground">{frpMin} MW</span></label>
-              <input type="range" min={0} max={500} step={10} value={frpMin} onChange={(e) => setFrpMin(Number(e.target.value))} className="w-full mt-1 accent-red-500" />
-            </div>
-          </CardContent>
-        </Card>
-
-        {/* Layer Toggles + Risk Model */}
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm">Layers & Risk Model</CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div>
-              <div className="text-xs text-muted-foreground mb-1.5">Layer focus</div>
-              <div className="grid grid-cols-3 gap-1 p-1 bg-muted rounded-md">
-                {(["both", "fires", "zones"] as const).map((opt) => (
-                  <button
-                    key={opt}
-                    type="button"
-                    onClick={() => {
-                      setActiveLayer(opt);
-                      setShowHeatmap(opt !== "zones");
-                      setShowPerimeters(opt !== "zones");
-                      setShowZones(opt !== "fires");
-                    }}
-                    className={`text-xs py-1 rounded ${activeLayer === opt ? "bg-white shadow-sm font-semibold" : "text-muted-foreground"}`}
-                  >
-                    {opt === "both" ? "Both" : opt === "fires" ? "Fires" : "Risk Zones"}
-                  </button>
-                ))}
-              </div>
-            </div>
-            <hr />
-            <label className="flex items-center gap-2 text-sm cursor-pointer">
-              <input type="checkbox" checked={showHeatmap} onChange={(e) => setShowHeatmap(e.target.checked)} className="accent-red-500" />
-              FIRMS heatmap overlay
-            </label>
-            <label className="flex items-center gap-2 text-sm cursor-pointer">
-              <input type="checkbox" checked={showZones} onChange={(e) => setShowZones(e.target.checked)} className="accent-red-500" />
-              Risk zones (click to select)
-            </label>
-            <label className="flex items-center gap-2 text-sm cursor-pointer">
-              <input type="checkbox" checked={showPerimeters} onChange={(e) => setShowPerimeters(e.target.checked)} className="accent-red-500" />
-              NIFC fire perimeters {nifcPerimeters?.features?.length ? <span className="text-xs text-muted-foreground">({nifcPerimeters.features.length})</span> : null}
-            </label>
-            {showZones && (
-              <select value={zoneLevel} onChange={(e) => setZoneLevel(e.target.value as any)} className="text-xs border rounded px-2 py-1 w-full bg-background">
-                <option value="counties">Counties (58)</option>
-                <option value="zip-codes">ZIP Codes (1,769)</option>
-                <option value="neighborhoods">Neighborhoods (1,521)</option>
-                <option value="census-tracts">Census Tracts (8,041)</option>
-              </select>
-            )}
-            <hr className="my-2" />
-            <label className="flex items-center gap-2 text-sm cursor-pointer">
-              <input type="checkbox" checked={useOverrides} onChange={(e) => setUseOverrides(e.target.checked)} className="accent-red-500" />
-              Override model inputs with sliders
-            </label>
-            {!useOverrides && (
-              <p className="text-xs text-muted-foreground">Using interpolated live data. Toggle to experiment with custom conditions.</p>
-            )}
-          </CardContent>
-        </Card>
-
-        {/* Model Parameter Sliders */}
-        <Card>
-          <CardHeader className="pb-3">
-            <CardTitle className="text-sm">
-              Model Parameters
-              {!useOverrides && <Badge variant="outline" className="ml-2 text-[10px]">Live Data</Badge>}
-              {useOverrides && selectedZone && (
-                <Badge className="ml-2 text-[10px] bg-red-100 text-red-700 border-red-200">
-                  {selectedZone} {zoneOverrides[selectedZone] ? "(custom)" : "(default)"}
-                </Badge>
-              )}
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            <div>
-              <label className="text-xs font-medium flex justify-between">Vegetation (EVI) <span className="text-muted-foreground">{eviSlider}</span></label>
-              <input type="range" min={0} max={5000} step={100} value={eviSlider} onChange={(e) => {
-                const val = Number(e.target.value); setEviSlider(val); updateZoneOverride("evi", val);
-              }} disabled={!useOverrides} className="w-full mt-1 accent-green-500 disabled:opacity-40" />
-              <div className="flex justify-between text-[10px] text-muted-foreground"><span>Bare</span><span>Dense</span></div>
-            </div>
-            <div>
-              <label className="text-xs font-medium flex justify-between">Temperature <span className="text-muted-foreground">{lstCelsius}°C</span></label>
-              <input type="range" min={13000} max={15500} step={50} value={lstSlider} onChange={(e) => {
-                const val = Number(e.target.value); setLstSlider(val); updateZoneOverride("lst", val);
-              }} disabled={!useOverrides} className="w-full mt-1 accent-orange-500 disabled:opacity-40" />
-              <div className="flex justify-between text-[10px] text-muted-foreground"><span>-10°C</span><span>35°C</span></div>
-            </div>
-            <div>
-              <label className="text-xs font-medium flex justify-between">Wind Speed <span className="text-muted-foreground">{windSlider} m/s</span></label>
-              <input type="range" min={0} max={30} step={1} value={windSlider} onChange={(e) => {
-                const val = Number(e.target.value); setWindSlider(val); updateZoneOverride("wind", val);
-              }} disabled={!useOverrides} className="w-full mt-1 accent-blue-500 disabled:opacity-40" />
-              <div className="flex justify-between text-[10px] text-muted-foreground"><span>Calm</span><span>Storm</span></div>
-            </div>
-            <div>
-              <label className="text-xs font-medium flex justify-between">Elevation <span className="text-muted-foreground">{elevSlider}m</span></label>
-              <input type="range" min={0} max={3000} step={50} value={elevSlider} onChange={(e) => {
-                const val = Number(e.target.value); setElevSlider(val); updateZoneOverride("elevation", val);
-              }} disabled={!useOverrides} className="w-full mt-1 accent-gray-500 disabled:opacity-40" />
-              <div className="flex justify-between text-[10px] text-muted-foreground"><span>Sea level</span><span>Mountain</span></div>
-            </div>
-            {useOverrides && selectedZone && zoneOverrides[selectedZone] && (
-              <button
-                onClick={() => {
-                  setZoneOverrides((prev) => { const next = { ...prev }; delete next[selectedZone!]; return next; });
-                }}
-                className="w-full text-xs text-red-500 hover:text-red-700 font-medium py-1.5 border border-red-200 rounded-md hover:bg-red-50 transition-colors"
-              >
-                Reset {selectedZone} to live data
-              </button>
-            )}
-            {useOverrides && Object.keys(zoneOverrides).length > 0 && (
-              <p className="text-[10px] text-muted-foreground">
-                {Object.keys(zoneOverrides).length} zone(s) with custom overrides
-              </p>
-            )}
-          </CardContent>
-        </Card>
-      </div>
     </div>
   );
 }

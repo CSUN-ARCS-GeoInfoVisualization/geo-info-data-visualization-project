@@ -239,14 +239,6 @@ export function Dashboard({ onAddLocation }: DashboardProps) {
           />
         </div>
 
-        {locations.length === 0 && (
-          <p className="text-xs text-muted-foreground mt-3">
-            <button onClick={onAddLocation} className="text-red-500 hover:underline">
-              Add a location
-            </button>{" "}
-            to see live weather conditions.
-          </p>
-        )}
       </div>
 
       {/* Risk Zone & Active Fire Maps */}
