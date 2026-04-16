@@ -17,6 +17,8 @@ interface CalFireIncident {
   Longitude: number;
   AcresBurned: number | null;
   PercentContained: number | null;
+  source?: string;
+  started?: string;
 }
 
 interface SavedLocation { id: number; name: string; lat: number; lon: number; }
@@ -82,22 +84,26 @@ export function FirePerimetersOverlay() {
   const [selectedPerimeter, setSelectedPerimeter] = useState<any>(null);
 
   useEffect(() => {
-    apiFetch('/calfire/incidents?inactive=false')
+    apiFetch('/wildfire/recent')
       .then((r) => r.json())
       .then((data) => {
-        if (Array.isArray(data)) {
-          setFires(
-            data.filter(
-              (f: any) =>
-                f.Latitude &&
-                f.Longitude &&
-                f.IsActive !== false &&
-                Number(f.PercentContained ?? 0) < 100
-            )
-          );
-        }
+        const items = Array.isArray(data?.items) ? data.items : [];
+        setFires(
+          items
+            .filter((i: any) => i.lat != null && i.lon != null && (Number(i.contained ?? 0) < 100))
+            .map((i: any) => ({
+              Name: i.name,
+              County: i.county,
+              Latitude: i.lat,
+              Longitude: i.lon,
+              AcresBurned: i.acres ?? null,
+              PercentContained: i.contained ?? null,
+              source: i.source,
+              started: i.started,
+            }))
+        );
       })
-      .catch((e) => console.warn("CAL FIRE fetch failed:", e));
+      .catch((e) => console.warn('wildfire/recent fetch failed:', e));
   }, []);
 
   useEffect(() => {
@@ -142,11 +148,12 @@ export function FirePerimetersOverlay() {
           opacity: 0.9,
           stroked: true,
           filled: true,
-          radiusMinPixels: 6,
-          radiusMaxPixels: 20,
+          radiusMinPixels: 5,
+          radiusMaxPixels: 22,
           getPosition: (d: CalFireIncident) => [d.Longitude, d.Latitude],
-          getRadius: (d: CalFireIncident) => Math.sqrt(d.AcresBurned || 10) * 300,
-          getFillColor: [220, 38, 38, 200],
+          getRadius: (d: CalFireIncident) => Math.sqrt(Math.max(d.AcresBurned ?? 1, 1)) * 300,
+          getFillColor: (d: CalFireIncident) =>
+            d.source === 'CAL FIRE' ? [220, 38, 38, 220] : [249, 115, 22, 220],
           getLineColor: [255, 255, 255, 255],
           getLineWidth: 2,
           onClick: (info: any) => {
@@ -271,6 +278,7 @@ export function FirePerimetersOverlay() {
           {selected.County && <div><strong>County:</strong> {selected.County}</div>}
           {selected.AcresBurned != null && <div><strong>Acres:</strong> {selected.AcresBurned.toLocaleString()}</div>}
           {selected.PercentContained != null && <div><strong>Contained:</strong> {selected.PercentContained}%</div>}
+          {selected.source && <div style={{ color: '#6b7280', fontSize: 11, marginTop: 4 }}>Source: {selected.source}</div>}
         </div>
       )}
       {selectedPerimeter && (
