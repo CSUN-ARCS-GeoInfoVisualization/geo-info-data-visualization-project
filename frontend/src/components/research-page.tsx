@@ -4,7 +4,8 @@ import {
 } from "lucide-react";
 import { Map, useMap } from "@vis.gl/react-google-maps";
 import { GoogleMapsOverlay } from "@deck.gl/google-maps";
-import { ScatterplotLayer, GeoJsonLayer } from "@deck.gl/layers";
+import { GeoJsonLayer } from "@deck.gl/layers";
+import { firmsPointsToPolygonCollection } from "../utils/firmsPolygons";
 import { HeatmapLayer } from "@deck.gl/aggregation-layers";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Badge } from "./ui/badge";
@@ -241,25 +242,26 @@ function UnifiedResearchOverlay({ features, showHeatmap, zoneGeoJson, zoneRiskDa
       );
     }
 
-    // 4. FIRMS scatter points (top layer — visible dots)
+    // 4. FIRMS hotspot zones (polygon boundaries sized by FRP)
     if (features.length > 0) {
+      const polygonCollection = firmsPointsToPolygonCollection(features);
       layers.push(
-        new ScatterplotLayer({
-          id: "research-scatter",
-          data: features,
-          pickable: false, // Don't intercept clicks
-          opacity: 0.85, stroked: true, filled: true,
-          radiusMinPixels: 4, radiusMaxPixels: 25, lineWidthMinPixels: 1,
-          getPosition: (d: any) => d.geometry.coordinates,
-          getRadius: (d: any) => Math.sqrt(d.properties.frp || 1) * 400,
-          getFillColor: (d: any) => {
-            const c = d.properties.confidence || 50;
-            if (c >= 80) return [220, 38, 38, 200];
-            if (c >= 60) return [234, 88, 12, 200];
-            if (c >= 40) return [234, 179, 8, 200];
-            return [34, 197, 94, 200];
+        new GeoJsonLayer({
+          id: "firms-zones",
+          data: polygonCollection,
+          pickable: false,
+          stroked: true,
+          filled: true,
+          lineWidthMinPixels: 1,
+          getLineColor: [255, 255, 255, 180],
+          getFillColor: (f: any) => {
+            const c = f.properties?.confidence || 50;
+            if (c >= 80) return [220, 38, 38, 160];
+            if (c >= 60) return [234, 88, 12, 140];
+            if (c >= 40) return [234, 179, 8, 120];
+            return [34, 197, 94, 100];
           },
-          getLineColor: [255, 255, 255, 200], getLineWidth: 1,
+          getLineWidth: 1,
           updateTriggers: { getFillColor: [features.length] },
         })
       );
