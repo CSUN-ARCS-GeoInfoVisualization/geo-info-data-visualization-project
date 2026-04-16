@@ -354,10 +354,15 @@ function FireFacilitiesOverlay({ smallDots = false }: { smallDots?: boolean }) {
               } else {
                 // Show tooltip for individual shelter
                 const props = info.object.properties;
+                const coords = info.object.geometry?.coordinates;
                 setTooltip({
                   x: info.x,
                   y: info.y,
-                  content: props
+                  content: {
+                    ...props,
+                    longitude: coords?.[0],
+                    latitude: coords?.[1],
+                  }
                 });
               }
             }
@@ -450,6 +455,27 @@ function FireFacilitiesOverlay({ smallDots = false }: { smallDots?: boolean }) {
               <div style={{color: '#16a34a'}}>⚡ Generator On-Site</div>
             )}
           </div>
+          {tooltip.content.latitude != null && tooltip.content.longitude != null && (
+            <a
+              href={`https://www.google.com/maps/dir/?api=1&destination=${tooltip.content.latitude},${tooltip.content.longitude}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                display: 'block',
+                marginTop: 10,
+                textAlign: 'center',
+                background: '#2563eb',
+                color: 'white',
+                padding: '8px 12px',
+                borderRadius: 6,
+                fontSize: 12,
+                fontWeight: 600,
+                textDecoration: 'none',
+              }}
+            >
+              Get Directions (Google Maps)
+            </a>
+          )}
         </div>
       )}
 

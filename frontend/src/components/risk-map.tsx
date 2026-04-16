@@ -87,7 +87,7 @@ async function fetchCalFireIncidents(): Promise<FireIncident[]> {
     if (!res.ok) return [];
     const data = await res.json();
     return (data as any[])
-      .filter((d: any) => d.Latitude && d.Longitude && (d.PercentContained ?? 0) < 100)
+      .filter((d: any) => d.Latitude && d.Longitude && d.IsActive !== false && Number(d.PercentContained ?? 0) < 100)
       .map((d: any, i: number) => ({
         id: d.UniqueId || String(i),
         name: d.Name || "Unknown Fire",
