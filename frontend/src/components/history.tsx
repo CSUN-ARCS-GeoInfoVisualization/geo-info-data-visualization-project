@@ -426,10 +426,10 @@ export function History() {
   const selectedYears = [selectedYear]; // kept as an array locally so the existing overlay contract still works
   const [mapTypeId, setMapTypeId] = useState<'roadmap' | 'satellite' | 'hybrid' | 'terrain'>('roadmap');
   const [searchQuery, setSearchQuery] = useState("");
-  const [opacity, setOpacity] = useState(60);
-  const [showPerimeters, setShowPerimeters] = useState(true);
-  const [showDINS, setShowDINS] = useState(false); // DINS damage layer toggle
-  const [dinsRadius, setDinsRadius] = useState(4); // DINS dot base radius
+  // Display controls removed — perimeters are always shown at full opacity,
+  // structure damage (DINS) is intentionally not rendered on the history map.
+  const opacity = 100;
+  const showPerimeters = true;
   const [fireData, setFireData] = useState<any>(null); // Merged features for selected years
   const [availableYears, setAvailableYears] = useState<number[]>([]); // All years from backend (1878-current)
   const [showYearDropdown, setShowYearDropdown] = useState(false);
@@ -675,158 +675,46 @@ export function History() {
                   gestureHandling="greedy"
                   disableDefaultUI={false}
                 >
-                  {/* Fire Perimeters Layer */}
+                  {/* Fire Perimeters Layer — rendered last so it sits on top of the map tiles */}
                   <HistoricalFirePerimetersOverlay
                     enabled={showPerimeters}
                     opacity={opacity}
                     selectedYears={selectedYears}
                   />
-
-                  {/* DINS Damage Layer */}
-                  <DINSDamageOverlay
-                    enabled={showDINS}
-                    opacity={1}
-                    radius={dinsRadius}
-                  />
                 </GoogleMap>
               </div>
 
               {/* Map Legend */}
-              {(showPerimeters || showDINS) && (
               <div className="mt-4 bg-gray-50 rounded-lg p-4">
-                {showPerimeters && (
-                  <>
-                    <h4 className="font-semibold text-base mb-3">Fire Size Legend</h4>
-                    <div className="grid grid-cols-2 md:grid-cols-2 gap-3 text-base">
-                      <div className="flex items-center gap-2">
-                        <div className="w-6 h-4 border border-white rounded" style={{ backgroundColor: 'rgb(234, 179, 8)' }}></div>
-                        <span>&lt;100 acres</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="w-6 h-4 border border-white rounded" style={{ backgroundColor: 'rgb(249, 115, 22)' }}></div>
-                        <span>100–1k acres</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="w-6 h-4 border border-white rounded" style={{ backgroundColor: 'rgb(220, 38, 38)' }}></div>
-                        <span>1k–10k acres</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="w-6 h-4 border border-white rounded" style={{ backgroundColor: 'rgb(139, 0, 0)' }}></div>
-                        <span>10k+ acres</span>
-                      </div>
-                    </div>
-                    <p className="text-sm text-muted-foreground mt-3">
-                       Hover for fire name. Click for details. Cyan outline = hovered fire.
-                    </p>
-                  </>
-                )}
-
-                {/* DINS Damage Legend - show when enabled */}
-                {showDINS && (
-                  <div className="mt-4 pt-4 border-t">
-                    <h4 className="font-semibold text-base mb-3">Structure Damage Levels</h4>
-                    <div className="grid grid-cols-2 gap-2 text-sm">
-                      <div className="flex items-center gap-2">
-                        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: 'rgb(220, 38, 38)' }}></div>
-                        <span>Destroyed (&gt;50%)</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: 'rgb(249, 115, 22)' }}></div>
-                        <span>Major (26-50%)</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: 'rgb(234, 179, 8)' }}></div>
-                        <span>Minor (11-25%)</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: 'rgb(34, 197, 94)' }}></div>
-                        <span>Affected (&lt;10%)</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: 'rgb(59, 130, 246)' }}></div>
-                        <span>No Damage</span>
-                      </div>
-                    </div>
-                    <p className="text-xs text-muted-foreground mt-2">
-                       Hover structure for details. Data: CAL FIRE DINS inspections
-                    </p>
+                <h4 className="font-semibold text-base mb-3">Fire Size Legend</h4>
+                <div className="grid grid-cols-2 md:grid-cols-2 gap-3 text-base">
+                  <div className="flex items-center gap-2">
+                    <div className="w-6 h-4 border border-white rounded" style={{ backgroundColor: 'rgb(234, 179, 8)' }}></div>
+                    <span>&lt;100 acres</span>
                   </div>
-                )}
+                  <div className="flex items-center gap-2">
+                    <div className="w-6 h-4 border border-white rounded" style={{ backgroundColor: 'rgb(249, 115, 22)' }}></div>
+                    <span>100–1k acres</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-6 h-4 border border-white rounded" style={{ backgroundColor: 'rgb(220, 38, 38)' }}></div>
+                    <span>1k–10k acres</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-6 h-4 border border-white rounded" style={{ backgroundColor: 'rgb(139, 0, 0)' }}></div>
+                    <span>10k+ acres</span>
+                  </div>
+                </div>
+                <p className="text-sm text-muted-foreground mt-3">
+                  Hover for fire name. Click for details. Cyan outline = hovered fire.
+                </p>
               </div>
-              )}
             </CardContent>
           </Card>
         </div>
 
         {/* Sidebar */}
         <div className="space-y-4">
-          {/* Display Controls */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Filter className="h-5 w-5" />
-                Display Controls
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Flame className="h-4 w-4" />
-                    <span className="text-sm">Show Perimeters</span>
-                  </div>
-                  <Switch
-                    checked={showPerimeters}
-                    onCheckedChange={setShowPerimeters}
-                  />
-                </div>
-                {showPerimeters && (
-                  <div className="ml-6">
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <span>Opacity</span>
-                      <Slider
-                        value={[opacity]}
-                        onValueChange={(value) => setOpacity(value[0])}
-                        max={100}
-                        step={10}
-                        className="flex-1"
-                      />
-                      <span>{opacity}%</span>
-                    </div>
-                  </div>
-                )}
-
-                {/* DINS Damage Layer Toggle */}
-                <div className="flex items-center justify-between pt-2 border-t">
-                  <div className="flex items-center gap-2">
-                    <AlertTriangle className="h-4 w-4 text-red-500" />
-                    <span className="text-sm">Show Structure Damage</span>
-                  </div>
-                  <Switch
-                    checked={showDINS}
-                    onCheckedChange={setShowDINS}
-                  />
-                </div>
-                {showDINS && (
-                  <div className="ml-6">
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <span>Radius</span>
-                      <Slider
-                        value={[dinsRadius]}
-                        onValueChange={(value) => setDinsRadius(value[0])}
-                        min={1}
-                        max={20}
-                        step={1}
-                        className="flex-1"
-                      />
-                      <span>{dinsRadius}px</span>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-
           {/* Quick Stats */}
           <Card>
             <CardHeader>
