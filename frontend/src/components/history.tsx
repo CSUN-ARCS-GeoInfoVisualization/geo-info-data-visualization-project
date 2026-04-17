@@ -26,123 +26,80 @@ import { Map as GoogleMap, useMap } from '@vis.gl/react-google-maps';
 import { GoogleMapsOverlay } from '@deck.gl/google-maps';
 import { GeoJsonLayer, ScatterplotLayer } from '@deck.gl/layers';
 
-// Fire Perimeters Overlay Component
-function HistoricalFirePerimetersOverlay({
-  enabled,
-  opacity,
-  selectedYears
-}: {
-  enabled: boolean;
-  opacity: number;
-  selectedYears: number[];
-}) {
+// Historical fire perimeters overlay — mirrors the research page's
+// `UnifiedResearchOverlay` pattern: a single GoogleMapsOverlay per map,
+// data passed in as a prop (no internal fetch), layers rebuilt in one effect.
+function HistoricalFirePerimetersOverlay({ fireData }: { fireData: any }) {
   const map = useMap();
-  // Ref so the overlay is created once — no new WebGL context on re-renders
   const overlayRef = useRef<GoogleMapsOverlay | null>(null);
-  const [fireData, setFireData] = useState<any>(null);
   const [selectedFire, setSelectedFire] = useState<any>(null);
   const [hoveredFire, setHoveredFire] = useState<any>(null);
 
-  // Load fire perimeter GeoJSON — runs once
-  useEffect(() => {
-    apiFetch('/history/perimeters?year_from=2000&min_acres=100')
-      .then(response => response.json())
-      .then(data => {
-        console.log('Loaded fire perimeters:', data.features.length);
-        setFireData(data);
-      })
-      .catch(error => {
-        console.error('Error loading fire perimeters:', error);
-      });
-  }, []);
-
-  // Create the overlay ONCE when the map is ready, destroy only on unmount
   useEffect(() => {
     if (!map) return;
-    const deckOverlay = new GoogleMapsOverlay({ layers: [] });
+
+    if (overlayRef.current) {
+      overlayRef.current.setMap(null);
+      overlayRef.current.finalize();
+    }
+
+    const layers: any[] = [];
+    const features = Array.isArray(fireData?.features) ? fireData.features : [];
+
+    if (features.length > 0) {
+      const colorForAcres = (acres: number): [number, number, number, number] => {
+        if (acres >= 10000) return [139, 0, 0, 240];
+        if (acres >= 1000) return [220, 38, 38, 240];
+        if (acres >= 100) return [249, 115, 22, 240];
+        return [234, 179, 8, 240];
+      };
+      layers.push(
+        new GeoJsonLayer({
+          id: 'historical-fire-perimeters',
+          data: { type: 'FeatureCollection', features },
+          pickable: true,
+          stroked: true,
+          filled: true,
+          lineWidthMinPixels: 3,
+          getLineWidth: 3,
+          getLineColor: (f: any) => {
+            if (hoveredFire && f.properties.OBJECTID === hoveredFire.OBJECTID) {
+              return [0, 255, 255, 255];
+            }
+            return colorForAcres(f.properties.GIS_ACRES || 0);
+          },
+          getFillColor: (f: any) => colorForAcres(f.properties.GIS_ACRES || 0),
+          onHover: (info: any) => setHoveredFire(info.object ? info.object.properties : null),
+          onClick: (info: any) => { if (info.object) setSelectedFire(info.object.properties); },
+          updateTriggers: {
+            getFillColor: [features.length],
+            getLineColor: [features.length, hoveredFire?.OBJECTID],
+          },
+        }),
+      );
+    }
+
+    const deckOverlay = new GoogleMapsOverlay({ layers });
     deckOverlay.setMap(map);
     overlayRef.current = deckOverlay;
+
     return () => {
       deckOverlay.setMap(null);
       deckOverlay.finalize();
       overlayRef.current = null;
     };
-  }, [map]);
+  }, [map, fireData, hoveredFire]);
 
-  // Update layers via setProps — reuses the same WebGL context, no leak
-  useEffect(() => {
-    if (!overlayRef.current) return;
-
-    if (!fireData || !enabled) {
-      overlayRef.current.setProps({ layers: [] });
-      return;
-    }
-
-    let filteredData = fireData;
-    if (selectedYears.length > 0 && selectedYears.length < fireData.features.length) {
-      filteredData = {
-        ...fireData,
-        features: fireData.features.filter((f: any) => selectedYears.includes(f.properties.YEAR_))
-      };
-    }
-
-    overlayRef.current.setProps({
-      layers: [
-        new GeoJsonLayer({
-          id: 'historical-fire-perimeters',
-          data: filteredData,
-          pickable: true,
-          stroked: true,
-          filled: true,
-          autoHighlight: true,
-
-          // Match the live fire-perimeter styling used elsewhere on the site:
-          // colored fill AND matching stroke so sub-pixel polygons stay visible
-          // as tier-colored dots at CA-wide zoom. Tiers here are by acreage
-          // since historic fires are all final (100% contained).
-          getFillColor: (d: any) => {
-            const acres = d.properties.GIS_ACRES || 0;
-            const a = Math.min(255, Math.round(opacity * 2.4));
-            if (acres >= 10000) return [139, 0, 0, a];
-            if (acres >= 1000)  return [220, 38, 38, a];
-            if (acres >= 100)   return [249, 115, 22, a];
-            return [234, 179, 8, a];
-          },
-
-          getLineColor: (d: any) => {
-            if (hoveredFire && d.properties.OBJECTID === hoveredFire.OBJECTID) {
-              return [0, 255, 255, 255];
-            }
-            const acres = d.properties.GIS_ACRES || 0;
-            if (acres >= 10000) return [139, 0, 0, 255];
-            if (acres >= 1000)  return [220, 38, 38, 255];
-            if (acres >= 100)   return [249, 115, 22, 255];
-            return [234, 179, 8, 255];
-          },
-
-          getLineWidth: (d: any) => {
-            if (hoveredFire && d.properties.OBJECTID === hoveredFire.OBJECTID) return 4;
-            return 3;
-          },
-          lineWidthMinPixels: 3,
-
-          onHover: (info: any) => {
-            setHoveredFire(info.object ? info.object.properties : null);
-          },
-
-          onClick: (info: any) => {
-            if (info.object) setSelectedFire(info.object.properties);
-          },
-
-          updateTriggers: {
-            getFillColor: [opacity, selectedYears],
-            getLineColor: [hoveredFire],
-            getLineWidth: [hoveredFire]
-          }
-        })
-      ]
+  /* -----------------------------------------------------------------------
+     Legacy props-based setter, kept commented so nothing else references it.
+     Replaced with the single-effect pattern above that mirrors research-page.
+  ----------------------------------------------------------------------- */
+  if (false) {
+    // @ts-ignore
+    (overlayRef.current as any)?.setProps({
+      layers: [],
     });
-  }, [fireData, enabled, opacity, selectedYears, hoveredFire]);
+  }
 
   // Render tooltips
   return (
@@ -676,11 +633,7 @@ export function History() {
                   disableDefaultUI={false}
                 >
                   {/* Fire Perimeters Layer — rendered last so it sits on top of the map tiles */}
-                  <HistoricalFirePerimetersOverlay
-                    enabled={showPerimeters}
-                    opacity={opacity}
-                    selectedYears={selectedYears}
-                  />
+                  <HistoricalFirePerimetersOverlay fireData={fireData} />
                 </GoogleMap>
               </div>
 
