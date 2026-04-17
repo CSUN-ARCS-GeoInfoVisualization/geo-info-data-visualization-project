@@ -490,6 +490,7 @@ function ResearchMapView() {
                 zoneRiskData={zoneRiskData}
                 zoneNameKey={zoneNameKey}
                 onZoneClick={(name, risk) => {
+                  setSelectedPerimeter(null); // picking a zone dismisses the selected fire
                   setSelectedZone(name);
                   setSelectedZoneRisk(risk);
                   setUseOverrides(true);
@@ -503,7 +504,12 @@ function ResearchMapView() {
                 }}
                 nifcPerimeters={nifcPerimeters}
                 showPerimeters={showPerimeters}
-                onPerimeterClick={(props) => setSelectedPerimeter(props)}
+                onPerimeterClick={(props) => {
+                  // picking a fire dismisses the selected zone (mixed view)
+                  setSelectedZone(null);
+                  setSelectedZoneRisk(null);
+                  setSelectedPerimeter(props);
+                }}
               />
             </Map>
             {/* Always-on left in-map control navbar */}
@@ -527,7 +533,13 @@ function ResearchMapView() {
                       <button
                         key={opt}
                         type="button"
-                        onClick={() => { setActiveLayer(opt); if (opt === "fires") { setSelectedZone(null); setSelectedZoneRisk(null); } }}
+                        onClick={() => {
+                          setActiveLayer(opt);
+                          // Every view switch starts with a clean sidebar
+                          setSelectedPerimeter(null);
+                          setSelectedZone(null);
+                          setSelectedZoneRisk(null);
+                        }}
                         className={`text-xs py-1.5 rounded ${activeLayer === opt ? "bg-white shadow-sm font-semibold" : "text-muted-foreground"}`}
                       >
                         {opt === "fires" ? "Fire" : opt === "zones" ? "Risk zone" : "Mixed"}
@@ -538,14 +550,7 @@ function ResearchMapView() {
 
                 {activeLayer !== "zones" && selectedPerimeter && (
                   <div className="pt-3 border-t">
-                    <div className="flex items-center justify-between mb-2">
-                      <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Selected fire</div>
-                      <button
-                        onClick={() => setSelectedPerimeter(null)}
-                        aria-label="Close"
-                        className="text-muted-foreground hover:text-foreground text-lg leading-none"
-                      >×</button>
-                    </div>
+                    <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-2">Selected fire</div>
                     <div className="flex items-center gap-2 mb-2">
                       <Flame className="h-4 w-4 text-red-500 shrink-0" />
                       <div className="font-bold text-sm">
