@@ -201,13 +201,37 @@ export function SettingsPage({ defaultTab = "profile" }: SettingsPageProps) {
                 <div className="divide-y">
                   <AboutItem
                     name="CAL FIRE Incidents API"
-                    description="California Department of Forestry and Fire Protection active incident data including fire name, county, acres burned, and percent contained."
+                    description="California Department of Forestry and Fire Protection active incident data — fire name, county, acres, percent contained. Used on the Active Fires map and as the containment-enrichment source when NIFC perimeters have null containment."
                     badge="State agency"
                     badgeColor="bg-orange-100 text-orange-700"
                   />
                   <AboutItem
-                    name="NIFC WFIGS Interagency Perimeters"
+                    name="NIFC WFIGS Interagency Perimeters (YearToDate)"
                     description="National Interagency Fire Center year-to-date California fire perimeter polygons with incident names, acreage, and containment status. The Active Fires map only renders perimeters where containment is below 100% — fully contained fires are hidden."
+                    badge="Federal"
+                    badgeColor="bg-amber-100 text-amber-700"
+                  />
+                  <AboutItem
+                    name="NIFC WFIGS Incident Locations (YearToDate)"
+                    description="Point-level WFIGS incident records with IRWIN IDs and PercentContained. Used to backfill containment percentages onto perimeter polygons that the perimeter layer reports as null, so the 4-tier color coding can actually kick in."
+                    badge="Federal"
+                    badgeColor="bg-amber-100 text-amber-700"
+                  />
+                  <AboutItem
+                    name="CAL FIRE Historic Fire Perimeters (1878–present)"
+                    description="California's authoritative fire-perimeter archive — 22k+ polygons back to 1878. Powers the History page's year-by-year selector; fetched server-side via /api/history/perimeters?year=N with a 1-hour cache. Filter: GIS_ACRES ≥ 100."
+                    badge="State agency"
+                    badgeColor="bg-orange-100 text-orange-700"
+                  />
+                  <AboutItem
+                    name="CAL FIRE DINS (Damage Inspection)"
+                    description="Post-fire structure damage inspection records available via /api/history/dins. Endpoint shipped; UI layer is currently disabled on the History page."
+                    badge="State agency"
+                    badgeColor="bg-orange-100 text-orange-700"
+                  />
+                  <AboutItem
+                    name="FEMA National Shelter System"
+                    description="Backend proxy /api/shelters queries FEMA's NSS (FEMA_NSS + OpenShelters fallback) for active California emergency shelters. Populates the Evacuation Routes map shelter clusters when FEMA has an open event for CA; otherwise the feed is intentionally empty."
                     badge="Federal"
                     badgeColor="bg-amber-100 text-amber-700"
                   />
@@ -266,10 +290,16 @@ export function SettingsPage({ defaultTab = "profile" }: SettingsPageProps) {
                 </div>
                 <div className="divide-y">
                   <AboutItem
-                    name="scikit-learn Risk Model"
-                    description="Logistic regression model trained on historical California fire data. Predicts wildfire risk scores from four features: vegetation index (EVI), land surface temperature (LST), wind speed, and elevation."
+                    name="scikit-learn Risk Model (active)"
+                    description="Logistic-regression classifier that predicts wildfire risk from four live inputs: EVI (vegetation), LST (land-surface temperature), wind speed, and elevation. Drives the 3-tier risk-zone coloring (green / yellow / red) across Dashboard, Risk Map, and Research views. Per-zone overrides are applied through POST /api/predict-custom."
                     badge="ML model"
                     badgeColor="bg-red-100 text-red-700"
+                  />
+                  <AboutItem
+                    name="ActiveFireSnapshot Pipeline (planned retrain)"
+                    description="Tracking schema logged for the next model retrain (option 3): Date, Latitude, Longitude, EVI, TA (thermal anomalies), LST, Wind, Elevation, Fire (binary outcome), NDVI (vegetation cover). Researcher sliders already expose the full feature set so the snapshot-capture job can consume them directly."
+                    badge="Pipeline"
+                    badgeColor="bg-slate-100 text-slate-700"
                   />
                 </div>
               </div>
