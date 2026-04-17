@@ -19,6 +19,7 @@ import { Badge } from "./ui/badge";
 import { Input } from "./ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Slider } from "./ui/slider";
+import { apiFetch } from "../services/api";
 import { Switch } from "./ui/switch";
 import { Checkbox } from "./ui/checkbox";
 import { Map as GoogleMap, useMap } from '@vis.gl/react-google-maps';
@@ -44,7 +45,7 @@ function HistoricalFirePerimetersOverlay({
 
   // Load fire perimeter GeoJSON — runs once
   useEffect(() => {
-    fetch('/Data/California_Fire_Perimeters.geojson')
+    apiFetch('/history/perimeters?year_from=2000&min_acres=100')
       .then(response => response.json())
       .then(data => {
         console.log('Loaded fire perimeters:', data.features.length);
@@ -239,7 +240,7 @@ function DINSDamageOverlay({
 
   // Load DINS data — runs once
   useEffect(() => {
-    fetch('/Data/POSTFIRE_MASTER_DATA.geojson')
+    apiFetch('/history/dins')
       .then(response => response.json())
       .then(data => {
         console.log('Loaded DINS structures:', data.features?.length || 0);
@@ -432,7 +433,7 @@ export function History() {
 
   useEffect(() => {
     // Load fire data to calculate stats
-    fetch('/Data/California_Fire_Perimeters.geojson')
+    apiFetch('/history/perimeters?year_from=2000&min_acres=100')
       .then(response => response.json())
       .then(data => {
         setFireData(data); // Store full dataset
