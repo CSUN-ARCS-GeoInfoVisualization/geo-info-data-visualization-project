@@ -206,20 +206,8 @@ export function SettingsPage({ defaultTab = "profile" }: SettingsPageProps) {
                     badgeColor="bg-orange-100 text-orange-700"
                   />
                   <AboutItem
-                    name="NIFC WFIGS Incident Locations (ArcGIS)"
-                    description="National Interagency Fire Center Wildland Fire Interagency Geospatial Services — year-to-date incident points with IRWIN IDs, discovery time, daily acres, and containment. Primary source for tiny or brand-new fires that haven't made it to CAL FIRE's feed yet."
-                    badge="Federal"
-                    badgeColor="bg-amber-100 text-amber-700"
-                  />
-                  <AboutItem
                     name="NIFC WFIGS Interagency Perimeters"
-                    description="Year-to-date fire perimeter polygons with incident names, acreage, and containment status — used as a secondary catch for incidents whose points layer record is delayed."
-                    badge="Federal"
-                    badgeColor="bg-amber-100 text-amber-700"
-                  />
-                  <AboutItem
-                    name="InciWeb"
-                    description="USDA Forest Service incident information system. RSS feed of active wildfire incidents with geotagged locations — tertiary source for incidents missing from the ArcGIS feeds."
+                    description="National Interagency Fire Center year-to-date California fire perimeter polygons with incident names, acreage, and containment status. The Active Fires map only renders perimeters where containment is below 100% — fully contained fires are hidden."
                     badge="Federal"
                     badgeColor="bg-amber-100 text-amber-700"
                   />

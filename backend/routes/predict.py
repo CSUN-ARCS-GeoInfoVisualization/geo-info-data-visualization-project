@@ -169,8 +169,9 @@ def nifc_fire_perimeters():
             'https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services/'
             'WFIGS_Interagency_Perimeters_YearToDate/FeatureServer/0/query',
             params={
-                'where': "attr_POOState='US-CA'",
-                'outFields': 'poly_IncidentName,poly_GISAcres,poly_FeatureCategory,attr_PercentContained',
+                # California only + drop fully-contained fires at the source
+                'where': "attr_POOState='US-CA' AND (attr_PercentContained IS NULL OR attr_PercentContained < 100)",
+                'outFields': 'poly_IncidentName,poly_GISAcres,poly_FeatureCategory,attr_PercentContained,attr_FireDiscoveryDateTime',
                 'f': 'geojson',
             },
             timeout=20,
