@@ -69,32 +69,26 @@ export function FirePerimetersOverlay() {
 
   useEffect(() => {
     apiFetch('/fire-perimeters')
-      .then((r) => r.json())
-      .then((data) => {
-        if (!data?.features) return;
-        const cutoff = Date.now() - 30 * 24 * 3600 * 1000;
-        const filtered = {
-          ...data,
-          features: data.features.filter((f: any) => {
-            const p = f.properties || {};
-            // Active only: drop fully-contained fires
-            const pct = Number(p.attr_PercentContained ?? 0);
-            if (pct >= 100) return false;
-            // Keep if discovered within the last 30 days, OR if still active (<100% contained)
-            // — the containment filter above already guarantees "still active", so older
-            //   still-burning fires pass through naturally. The date check tightens it for
-            //   any perimeters where containment metadata is missing.
-            const discovered = p.attr_FireDiscoveryDateTime;
-            if (discovered && Number(discovered) < cutoff) {
-              // Older than 30 days but still <100% contained → keep
-              return true;
-            }
-            return true;
-          }),
-        };
-        setNifcPerimeters(filtered);
+      .then((r) => {
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.json();
       })
-      .catch((e) => console.warn('NIFC perimeters fetch failed:', e));
+      .then((data) => {
+        if (!data?.features?.length) {
+          console.warn('NIFC perimeters: empty response');
+          setNifcPerimeters({ type: 'FeatureCollection', features: [] });
+          return;
+        }
+        // Backend already filters POOState='US-CA' AND <100% contained.
+        // Client-side safety net: drop anything explicitly 100.
+        const features = data.features.filter((f: any) => {
+          const raw = f?.properties?.attr_PercentContained;
+          return raw == null || Number(raw) < 100;
+        });
+        console.info(`NIFC perimeters loaded: ${features.length} active CA fires`);
+        setNifcPerimeters({ ...data, features });
+      })
+      .catch((e) => console.error('NIFC perimeters fetch failed:', e));
   }, []);
 
   useEffect(() => {
@@ -350,7 +344,7 @@ export function ActiveFiresMap({
     <div className="space-y-3">
       <div>
         <h3 className="text-sm font-semibold tracking-tight">Active Fires</h3>
-        <p className="text-xs text-muted-foreground">CAL FIRE incidents, NIFC perimeters, and NASA FIRMS hotspots — click any fire for details</p>
+        <p className="text-xs text-muted-foreground">Live NIFC perimeter polygons for active California wildfires (fully contained fires hidden)</p>
       </div>
       <div style={{ height: 420, position: 'relative' }} className="w-full rounded-lg overflow-hidden border shadow-sm">
         <Map

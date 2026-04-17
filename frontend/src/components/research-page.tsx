@@ -241,7 +241,7 @@ function UnifiedResearchOverlay({ features, showHeatmap, zoneGeoJson, zoneRiskDa
               onPerimeterClick(info.object.properties);
             }
           },
-          updateTriggers: { getFillColor: [] },
+          updateTriggers: { getFillColor: [nifcPerimeters.features.length] },
         })
       );
     }
