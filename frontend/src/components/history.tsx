@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import {
   Calendar,
   Filter,
@@ -55,29 +55,35 @@ function HistoricalFirePerimetersOverlay({ fireData, focusedFireKey }: { fireDat
     };
   }, [map]);
 
-  // When the user picks a fire from the header dropdown, frame that fire
-  // tightly (fitBounds over its polygon) and open the detail popup.
+  // Pan/zoom to a user-picked fire from the dropdown and open the detail popup.
+  // Defer the heavy work (bounds walk + fitBounds + setState) to the next
+  // animation frame so React can finish the dropdown's own re-render first —
+  // otherwise clicking a fire from the dropdown blocks the main thread long
+  // enough to feel like the site has frozen.
   useEffect(() => {
     if (!map || !focusedFireKey || !fireData?.features?.length) return;
-    const f = fireData.features.find((ft: any) => {
-      const p = ft.properties || {};
-      return `${p.OBJECTID ?? ''}-${p.FIRE_NAME ?? ''}-${p.INC_NUM ?? ''}` === focusedFireKey;
-    });
-    if (!f?.geometry) return;
-    const bounds = new google.maps.LatLngBounds();
-    const walk = (c: any) => {
-      if (!Array.isArray(c)) return;
-      if (typeof c[0] === 'number' && typeof c[1] === 'number') {
-        bounds.extend({ lat: c[1], lng: c[0] });
-      } else {
-        for (const sub of c) walk(sub);
+    const raf = window.requestAnimationFrame(() => {
+      const f = fireData.features.find((ft: any) => {
+        const p = ft.properties || {};
+        return `${p.OBJECTID ?? ''}-${p.FIRE_NAME ?? ''}-${p.INC_NUM ?? ''}` === focusedFireKey;
+      });
+      if (!f?.geometry) return;
+      const bounds = new google.maps.LatLngBounds();
+      const walk = (c: any) => {
+        if (!Array.isArray(c)) return;
+        if (typeof c[0] === 'number' && typeof c[1] === 'number') {
+          bounds.extend({ lat: c[1], lng: c[0] });
+        } else {
+          for (const sub of c) walk(sub);
+        }
+      };
+      walk(f.geometry.coordinates);
+      if (!bounds.isEmpty()) {
+        map.fitBounds(bounds, 80);
+        setSelectedFire(f.properties);
       }
-    };
-    walk(f.geometry.coordinates);
-    if (!bounds.isEmpty()) {
-      map.fitBounds(bounds, 80);
-      setSelectedFire(f.properties);
-    }
+    });
+    return () => window.cancelAnimationFrame(raf);
   }, [map, focusedFireKey, fireData]);
 
   // Rebuild layers when data OR selection changes. Layer data uses the
@@ -417,6 +423,20 @@ export function History() {
   const mapTypeId: 'roadmap' = 'roadmap';
   const [searchQuery, setSearchQuery] = useState("");
   const [focusedFireKey, setFocusedFireKey] = useState<string | null>(null);
+
+  // Memoize the fire-dropdown options so the heavy sort doesn't re-run on
+  // every state change (dropdown open, stats update, etc.).
+  const fireOptions = useMemo(() => {
+    const feats = (fireData?.features || []).slice();
+    feats.sort((a: any, b: any) => (b.properties?.GIS_ACRES || 0) - (a.properties?.GIS_ACRES || 0));
+    return feats.map((f: any) => {
+      const p = f.properties || {};
+      const key = `${p.OBJECTID ?? ''}-${p.FIRE_NAME ?? ''}-${p.INC_NUM ?? ''}`;
+      const name = p.FIRE_NAME || 'Unnamed';
+      const acres = p.GIS_ACRES ? Math.round(p.GIS_ACRES).toLocaleString() : '?';
+      return { key, label: `${name} · ${acres} ac` };
+    });
+  }, [fireData]);
   // Display controls removed — perimeters are always shown at full opacity,
   // structure damage (DINS) is intentionally not rendered on the history map.
   const opacity = 100;
@@ -625,19 +645,10 @@ export function History() {
                       size={1}
                       className="text-sm border rounded px-2 py-1.5 bg-background w-56"
                     >
-                      <option value="">All fires ({fireData?.features?.length ?? 0})</option>
-                      {(fireData?.features || [])
-                        .slice()
-                        .sort((a: any, b: any) => (b.properties?.GIS_ACRES || 0) - (a.properties?.GIS_ACRES || 0))
-                        .map((f: any) => {
-                          const p = f.properties || {};
-                          const key = `${p.OBJECTID ?? ''}-${p.FIRE_NAME ?? ''}-${p.INC_NUM ?? ''}`;
-                          const name = p.FIRE_NAME || 'Unnamed';
-                          const acres = p.GIS_ACRES ? Math.round(p.GIS_ACRES).toLocaleString() : '?';
-                          return (
-                            <option key={key} value={key}>{name} · {acres} ac</option>
-                          );
-                        })}
+                      <option value="">All fires ({fireOptions.length})</option>
+                      {fireOptions.map((o: { key: string; label: string }) => (
+                        <option key={o.key} value={o.key}>{o.label}</option>
+                      ))}
                     </select>
                   </div>
 
