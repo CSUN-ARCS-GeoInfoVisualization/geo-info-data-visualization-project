@@ -314,7 +314,23 @@ function ResearchMapView() {
   const [lstSlider, setLstSlider] = useState(14000);
   const [windSlider, setWindSlider] = useState(7);
   const [elevSlider, setElevSlider] = useState(500);
-  const [zoneOverrides, setZoneOverrides] = useState<Record<string, { evi: number; lst: number; wind: number; elevation: number }>>({});
+  // Extended tracking parameters — the current ML model only consumes EVI/LST/
+  // wind/elevation, but the UI exposes the full feature set that the upcoming
+  // retrain (option 3 — ActiveFireSnapshot) will consume: Date, Latitude,
+  // Longitude, TA (thermal anomalies), NDVI (vegetation cover), and Fire (the
+  // binary outcome label). The extra fields travel with the override payload
+  // so the snapshot-capture job can log them verbatim for training data.
+  const [dateSlider, setDateSlider] = useState<number>(() => {
+    const start = new Date(new Date().getFullYear(), 0, 0);
+    const diff = Date.now() - start.getTime();
+    return Math.floor(diff / 86400000);
+  });
+  const [latSlider, setLatSlider] = useState(36.7); // California centroid
+  const [lonSlider, setLonSlider] = useState(-119.4);
+  const [taSlider, setTaSlider] = useState(0); // MODIS thermal anomalies level, 0-100
+  const [ndviSlider, setNdviSlider] = useState(0.3); // -1 to 1 in theory; 0-1 for vegetation cover
+  const [fireBinary, setFireBinary] = useState(false); // binary fire occurrence outcome label
+  const [zoneOverrides, setZoneOverrides] = useState<Record<string, { evi: number; lst: number; wind: number; elevation: number; date?: number; latitude?: number; longitude?: number; ta?: number; ndvi?: number; fire?: boolean }>>({});
 
   useEffect(() => {
     let cancelled = false;
@@ -639,6 +655,33 @@ function ResearchMapView() {
                         <label className="text-xs font-medium flex justify-between">⛰️ Elevation <span className="text-muted-foreground">{elevSlider}m</span></label>
                         <input type="range" min={0} max={3000} step={50} value={elevSlider} onChange={(e) => { const v = Number(e.target.value); setElevSlider(v); updateZoneOverride("elevation", v); }} disabled={!useOverrides || !selectedZone} className="w-full mt-1 accent-gray-500 disabled:opacity-40" />
                       </div>
+                      <div>
+                        <label className="text-xs font-medium flex justify-between">📅 Date (day of year) <span className="text-muted-foreground">{dateSlider}</span></label>
+                        <input type="range" min={1} max={366} step={1} value={dateSlider} onChange={(e) => { const v = Number(e.target.value); setDateSlider(v); updateZoneOverride("date", v); }} disabled={!useOverrides || !selectedZone} className="w-full mt-1 accent-purple-500 disabled:opacity-40" />
+                      </div>
+                      <div>
+                        <label className="text-xs font-medium flex justify-between">📍 Latitude <span className="text-muted-foreground">{latSlider.toFixed(2)}°</span></label>
+                        <input type="range" min={32} max={42} step={0.01} value={latSlider} onChange={(e) => { const v = Number(e.target.value); setLatSlider(v); updateZoneOverride("latitude", v); }} disabled={!useOverrides || !selectedZone} className="w-full mt-1 accent-sky-500 disabled:opacity-40" />
+                      </div>
+                      <div>
+                        <label className="text-xs font-medium flex justify-between">📍 Longitude <span className="text-muted-foreground">{lonSlider.toFixed(2)}°</span></label>
+                        <input type="range" min={-125} max={-114} step={0.01} value={lonSlider} onChange={(e) => { const v = Number(e.target.value); setLonSlider(v); updateZoneOverride("longitude", v); }} disabled={!useOverrides || !selectedZone} className="w-full mt-1 accent-sky-500 disabled:opacity-40" />
+                      </div>
+                      <div>
+                        <label className="text-xs font-medium flex justify-between">🔥 TA (Thermal Anomalies) <span className="text-muted-foreground">{taSlider}</span></label>
+                        <input type="range" min={0} max={100} step={1} value={taSlider} onChange={(e) => { const v = Number(e.target.value); setTaSlider(v); updateZoneOverride("ta", v); }} disabled={!useOverrides || !selectedZone} className="w-full mt-1 accent-red-500 disabled:opacity-40" />
+                      </div>
+                      <div>
+                        <label className="text-xs font-medium flex justify-between">🌳 NDVI (Vegetation cover) <span className="text-muted-foreground">{ndviSlider.toFixed(2)}</span></label>
+                        <input type="range" min={-1} max={1} step={0.01} value={ndviSlider} onChange={(e) => { const v = Number(e.target.value); setNdviSlider(v); updateZoneOverride("ndvi", v); }} disabled={!useOverrides || !selectedZone} className="w-full mt-1 accent-emerald-500 disabled:opacity-40" />
+                      </div>
+                      <label className="flex items-center justify-between gap-2 text-xs cursor-pointer pt-1">
+                        <span className="font-medium">🔥 Fire (binary outcome)</span>
+                        <input type="checkbox" checked={fireBinary} onChange={(e) => { const v = e.target.checked; setFireBinary(v); updateZoneOverride("fire", v as any); }} disabled={!useOverrides || !selectedZone} className="accent-red-500 disabled:opacity-40" />
+                      </label>
+                      <p className="text-[10px] text-muted-foreground">
+                        EVI · LST · Wind · Elevation drive the current model. Date · Lat · Lon · TA · NDVI · Fire are logged for the next retrain (see ActiveFireSnapshot in backend/routes/history.py).
+                      </p>
                     </div>
 
                     {useOverrides && selectedZone && zoneOverrides[selectedZone] && (

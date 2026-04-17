@@ -83,11 +83,9 @@ function HistoricalFirePerimetersOverlay({ fireData }: { fireData: any }) {
             const sel = selectedFireRef.current;
             return sel && (f.properties.OBJECTID ?? `${f.properties.FIRE_NAME}-${f.properties.YEAR_}-${f.properties.INC_NUM}`) === (sel.OBJECTID ?? `${sel.FIRE_NAME}-${sel.YEAR_}-${sel.INC_NUM}`) ? 6 : 3;
           },
-          getLineColor: (f: any) => {
-            const sel = selectedFireRef.current;
-            if (sel && (f.properties.OBJECTID ?? `${f.properties.FIRE_NAME}-${f.properties.YEAR_}-${f.properties.INC_NUM}`) === (sel.OBJECTID ?? `${sel.FIRE_NAME}-${sel.YEAR_}-${sel.INC_NUM}`)) return [0, 255, 255, 255];
-            return colorForAcres(f.properties.GIS_ACRES || 0);
-          },
+          // Selection uses the same tier color as the fire's fill, just with
+          // a thicker outline (see getLineWidth). No cyan.
+          getLineColor: (f: any) => colorForAcres(f.properties.GIS_ACRES || 0),
           getFillColor: (f: any) => colorForAcres(f.properties.GIS_ACRES || 0),
           onClick: (info: any) => { if (info.object) setSelectedFire(info.object.properties); },
           updateTriggers: {
