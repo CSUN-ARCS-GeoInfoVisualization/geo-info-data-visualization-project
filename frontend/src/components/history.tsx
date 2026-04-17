@@ -56,10 +56,9 @@ function HistoricalFirePerimetersOverlay({ fireData, focusedFireKey }: { fireDat
   }, [map]);
 
   // Pan/zoom to a user-picked fire from the dropdown and open the detail popup.
-  // Defer the heavy work (bounds walk + fitBounds + setState) to the next
-  // animation frame so React can finish the dropdown's own re-render first —
-  // otherwise clicking a fire from the dropdown blocks the main thread long
-  // enough to feel like the site has frozen.
+  // Use a plain centroid + fixed zoom instead of fitBounds — fitBounds on a
+  // 0.01-acre polygon sets zoom to max (22), which was triggering a cascade of
+  // Google Maps tile loads that blocked the main thread and froze the page.
   useEffect(() => {
     if (!map || !focusedFireKey || !fireData?.features?.length) return;
     const raf = window.requestAnimationFrame(() => {
@@ -68,20 +67,31 @@ function HistoricalFirePerimetersOverlay({ fireData, focusedFireKey }: { fireDat
         return `${p.OBJECTID ?? ''}-${p.FIRE_NAME ?? ''}-${p.INC_NUM ?? ''}` === focusedFireKey;
       });
       if (!f?.geometry) return;
-      const bounds = new google.maps.LatLngBounds();
+
+      // Centroid: average of every coordinate in the polygon/multipolygon.
+      let lat = 0, lng = 0, n = 0;
       const walk = (c: any) => {
         if (!Array.isArray(c)) return;
         if (typeof c[0] === 'number' && typeof c[1] === 'number') {
-          bounds.extend({ lat: c[1], lng: c[0] });
+          lng += c[0]; lat += c[1]; n += 1;
         } else {
           for (const sub of c) walk(sub);
         }
       };
       walk(f.geometry.coordinates);
-      if (!bounds.isEmpty()) {
-        map.fitBounds(bounds, 80);
-        setSelectedFire(f.properties);
-      }
+      if (n === 0) return;
+      lat /= n; lng /= n;
+
+      // Pick a zoom that scales with acreage so tiny fires get a tight frame
+      // without triggering a max-zoom tile storm.
+      const acres = Number(f.properties?.GIS_ACRES) || 0;
+      const zoom = acres >= 10000 ? 9
+        : acres >= 1000 ? 11
+        : acres >= 100 ? 13
+        : 14;
+      map.panTo({ lat, lng });
+      map.setZoom(zoom);
+      setSelectedFire(f.properties);
     });
     return () => window.cancelAnimationFrame(raf);
   }, [map, focusedFireKey, fireData]);
@@ -664,7 +674,10 @@ export function History() {
                       <SelectTrigger className="w-24 h-8">
                         <SelectValue />
                       </SelectTrigger>
-                      <SelectContent className="max-h-56">
+                      <SelectContent
+                        className="max-h-56"
+                        style={{ maxHeight: '14rem' }}
+                      >
                         {availableYears.map((y) => (
                           <SelectItem key={y} value={String(y)}>{y}</SelectItem>
                         ))}
