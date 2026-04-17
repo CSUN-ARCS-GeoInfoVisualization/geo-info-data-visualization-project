@@ -536,6 +536,40 @@ function ResearchMapView() {
                   </div>
                 </div>
 
+                {activeLayer !== "zones" && selectedPerimeter && (
+                  <div className="pt-3 border-t">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Selected fire</div>
+                      <button
+                        onClick={() => setSelectedPerimeter(null)}
+                        aria-label="Close"
+                        className="text-muted-foreground hover:text-foreground text-lg leading-none"
+                      >×</button>
+                    </div>
+                    <div className="flex items-center gap-2 mb-2">
+                      <Flame className="h-4 w-4 text-red-500 shrink-0" />
+                      <div className="font-bold text-sm">
+                        {selectedPerimeter.poly_IncidentName || "Unknown Fire"}
+                      </div>
+                    </div>
+                    <div className="space-y-1 text-xs text-muted-foreground">
+                      {selectedPerimeter.poly_GISAcres != null && (
+                        <div>Acres: <span className="font-medium text-foreground">{Number(selectedPerimeter.poly_GISAcres).toLocaleString(undefined, { maximumFractionDigits: 2 })}</span></div>
+                      )}
+                      {selectedPerimeter.attr_PercentContained != null
+                        ? <div>Contained: <span className="font-medium text-foreground">{selectedPerimeter.attr_PercentContained}%</span></div>
+                        : <div>Contained: <span className="font-medium text-foreground">Unknown</span></div>}
+                      {selectedPerimeter.poly_FeatureCategory && (
+                        <div>Type: <span className="font-medium text-foreground">{selectedPerimeter.poly_FeatureCategory}</span></div>
+                      )}
+                      {selectedPerimeter.attr_FireDiscoveryDateTime && (
+                        <div>Discovered: <span className="font-medium text-foreground">{new Date(Number(selectedPerimeter.attr_FireDiscoveryDateTime)).toLocaleString()}</span></div>
+                      )}
+                      <div className="pt-1">Source: <a href="https://data-nifc.opendata.arcgis.com/" target="_blank" rel="noopener noreferrer" className="underline">NIFC WFIGS</a></div>
+                    </div>
+                  </div>
+                )}
+
                 {activeLayer !== "fires" && (
                   <>
                     <div>
@@ -628,32 +662,6 @@ function ResearchMapView() {
                 )}
               </div>
             </div>
-            {/* Selected fire perimeter info */}
-            {selectedPerimeter && (
-              <div className="absolute top-3 left-3 z-10 max-w-[260px] bg-white/95 backdrop-blur-sm rounded-xl p-4 shadow-lg text-sm border border-red-200">
-                <div className="flex items-center gap-2 mb-2">
-                  <Flame className="h-4 w-4 text-red-500" />
-                  <span className="font-bold">{selectedPerimeter.poly_IncidentName || "Unknown Fire"}</span>
-                </div>
-                <div className="space-y-1 text-xs text-muted-foreground">
-                  {selectedPerimeter.poly_GISAcres != null && (
-                    <p>Acres: <span className="font-medium text-foreground">{Math.round(selectedPerimeter.poly_GISAcres).toLocaleString()}</span></p>
-                  )}
-                  {selectedPerimeter.attr_PercentContained != null && (
-                    <p>Contained: <span className="font-medium text-foreground">{selectedPerimeter.attr_PercentContained}%</span></p>
-                  )}
-                  {selectedPerimeter.poly_FeatureCategory && (
-                    <p>Type: <span className="font-medium text-foreground">{selectedPerimeter.poly_FeatureCategory}</span></p>
-                  )}
-                </div>
-                <button
-                  onClick={() => setSelectedPerimeter(null)}
-                  className="mt-2 text-xs text-red-500 hover:text-red-700 font-medium"
-                >
-                  Dismiss
-                </button>
-              </div>
-            )}
             {/* Map overlay legend */}
             <div className="absolute bottom-3 left-3 bg-white/90 backdrop-blur-sm rounded-lg p-3 shadow-lg text-xs">
               <div className="font-medium mb-1">Risk Zones</div>
