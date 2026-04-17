@@ -1,7 +1,7 @@
 """Email delivery service - entry point and wiring."""
 
 from .config import EmailConfig
-from .provider import EmailProvider, ResendProvider, MockProvider, EmailMessage, SendResult
+from .provider import EmailProvider, ResendProvider, SMTPProvider, MockProvider, EmailMessage, SendResult
 from .renderer import EmailRenderer
 from .tracker import DeliveryTracker
 from .retry import RetryHandler
@@ -23,8 +23,18 @@ def init_email_service(app):
 
     config = EmailConfig.from_env()
 
-    if config.use_mock_provider:
+    if config.use_mock_provider or config.email_provider == "mock":
         provider = MockProvider()
+    elif config.email_provider == "smtp":
+        provider = SMTPProvider(
+            host=config.smtp_host,
+            port=config.smtp_port,
+            username=config.smtp_username,
+            password=config.smtp_password,
+            sender_email=config.sender_email,
+            sender_name=config.sender_name,
+            use_tls=config.smtp_use_tls,
+        )
     else:
         provider = ResendProvider(
             api_key=config.resend_api_key,

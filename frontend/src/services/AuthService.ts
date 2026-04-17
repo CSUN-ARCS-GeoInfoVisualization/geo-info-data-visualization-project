@@ -14,6 +14,8 @@ export type NotificationPreference = {
   blackout_end: string | null;
   last_sent_at: string | null;
   unsubscribed_at: string | null;
+  contact_email: string | null;
+  contact_phone: string | null;
 };
 
 const rawApiUrl = import.meta.env.VITE_API_URL || "http://localhost:5000";
@@ -68,7 +70,7 @@ export async function getMyNotifications(token: string): Promise<NotificationPre
 
 export async function updateMyNotifications(
   token: string,
-  updates: Partial<Pick<NotificationPreference, "frequency" | "risk_threshold" | "paused_until" | "blackout_start" | "blackout_end">>,
+  updates: Partial<Pick<NotificationPreference, "frequency" | "risk_threshold" | "paused_until" | "blackout_start" | "blackout_end" | "contact_email" | "contact_phone">>,
 ): Promise<NotificationPreference> {
   return apiRequest<NotificationPreference>("/me/notifications", {
     method: "PUT",
@@ -76,8 +78,14 @@ export async function updateMyNotifications(
   }, token);
 }
 
-export async function subscribeNotifications(token: string): Promise<NotificationPreference> {
-  return apiRequest<NotificationPreference>("/notifications/subscribe", { method: "POST" }, token);
+export async function subscribeNotifications(
+  token: string,
+  contact?: { contact_email?: string | null; contact_phone?: string | null },
+): Promise<NotificationPreference> {
+  return apiRequest<NotificationPreference>("/notifications/subscribe", {
+    method: "POST",
+    body: JSON.stringify(contact || {}),
+  }, token);
 }
 
 export async function unsubscribeNotifications(token: string): Promise<NotificationPreference> {

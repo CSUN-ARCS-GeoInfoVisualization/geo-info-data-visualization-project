@@ -111,6 +111,35 @@ cp .env.example .env              # fill in VITE_GOOGLE_MAPS_API_KEY, VITE_API_U
 npm run dev                       # http://localhost:3000
 ```
 
+## Email Alerts
+
+Two provider options — pick one, set the matching env vars on Render:
+
+**Option A — Gmail SMTP (easiest, no domain needed).** Works with any personal `@gmail.com`.
+
+1. Turn on **2-Step Verification** on the Gmail account: https://myaccount.google.com/security
+2. Create an **App Password** named "FireScope": https://myaccount.google.com/apppasswords
+3. Set env vars:
+   ```env
+   EMAIL_PROVIDER=smtp
+   SMTP_HOST=smtp.gmail.com
+   SMTP_PORT=587
+   SMTP_USERNAME=your-gmail@gmail.com
+   SMTP_PASSWORD=<16-char app password, no spaces>
+   SENDER_EMAIL=your-gmail@gmail.com
+   SENDER_NAME=FireScope Alerts
+   ```
+
+Gmail's free limit is ~500 recipients/day. Messages may initially land in the recipient's **Spam** folder because `@gmail.com` isn't a verified sending domain — that's an accepted trade-off while developing.
+
+**Option B — Resend (requires a registered domain).** Set:
+```env
+EMAIL_PROVIDER=resend
+RESEND_API_KEY=re_...
+SENDER_EMAIL=alerts@your-verified-domain.com
+SENDER_NAME=FireScope Alerts
+```
+
 ## Deployment
 
 - **Frontend:** Netlify — auto-deploys from `domain-deployment` branch. Build: `npm ci --prefix frontend && npm run build --prefix frontend`, publish dir: `frontend/build`.

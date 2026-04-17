@@ -87,9 +87,11 @@ export function NotificationSettings({ token }: NotificationSettingsProps) {
       draft.riskThreshold !== preference.risk_threshold ||
       localDateTimeToIso(draft.pausedUntilLocal) !== (preference.paused_until ? new Date(preference.paused_until).toISOString() : null) ||
       localDateTimeToIso(draft.blackoutStartLocal) !== (preference.blackout_start ? new Date(preference.blackout_start).toISOString() : null) ||
-      localDateTimeToIso(draft.blackoutEndLocal) !== (preference.blackout_end ? new Date(preference.blackout_end).toISOString() : null)
+      localDateTimeToIso(draft.blackoutEndLocal) !== (preference.blackout_end ? new Date(preference.blackout_end).toISOString() : null) ||
+      (contactEmail || "") !== (preference.contact_email || "") ||
+      (contactPhone || "") !== (preference.contact_phone || "")
     );
-  }, [preference, draft]);
+  }, [preference, draft, contactEmail, contactPhone]);
 
   const loadPreference = async () => {
     setLoading(true);
@@ -98,6 +100,8 @@ export function NotificationSettings({ token }: NotificationSettingsProps) {
       const pref = await getMyNotifications(token);
       setPreference(pref);
       setDraft(buildDraft(pref));
+      setContactEmail(pref.contact_email || "");
+      setContactPhone(pref.contact_phone || "");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to load notification settings");
     } finally {
@@ -121,9 +125,13 @@ export function NotificationSettings({ token }: NotificationSettingsProps) {
         paused_until: localDateTimeToIso(draft.pausedUntilLocal),
         blackout_start: localDateTimeToIso(draft.blackoutStartLocal),
         blackout_end: localDateTimeToIso(draft.blackoutEndLocal),
+        contact_email: contactEmail.trim() || null,
+        contact_phone: contactPhone.trim() || null,
       });
       setPreference(updated);
       setDraft(buildDraft(updated));
+      setContactEmail(updated.contact_email || "");
+      setContactPhone(updated.contact_phone || "");
       setMessage("Notification settings saved.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to save settings");
@@ -137,10 +145,16 @@ export function NotificationSettings({ token }: NotificationSettingsProps) {
     setMessage(null);
     setError(null);
     try {
-      const updated = await subscribeNotifications(token);
+      // Subscribe is the single action that saves the contact info AND opts in.
+      const updated = await subscribeNotifications(token, {
+        contact_email: contactEmail.trim() || null,
+        contact_phone: contactPhone.trim() || null,
+      });
       setPreference(updated);
       setDraft(buildDraft(updated));
-      setMessage("Alerts subscribed.");
+      setContactEmail(updated.contact_email || "");
+      setContactPhone(updated.contact_phone || "");
+      setMessage("Alerts subscribed. You will receive wildfire alerts at the contact info above.");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to subscribe");
     } finally {
@@ -401,6 +415,35 @@ export function NotificationSettings({ token }: NotificationSettingsProps) {
         </CardContent>
       </Card>
 
+      {/* Current subscription summary — always visible once contact info is saved */}
+      {(preference.contact_email || preference.contact_phone) && (
+        <Card className="border-emerald-200 bg-emerald-50/50">
+          <CardContent className="py-3 text-sm">
+            <div className="flex items-start gap-2">
+              <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0 mt-0.5" />
+              <div className="space-y-0.5">
+                <div className="font-medium text-emerald-900">
+                  {preference.opted_in ? "Subscribed — alerts will be sent to:" : "Saved contact info (not yet subscribed):"}
+                </div>
+                {preference.contact_email && (
+                  <div className="text-emerald-800 flex items-center gap-1.5">
+                    <Mail className="h-3.5 w-3.5" /> {preference.contact_email}
+                  </div>
+                )}
+                {preference.contact_phone && (
+                  <div className="text-emerald-800 flex items-center gap-1.5">
+                    <Phone className="h-3.5 w-3.5" /> {preference.contact_phone}
+                  </div>
+                )}
+                <div className="text-xs text-emerald-700/80 pt-1">
+                  Edit the fields above and press <strong>{preference.opted_in ? "Save changes" : "Subscribe"}</strong> to update.
+                </div>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
       {/* Feedback messages */}
       {message && (
         <div className="flex items-center gap-2 rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 animate-[fadeIn_0.2s_ease-out]">
@@ -424,24 +467,32 @@ export function NotificationSettings({ token }: NotificationSettingsProps) {
               : "Subscribe to start receiving wildfire alerts."}
           </p>
           {preference.opted_in ? (
-            <Button
-              variant="outline"
-              onClick={onUnsubscribe}
-              disabled={saving}
-              className="text-red-600 border-red-200 hover:bg-red-50 min-w-[140px]"
-            >
-              {saving ? (
-                <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
-              ) : (
-                <BellOff className="h-4 w-4 mr-1.5" />
+            <div className="flex gap-2">
+              {isDirty && (
+                <Button onClick={onSave} disabled={saving} className="min-w-[130px]">
+                  {saving ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <CheckCircle2 className="h-4 w-4 mr-1.5" />}
+                  {saving ? "Saving..." : "Save changes"}
+                </Button>
               )}
-              {saving ? "Processing..." : "Unsubscribe"}
-            </Button>
+              <Button
+                variant="outline"
+                onClick={onUnsubscribe}
+                disabled={saving}
+                className="text-red-600 border-red-200 hover:bg-red-50 min-w-[140px]"
+              >
+                {saving ? (
+                  <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
+                ) : (
+                  <BellOff className="h-4 w-4 mr-1.5" />
+                )}
+                {saving ? "Processing..." : "Unsubscribe"}
+              </Button>
+            </div>
           ) : (
             <Button
               onClick={async () => {
-                await onSubscribe();
                 if (isDirty) await onSave();
+                await onSubscribe();
               }}
               disabled={saving}
               variant="outline"

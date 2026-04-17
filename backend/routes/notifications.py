@@ -61,6 +61,8 @@ def _serialize_preference(pref):
         'opted_in': pref.opted_in,
         'email_enabled': pref.email_enabled,
         'sms_enabled': pref.sms_enabled,
+        'contact_email': pref.contact_email,
+        'contact_phone': pref.contact_phone,
         'frequency': pref.frequency,
         'risk_threshold': pref.risk_threshold,
         'paused_until': _format_datetime(pref.paused_until),
@@ -113,6 +115,19 @@ def _apply_preference_updates(pref, data):
         if not isinstance(data['sms_enabled'], bool):
             return {'error': 'sms_enabled must be a boolean'}, 400
         pref.sms_enabled = data['sms_enabled']
+
+    if 'contact_email' in data:
+        value = data['contact_email']
+        if value is not None and not isinstance(value, str):
+            return {'error': 'contact_email must be a string or null'}, 400
+        pref.contact_email = (value or '').strip()[:255] or None
+
+    if 'contact_phone' in data:
+        value = data['contact_phone']
+        if value is not None and not isinstance(value, str):
+            return {'error': 'contact_phone must be a string or null'}, 400
+        pref.contact_phone = (value or '').strip()[:32] or None
+
     if 'frequency' in data:
         frequency = data['frequency']
         if frequency not in FREQUENCY_OPTIONS:
@@ -189,7 +204,14 @@ def subscribe_notifications():
     if not user_id:
         return jsonify({'error': 'Invalid token identity'}), 401
     pref = _get_or_create_preference(user_id)
+    data = request.get_json(silent=True) or {}
+    # Allow clients to set contact info + frequency + threshold in the same call
+    # so pressing Subscribe is a single atomic action.
+    error, status = _apply_preference_updates(pref, data)
+    if error:
+        return jsonify(error), status
     pref.opted_in = True
+    pref.email_enabled = True
     pref.unsubscribed_at = None
     db.session.commit()
     return jsonify(_serialize_preference(pref))

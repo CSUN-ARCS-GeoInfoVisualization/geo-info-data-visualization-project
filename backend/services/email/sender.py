@@ -71,7 +71,7 @@ class EmailSender:
             if risk_score < (pref.risk_threshold or risk_threshold):
                 return SendResult(success=False, error_message="Risk below threshold")
 
-            email_addr = user_email or (pref.email if pref else None) or self.get_user_email(user_id)
+            email_addr = user_email or (getattr(pref, 'contact_email', None) if pref else None) or self.get_user_email(user_id)
             date_str = datetime.utcnow().strftime("%Y-%m-%d")
             sig = _event_signature(area_id, risk_score, date_str)
 
@@ -187,7 +187,7 @@ class EmailSender:
                     for a in areas
                 ]
                 # TODO: join with prediction data for actual risk_score
-                email_addr = pref.email or self.get_user_email(pref.user_id)
+                email_addr = getattr(pref, 'contact_email', None) or self.get_user_email(pref.user_id)
                 html, text = self.renderer.render_daily_digest(date_str, area_data)
                 msg = EmailMessage(
                     to=email_addr,
@@ -229,7 +229,7 @@ class EmailSender:
                     for a in areas
                 ]
                 summary = {"area_count": len(areas), "max_risk": 0}
-                email_addr = pref.email or self.get_user_email(pref.user_id)
+                email_addr = getattr(pref, 'contact_email', None) or self.get_user_email(pref.user_id)
                 html, text = self.renderer.render_weekly_digest(
                     week_range, area_data, summary
                 )
