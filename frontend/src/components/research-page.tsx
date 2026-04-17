@@ -143,10 +143,9 @@ interface UnifiedOverlayProps {
 }
 
 function getRiskColor(score: number): [number, number, number, number] {
-  if (score >= 0.75) return [139, 0, 0, 140];
-  if (score >= 0.50) return [220, 38, 38, 120];
-  if (score >= 0.25) return [234, 179, 8, 100];
-  return [34, 197, 94, 70];
+  if (score >= 0.66) return [220, 38, 38, 150];
+  if (score >= 0.33) return [234, 179, 8, 130];
+  return [34, 197, 94, 110];
 }
 
 function UnifiedResearchOverlay({ features, showHeatmap, zoneGeoJson, zoneRiskData, zoneNameKey, onZoneClick, nifcPerimeters, showPerimeters, onPerimeterClick }: UnifiedOverlayProps) {
@@ -426,6 +425,11 @@ function ResearchMapView() {
           }
         }
         setZoneRiskData(zones);
+        // Keep the selected-zone card in sync with the latest risk (so sliders
+        // update the badge + percentage live alongside the map color).
+        if (selectedZone && zones[selectedZone]) {
+          setSelectedZoneRisk({ risk_score: zones[selectedZone].risk_score, label: zones[selectedZone].label });
+        }
       })
       .catch((e) => console.warn("Risk data load failed:", e));
   }, [zoneGeoJson, zoneLevel, useOverrides, zoneOverrides]);
@@ -607,9 +611,8 @@ function ResearchMapView() {
                           <div
                             className="w-3 h-3 rounded-full shrink-0"
                             style={{
-                              backgroundColor: selectedZoneRisk.risk_score >= 0.75 ? "#991b1b"
-                                : selectedZoneRisk.risk_score >= 0.5 ? "#dc2626"
-                                : selectedZoneRisk.risk_score >= 0.25 ? "#eab308"
+                              backgroundColor: selectedZoneRisk.risk_score >= 0.66 ? "#dc2626"
+                                : selectedZoneRisk.risk_score >= 0.33 ? "#eab308"
                                 : "#22c55e",
                             }}
                           />

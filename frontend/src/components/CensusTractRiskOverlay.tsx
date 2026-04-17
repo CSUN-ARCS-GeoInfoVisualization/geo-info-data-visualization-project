@@ -9,10 +9,9 @@ import { GeoJsonLayer } from "@deck.gl/layers";
 import { apiFetch } from "../services/api";
 
 function getRiskColor(score: number): [number, number, number, number] {
-  if (score >= 0.75) return [139, 0, 0, 140];
-  if (score >= 0.50) return [220, 38, 38, 120];
-  if (score >= 0.25) return [234, 179, 8, 100];
-  return [34, 197, 94, 70];
+  if (score >= 0.66) return [220, 38, 38, 150];
+  if (score >= 0.33) return [234, 179, 8, 130];
+  return [34, 197, 94, 110];
 }
 
 interface ZoneRisk {

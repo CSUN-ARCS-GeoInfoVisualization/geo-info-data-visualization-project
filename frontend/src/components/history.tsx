@@ -626,7 +626,7 @@ export function History() {
                   defaultZoom={6}
                   mapTypeId={mapTypeId}
                   gestureHandling="greedy"
-                  disableDefaultUI={false}
+                  disableDefaultUI={true}
                 >
                   {/* Fire Perimeters Layer — rendered last so it sits on top of the map tiles */}
                   <HistoricalFirePerimetersOverlay fireData={fireData} />

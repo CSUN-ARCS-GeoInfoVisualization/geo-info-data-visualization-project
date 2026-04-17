@@ -20,10 +20,10 @@ interface CountyRiskData {
 }
 
 function getRiskColor(score: number): [number, number, number, number] {
-  if (score >= 0.75) return [139, 0, 0, 140];     // extreme — dark red
-  if (score >= 0.50) return [220, 38, 38, 120];    // high — red
-  if (score >= 0.25) return [234, 179, 8, 100];    // medium — yellow
-  return [34, 197, 94, 70];                         // low — green
+  // 3-tier risk palette: green / yellow / red
+  if (score >= 0.66) return [220, 38, 38, 150];    // high — red
+  if (score >= 0.33) return [234, 179, 8, 130];    // medium — yellow
+  return [34, 197, 94, 110];                        // low — green
 }
 
 interface Props {
