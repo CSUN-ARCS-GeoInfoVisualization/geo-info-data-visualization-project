@@ -120,24 +120,20 @@ function HistoricalFirePerimetersOverlay({ fireData, focusedFireKey }: { fireDat
           stroked: true,
           filled: true,
           lineWidthMinPixels: 3,
-          getLineWidth: (f: any) => {
-            const sel = selectedFireRef.current;
-            return sel && (f.properties.OBJECTID ?? `${f.properties.FIRE_NAME}-${f.properties.YEAR_}-${f.properties.INC_NUM}`) === (sel.OBJECTID ?? `${sel.FIRE_NAME}-${sel.YEAR_}-${sel.INC_NUM}`) ? 6 : 3;
-          },
-          // Selection uses the same tier color as the fire's fill, just with
-          // a thicker outline (see getLineWidth). No cyan.
+          getLineWidth: 3,
           getLineColor: (f: any) => colorForAcres(f.properties.GIS_ACRES || 0),
           getFillColor: (f: any) => colorForAcres(f.properties.GIS_ACRES || 0),
           onClick: (info: any) => { if (info.object) setSelectedFire(info.object.properties); },
           updateTriggers: {
             getFillColor: [fireData],
-            getLineColor: [fireData, (selectedFire ? `${selectedFire.OBJECTID ?? ''}-${selectedFire.FIRE_NAME ?? ''}-${selectedFire.YEAR_ ?? ''}-${selectedFire.INC_NUM ?? ''}` : '')],
-            getLineWidth: [fireData, (selectedFire ? `${selectedFire.OBJECTID ?? ''}-${selectedFire.FIRE_NAME ?? ''}-${selectedFire.YEAR_ ?? ''}-${selectedFire.INC_NUM ?? ''}` : '')],
+            getLineColor: [fireData],
           },
         }),
       ],
     });
-  }, [fireData, selectedFire]);
+  }, [fireData]); // Deliberately NOT [fireData, selectedFire] — selection must
+                   // never rebuild the layer or we re-tessellate the GeoJSON and
+                   // block the main thread for hundreds of polygons.
 
   /* -----------------------------------------------------------------------
      Legacy props-based setter, kept commented so nothing else references it.
@@ -178,18 +174,20 @@ function HistoricalFirePerimetersOverlay({ fireData, focusedFireKey }: { fireDat
         </div>
       )}
 
-      {/* Click tooltip - detailed info */}
+      {/* Centered-top selection popup — matches the Dashboard fire perimeter popup */}
       {selectedFire && (
         <div
           style={{
             position: 'absolute',
-            top: '10px',
-            right: '10px',
+            top: 12,
+            left: '50%',
+            transform: 'translateX(-50%)',
             backgroundColor: 'white',
-            padding: '16px',
+            padding: '12px 16px',
             borderRadius: '8px',
-            boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
-            maxWidth: '300px',
+            border: '1px solid #e5e7eb',
+            boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
+            maxWidth: 320,
             zIndex: 1000,
             pointerEvents: 'auto'
           }}
