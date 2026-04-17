@@ -4,7 +4,7 @@ import {
 } from "lucide-react";
 import { Map, useMap } from "@vis.gl/react-google-maps";
 import { GoogleMapsOverlay } from "@deck.gl/google-maps";
-import { GeoJsonLayer, ScatterplotLayer } from "@deck.gl/layers";
+import { GeoJsonLayer } from "@deck.gl/layers";
 import { firmsPointsToPolygonCollection } from "../utils/firmsPolygons";
 import { HeatmapLayer } from "@deck.gl/aggregation-layers";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
@@ -250,19 +250,6 @@ function UnifiedResearchOverlay({ features, showHeatmap, zoneGeoJson, zoneRiskDa
         if (pct >= 25) return [249, 115, 22, 230];
         return [220, 38, 38, 230];
       };
-      const centroids = nifcPerimeters.features
-        .map((f: any) => {
-          const g = f.geometry;
-          if (!g) return null;
-          let pts: number[][] = [];
-          if (g.type === "Polygon") pts = g.coordinates[0] || [];
-          else if (g.type === "MultiPolygon") pts = (g.coordinates[0] && g.coordinates[0][0]) || [];
-          if (!pts.length) return null;
-          let lon = 0, lat = 0;
-          for (const [x, y] of pts) { lon += x; lat += y; }
-          return { lon: lon / pts.length, lat: lat / pts.length, properties: f.properties };
-        })
-        .filter(Boolean);
       layers.push(
         new GeoJsonLayer({
           id: "nifc-perimeters",
@@ -278,28 +265,6 @@ function UnifiedResearchOverlay({ features, showHeatmap, zoneGeoJson, zoneRiskDa
             if (info.object && onPerimeterClick) onPerimeterClick(info.object.properties);
           },
           updateTriggers: { getFillColor: [nifcPerimeters.features.length] },
-        })
-      );
-      layers.push(
-        new ScatterplotLayer({
-          id: "nifc-markers",
-          data: centroids,
-          pickable: true,
-          stroked: true,
-          filled: true,
-          radiusMinPixels: 6,
-          radiusMaxPixels: 60,
-          lineWidthMinPixels: 2,
-          getPosition: (d: any) => [d.lon, d.lat],
-          getRadius: (d: any) => {
-            const acres = Number(d.properties?.poly_GISAcres) || 0.1;
-            return Math.max(500, Math.sqrt(acres) * 400);
-          },
-          getFillColor: (d: any) => colorForPct(d.properties?.attr_PercentContained),
-          getLineColor: [255, 255, 255, 255],
-          onClick: (info: any) => {
-            if (info?.object?.properties && onPerimeterClick) onPerimeterClick(info.object.properties);
-          },
         })
       );
     }

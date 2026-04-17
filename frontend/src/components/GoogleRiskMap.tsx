@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Map, useMap } from '@vis.gl/react-google-maps';
 import { GoogleMapsOverlay } from '@deck.gl/google-maps';
-import { GeoJsonLayer, ScatterplotLayer } from '@deck.gl/layers';
+import { GeoJsonLayer } from '@deck.gl/layers';
 import { apiFetch } from '../services/api';
 import { CountyRiskOverlay } from './CountyRiskOverlay';
 import { ZipCodeRiskOverlay } from './ZipCodeRiskOverlay';
@@ -114,21 +114,6 @@ export function FirePerimetersOverlay() {
       return [220, 38, 38, 230];
     };
 
-    // Compute centroids for a pixel-sized marker so tiny sub-pixel perimeters are still visible
-    const centroids = nifcPerimeters.features
-      .map((f: any) => {
-        const g = f.geometry;
-        if (!g) return null;
-        let pts: number[][] = [];
-        if (g.type === 'Polygon') pts = g.coordinates[0] || [];
-        else if (g.type === 'MultiPolygon') pts = (g.coordinates[0] && g.coordinates[0][0]) || [];
-        if (!pts.length) return null;
-        let lon = 0, lat = 0;
-        for (const [x, y] of pts) { lon += x; lat += y; }
-        return { lon: lon / pts.length, lat: lat / pts.length, properties: f.properties };
-      })
-      .filter(Boolean);
-
     const overlay = new GoogleMapsOverlay({
       layers: [
         new GeoJsonLayer({
@@ -149,33 +134,6 @@ export function FirePerimetersOverlay() {
             return false;
           },
           updateTriggers: { getFillColor: [nifcPerimeters.features.length] },
-        }),
-        // Pixel-sized centroid markers so tiny fires stay visible at CA-wide zoom
-        new ScatterplotLayer({
-          id: 'nifc-markers',
-          data: centroids,
-          pickable: true,
-          stroked: true,
-          filled: true,
-          radiusMinPixels: 6,
-          radiusMaxPixels: 60,
-          lineWidthMinPixels: 2,
-          getPosition: (d: any) => [d.lon, d.lat],
-          // Scale by acres burned (sqrt so a 10,000-acre fire isn't 1000x bigger than a 10-acre one)
-          // Meters per unit of radius so the dot also grows geographically at close zooms.
-          getRadius: (d: any) => {
-            const acres = Number(d.properties?.poly_GISAcres) || 0.1;
-            return Math.max(500, Math.sqrt(acres) * 400);
-          },
-          getFillColor: (d: any) => colorForPct(d.properties?.attr_PercentContained),
-          getLineColor: [255, 255, 255, 255],
-          onClick: (info: any) => {
-            if (info?.object?.properties) {
-              setSelectedPerimeter({ ...info.object.properties, x: info.x, y: info.y });
-              return true;
-            }
-            return false;
-          },
         }),
       ],
     });
