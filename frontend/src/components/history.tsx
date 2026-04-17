@@ -420,9 +420,11 @@ function DINSDamageOverlay({
 }
 
 export function History() {
-  const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
+  // Default to the most recent *complete* fire year (current year − 1) so the
+  // map opens on a year that actually has full CAL FIRE records.
+  const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear() - 1);
   const selectedYears = [selectedYear]; // kept as an array locally so the existing overlay contract still works
-  const [mapTypeId, setMapTypeId] = useState<'roadmap' | 'satellite' | 'hybrid' | 'terrain'>('satellite');
+  const [mapTypeId, setMapTypeId] = useState<'roadmap' | 'satellite' | 'hybrid' | 'terrain'>('roadmap');
   const [searchQuery, setSearchQuery] = useState("");
   const [opacity, setOpacity] = useState(60);
   const [showPerimeters, setShowPerimeters] = useState(true);
