@@ -161,9 +161,72 @@ def predict_custom():
     return jsonify(resp)
 
 
+def _norm_fire_name(s: str) -> str:
+    return ''.join(c for c in (s or '').lower() if c.isalnum())
+
+
+def _fetch_containment_by_name() -> dict:
+    """Build a name->PercentContained lookup from CAL FIRE + WFIGS Incident Locations.
+
+    The perimeter layer often has null PercentContained even when other feeds
+    carry a real value, so we enrich the perimeter features with whichever
+    number is available.
+    """
+    lookup: dict = {}
+
+    # CAL FIRE
+    try:
+        r = http_requests.get(
+            'https://incidents.fire.ca.gov/umbraco/api/IncidentApi/List',
+            params={'inactive': 'false'},
+            timeout=12,
+        )
+        r.raise_for_status()
+        for d in r.json() or []:
+            nm = _norm_fire_name(d.get('Name'))
+            pct = d.get('PercentContained')
+            if nm and pct is not None:
+                try:
+                    lookup[nm] = float(pct)
+                except Exception:
+                    pass
+    except Exception as e:
+        logger.warning('CAL FIRE containment lookup failed: %s', e)
+
+    # WFIGS Incident Locations — points layer carries PercentContained for many small fires
+    try:
+        r = http_requests.get(
+            'https://services3.arcgis.com/T4QMspbfLg3qTGWY/ArcGIS/rest/services/'
+            'WFIGS_Incident_Locations_YearToDate/FeatureServer/0/query',
+            params={
+                'where': "POOState='US-CA'",
+                'outFields': 'IncidentName,PercentContained',
+                'f': 'json',
+                'resultRecordCount': 5000,
+            },
+            timeout=15,
+        )
+        r.raise_for_status()
+        for f in (r.json() or {}).get('features', []) or []:
+            a = f.get('attributes') or {}
+            nm = _norm_fire_name(a.get('IncidentName'))
+            pct = a.get('PercentContained')
+            if nm and pct is not None and nm not in lookup:
+                try:
+                    lookup[nm] = float(pct)
+                except Exception:
+                    pass
+    except Exception as e:
+        logger.warning('WFIGS locations containment lookup failed: %s', e)
+
+    return lookup
+
+
 @predict_bp.route('/fire-perimeters', methods=['GET'])
 def nifc_fire_perimeters():
-    """Proxy NIFC WFIGS fire perimeters API (CORS blocked from frontend)."""
+    """Proxy NIFC WFIGS fire perimeters (California only) and enrich missing
+    containment percentages from CAL FIRE + WFIGS Incident Locations so the
+    4-tier color coding can actually kick in."""
     try:
         r = http_requests.get(
             'https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services/'
@@ -178,7 +241,28 @@ def nifc_fire_perimeters():
             headers={'User-Agent': 'FireScopeProxy/1.0'},
         )
         r.raise_for_status()
-        return jsonify(r.json())
+        data = r.json()
     except Exception as e:
         logger.warning('NIFC perimeters proxy failed: %s', e)
         return jsonify({'type': 'FeatureCollection', 'features': []}), 200
+
+    try:
+        lookup = _fetch_containment_by_name()
+        kept = []
+        for feat in (data or {}).get('features', []) or []:
+            props = feat.get('properties') or {}
+            if props.get('attr_PercentContained') is None:
+                nm = _norm_fire_name(props.get('poly_IncidentName'))
+                if nm in lookup:
+                    props['attr_PercentContained'] = lookup[nm]
+                    feat['properties'] = props
+            # Re-apply the <100 filter after enrichment
+            pct = props.get('attr_PercentContained')
+            if pct is not None and float(pct) >= 100:
+                continue
+            kept.append(feat)
+        data['features'] = kept
+    except Exception as e:
+        logger.warning('Containment enrichment failed: %s', e)
+
+    return jsonify(data)
