@@ -100,40 +100,109 @@ function HistoricalFirePerimetersOverlay({ fireData, selectedFire, onSelect }: {
   }, [fireData, selectedKey]);
 
   // Render tooltips
+  // Aggregate stats used when no individual fire is selected. Computed inline
+  // because the parent already memoizes fireData per year; the per-render cost
+  // here is one pass over fireData.features.
+  let aggregate: { count: number; totalAcres: number; avgAcres: number; largest: any; year: number | null } = {
+    count: 0, totalAcres: 0, avgAcres: 0, largest: null, year: null,
+  };
+  if (fireData?.features?.length) {
+    let totalAcres = 0;
+    let largest = fireData.features[0];
+    for (const f of fireData.features) {
+      const a = Number(f?.properties?.GIS_ACRES) || 0;
+      totalAcres += a;
+      if (a > (Number(largest?.properties?.GIS_ACRES) || 0)) largest = f;
+    }
+    const count = fireData.features.length;
+    aggregate = {
+      count,
+      totalAcres,
+      avgAcres: count > 0 ? Math.round(totalAcres / count) : 0,
+      largest,
+      year: largest?.properties?.YEAR_ ?? null,
+    };
+  }
+
   return (
     <>
-      {/* Selected-fire info card — mirrors the research map's fire perimeter
-          popup: top-left card, flame icon, dismiss button, live info. */}
-      {selectedFire && (
-        <div className="absolute top-3 left-3 z-10 max-w-[280px] bg-white/95 backdrop-blur-sm rounded-xl p-4 shadow-lg text-sm border border-red-200 pointer-events-auto">
-          <div className="flex items-center gap-2 mb-2">
-            <Flame className="h-4 w-4 text-red-500" />
-            <span className="font-bold">{selectedFire.FIRE_NAME || 'Unknown Fire'}</span>
-          </div>
-          <div className="space-y-1 text-sm">
-            <div><strong>Year:</strong> {selectedFire.YEAR_}</div>
-            <div><strong>Incident #:</strong> {selectedFire.INC_NUM}</div>
-            <div><strong>Acres:</strong> {selectedFire.GIS_ACRES?.toLocaleString()}</div>
-            <div><strong>Agency:</strong> {selectedFire.AGENCY}</div>
-            <div><strong>Unit:</strong> {selectedFire.UNIT_ID}</div>
-            {selectedFire.ALARM_DATE && (
-              <div><strong>Start:</strong> {new Date(selectedFire.ALARM_DATE).toLocaleDateString()}</div>
-            )}
-            {selectedFire.CONT_DATE && (
-              <div><strong>Contained:</strong> {new Date(selectedFire.CONT_DATE).toLocaleDateString()}</div>
-            )}
-            {selectedFire.CAUSE && (
-              <div><strong>Cause:</strong> {selectedFire.CAUSE}</div>
-            )}
-          </div>
-          <button
-            onClick={() => onSelect(null)}
-            className="mt-2 text-xs text-red-500 hover:text-red-700 font-medium"
-          >
-            Dismiss
-          </button>
+      {/* Always-on left in-map info card (matches the Research map pattern).
+          Aggregate stats when no fire is picked; specific fire info once a
+          user clicks one or selects from the dropdown. */}
+      <div
+        className="bg-white/95 backdrop-blur-sm rounded-xl shadow-lg border overflow-y-auto"
+        style={{
+          position: 'absolute',
+          top: 12,
+          left: 12,
+          bottom: 12,
+          width: 280,
+          zIndex: 50,
+          pointerEvents: 'auto',
+        }}
+      >
+        <div className="p-4 text-sm space-y-3">
+          {selectedFire ? (
+            <>
+              <div className="flex items-center gap-2">
+                <Flame className="h-4 w-4 text-red-500 shrink-0" />
+                <span className="font-bold text-base">{selectedFire.FIRE_NAME || 'Unknown Fire'}</span>
+              </div>
+              <div className="space-y-1 text-xs">
+                {selectedFire.YEAR_ != null && <div><strong>Year:</strong> {selectedFire.YEAR_}</div>}
+                {selectedFire.INC_NUM && <div><strong>Incident #:</strong> {selectedFire.INC_NUM}</div>}
+                {selectedFire.GIS_ACRES != null && <div><strong>Acres:</strong> {Number(selectedFire.GIS_ACRES).toLocaleString(undefined, { maximumFractionDigits: 1 })}</div>}
+                {selectedFire.AGENCY && <div><strong>Agency:</strong> {selectedFire.AGENCY}</div>}
+                {selectedFire.UNIT_ID && <div><strong>Unit:</strong> {selectedFire.UNIT_ID}</div>}
+                {selectedFire.ALARM_DATE && (
+                  <div><strong>Start:</strong> {new Date(selectedFire.ALARM_DATE).toLocaleDateString()}</div>
+                )}
+                {selectedFire.CONT_DATE && (
+                  <div><strong>Contained:</strong> {new Date(selectedFire.CONT_DATE).toLocaleDateString()}</div>
+                )}
+                {selectedFire.CAUSE && <div><strong>Cause:</strong> {selectedFire.CAUSE}</div>}
+                {selectedFire.COMPLEX_NAME && <div><strong>Complex:</strong> {selectedFire.COMPLEX_NAME}</div>}
+              </div>
+              <button
+                onClick={() => onSelect(null)}
+                className="mt-1 text-xs text-red-500 hover:text-red-700 font-medium"
+              >
+                ← Back to summary
+              </button>
+            </>
+          ) : (
+            <>
+              <div className="flex items-center gap-2">
+                <Flame className="h-4 w-4 text-red-500 shrink-0" />
+                <span className="font-bold text-base">All fires — summary</span>
+              </div>
+              {aggregate.count === 0 ? (
+                <p className="text-xs text-muted-foreground">Loading fire perimeters…</p>
+              ) : (
+                <>
+                  <div className="space-y-1 text-xs">
+                    <div><strong>Year:</strong> {aggregate.year ?? '—'}</div>
+                    <div><strong>Total fires:</strong> {aggregate.count.toLocaleString()}</div>
+                    <div><strong>Total acres:</strong> {Math.round(aggregate.totalAcres).toLocaleString()}</div>
+                    <div><strong>Average size:</strong> {aggregate.avgAcres.toLocaleString()} ac</div>
+                    <div className="pt-2 border-t">
+                      <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Largest fire</div>
+                      <div className="font-medium">{aggregate.largest?.properties?.FIRE_NAME || 'Unnamed'}</div>
+                      <div className="text-[11px] text-muted-foreground">
+                        {Math.round(Number(aggregate.largest?.properties?.GIS_ACRES) || 0).toLocaleString()} ac
+                        {aggregate.largest?.properties?.CAUSE ? ` · ${aggregate.largest.properties.CAUSE}` : ''}
+                      </div>
+                    </div>
+                  </div>
+                  <p className="text-[10px] text-muted-foreground pt-2 border-t">
+                    Click a fire on the map or pick one from the dropdown above to see its detail.
+                  </p>
+                </>
+              )}
+            </>
+          )}
         </div>
-      )}
+      </div>
     </>
   );
 }
