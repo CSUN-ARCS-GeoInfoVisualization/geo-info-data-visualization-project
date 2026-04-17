@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useRef, useMemo } from "react";
 import {
   Calendar,
   Filter,
@@ -29,7 +29,7 @@ import { GeoJsonLayer, ScatterplotLayer } from '@deck.gl/layers';
 // Historical fire perimeters overlay — mirrors the research page's
 // `UnifiedResearchOverlay` pattern: a single GoogleMapsOverlay per map,
 // data passed in as a prop (no internal fetch), layers rebuilt in one effect.
-function HistoricalFirePerimetersOverlay({ fireData }: { fireData: any }) {
+function HistoricalFirePerimetersOverlay({ fireData, focusedFireKey }: { fireData: any; focusedFireKey: string | null }) {
   const map = useMap();
   const overlayRef = useRef<GoogleMapsOverlay | null>(null);
   const [selectedFire, setSelectedFire] = useState<any>(null);
@@ -54,6 +54,47 @@ function HistoricalFirePerimetersOverlay({ fireData }: { fireData: any }) {
       overlayRef.current = null;
     };
   }, [map]);
+
+  // Pan/zoom to a user-picked fire from the dropdown and open the detail popup.
+  // Use a plain centroid + fixed zoom instead of fitBounds — fitBounds on a
+  // 0.01-acre polygon sets zoom to max (22), which was triggering a cascade of
+  // Google Maps tile loads that blocked the main thread and froze the page.
+  useEffect(() => {
+    if (!map || !focusedFireKey || !fireData?.features?.length) return;
+    const raf = window.requestAnimationFrame(() => {
+      const f = fireData.features.find((ft: any) => {
+        const p = ft.properties || {};
+        return `${p.OBJECTID ?? ''}-${p.FIRE_NAME ?? ''}-${p.INC_NUM ?? ''}` === focusedFireKey;
+      });
+      if (!f?.geometry) return;
+
+      // Centroid: average of every coordinate in the polygon/multipolygon.
+      let lat = 0, lng = 0, n = 0;
+      const walk = (c: any) => {
+        if (!Array.isArray(c)) return;
+        if (typeof c[0] === 'number' && typeof c[1] === 'number') {
+          lng += c[0]; lat += c[1]; n += 1;
+        } else {
+          for (const sub of c) walk(sub);
+        }
+      };
+      walk(f.geometry.coordinates);
+      if (n === 0) return;
+      lat /= n; lng /= n;
+
+      // Pick a zoom that scales with acreage so tiny fires get a tight frame
+      // without triggering a max-zoom tile storm.
+      const acres = Number(f.properties?.GIS_ACRES) || 0;
+      const zoom = acres >= 10000 ? 9
+        : acres >= 1000 ? 11
+        : acres >= 100 ? 13
+        : 14;
+      map.panTo({ lat, lng });
+      map.setZoom(zoom);
+      setSelectedFire(f.properties);
+    });
+    return () => window.cancelAnimationFrame(raf);
+  }, [map, focusedFireKey, fireData]);
 
   // Rebuild layers when data OR selection changes. Layer data uses the
   // parent's stable fireData ref, so switching map type doesn't re-hydrate.
@@ -391,6 +432,8 @@ export function History() {
   const selectedYears = [selectedYear]; // kept as an array locally so the existing overlay contract still works
   const mapTypeId: 'roadmap' = 'roadmap';
   const [searchQuery, setSearchQuery] = useState("");
+  const [focusedFireKey, setFocusedFireKey] = useState<string | null>(null);
+
   // Display controls removed — perimeters are always shown at full opacity,
   // structure damage (DINS) is intentionally not rendered on the history map.
   const opacity = 100;
@@ -400,6 +443,20 @@ export function History() {
   const [showYearDropdown, setShowYearDropdown] = useState(false);
   const [loadingYears, setLoadingYears] = useState(false);
   const yearCacheRef = useRef<Record<number, any[]>>({}); // in-memory per-year GeoJSON feature cache
+
+  // Memoize the fire-dropdown options so the heavy sort doesn't re-run on
+  // every state change. Declared AFTER fireData to avoid a TDZ ReferenceError.
+  const fireOptions = useMemo(() => {
+    const feats = (fireData?.features || []).slice();
+    feats.sort((a: any, b: any) => (b.properties?.GIS_ACRES || 0) - (a.properties?.GIS_ACRES || 0));
+    return feats.map((f: any) => {
+      const p = f.properties || {};
+      const key = `${p.OBJECTID ?? ''}-${p.FIRE_NAME ?? ''}-${p.INC_NUM ?? ''}`;
+      const name = p.FIRE_NAME || 'Unnamed';
+      const acres = p.GIS_ACRES ? Math.round(p.GIS_ACRES).toLocaleString() : '?';
+      return { key, label: `${name} · ${acres} ac` };
+    });
+  }, [fireData]);
 
   const [stats, setStats] = useState({
     totalFires: 0,
@@ -587,32 +644,45 @@ export function History() {
                   Historical Fire Perimeters Map
                 </CardTitle>
                 <div className="flex flex-wrap items-center gap-2">
-                  {/* Search */}
-                  <div className="relative">
-                    <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-                    <Input
-                      placeholder="Search fire name..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      className="w-48 pl-8"
-                    />
-                  </div>
-
-                  {/* Year Filter — native single-select, scrolls after 6 rows */}
+                  {/* Fire-name dropdown — lists every fire for the selected year;
+                      browser-native scroll after the first 6 options. Selecting a
+                      fire pans the map to that polygon via focusedFireKey. */}
                   <div className="flex items-center gap-2">
-                    <label htmlFor="history-year" className="text-sm text-muted-foreground">Year:</label>
+                    <label htmlFor="history-fire" className="text-sm text-muted-foreground">Fire:</label>
                     <select
-                      id="history-year"
-                      value={selectedYear}
-                      onChange={(e) => setSelectedYear(Number(e.target.value))}
+                      id="history-fire"
+                      value={focusedFireKey || ""}
+                      onChange={(e) => setFocusedFireKey(e.target.value || null)}
                       size={1}
-                      className="text-sm border rounded px-2 py-1.5 bg-background w-28"
+                      className="text-sm border rounded px-2 py-1.5 bg-background w-56"
                     >
-                      {availableYears.map((y) => (
-                        <option key={y} value={y}>{y}</option>
+                      <option value="">All fires ({fireOptions.length})</option>
+                      {fireOptions.map((o: { key: string; label: string }) => (
+                        <option key={o.key} value={o.key}>{o.label}</option>
                       ))}
                     </select>
-                    {loadingYears && <span className="text-[11px] text-muted-foreground">loading…</span>}
+                  </div>
+
+                  {/* Year Filter — shadcn Select with a fixed-height scrolling
+                      popup so the list doesn't run off the page with 75+ years. */}
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm text-muted-foreground">Year:</span>
+                    <Select
+                      value={String(selectedYear)}
+                      onValueChange={(v) => setSelectedYear(Number(v))}
+                    >
+                      <SelectTrigger className="w-24 h-8">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent
+                        className="max-h-56"
+                        style={{ maxHeight: '14rem' }}
+                      >
+                        {availableYears.map((y) => (
+                          <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
                 </div>
               </div>
@@ -629,7 +699,7 @@ export function History() {
                   disableDefaultUI={true}
                 >
                   {/* Fire Perimeters Layer — rendered last so it sits on top of the map tiles */}
-                  <HistoricalFirePerimetersOverlay fireData={fireData} />
+                  <HistoricalFirePerimetersOverlay fireData={fireData} focusedFireKey={focusedFireKey} />
                 </GoogleMap>
               </div>
 

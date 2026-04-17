@@ -408,9 +408,22 @@ function ResearchMapView() {
           const results = await Promise.all(
             overrideEntries.map(async ([name, ov]) => {
               try {
+                // New ML model signature (feature/ml-model-improvements merge):
+                // expects evi, air_temp_encoded, wind, humidity, elevation.
+                // Our sliders still carry the legacy `lst` name — remap it to
+                // air_temp_encoded (same Kelvin*50 scale) and supply a
+                // reasonable humidity default until that slider is exposed.
+                const payload: any = {
+                  evi: ov.evi,
+                  air_temp_encoded: ov.lst,
+                  wind: ov.wind,
+                  humidity: (ov as any).humidity ?? 50,
+                  elevation: ov.elevation,
+                  zone_name: name,
+                };
                 const r = await apiFetch("/predict-custom", {
                   method: "POST",
-                  body: JSON.stringify({ ...ov, zone_name: name }),
+                  body: JSON.stringify(payload),
                 });
                 if (r.ok) {
                   const resp = await r.json();
