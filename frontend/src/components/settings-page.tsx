@@ -165,8 +165,34 @@ export function SettingsPage({ defaultTab = "profile" }: SettingsPageProps) {
                     FireScope aggregates open-source data from government agencies, satellite systems, and news providers to deliver real-time wildfire risk intelligence for California.
                   </p>
                 </div>
-                <div className="px-6 py-5 text-sm text-muted-foreground">
-                  All data is sourced from publicly available APIs and open datasets. FireScope does not generate fire reports — it visualizes and analyzes data from the sources listed below.
+                <div className="px-6 py-5 text-sm text-muted-foreground space-y-3">
+                  <p>
+                    All data is sourced from publicly available APIs and open datasets. FireScope does not generate fire reports — it visualizes and analyzes data from the sources listed below.
+                  </p>
+                  <div className="flex flex-wrap gap-x-6 gap-y-2 text-xs pt-2 border-t">
+                    <div>
+                      <span className="font-semibold text-foreground">Website: </span>
+                      <a
+                        href="https://firescope.netlify.app"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-600 hover:underline"
+                      >
+                        firescope.netlify.app
+                      </a>
+                    </div>
+                    <div>
+                      <span className="font-semibold text-foreground">Source: </span>
+                      <a
+                        href="https://github.com/CSUN-ARCS-GeoInfoVisualization/geo-info-data-visualization-project"
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="text-blue-600 hover:underline"
+                      >
+                        GitHub repository
+                      </a>
+                    </div>
+                  </div>
                 </div>
               </div>
 
@@ -291,15 +317,9 @@ export function SettingsPage({ defaultTab = "profile" }: SettingsPageProps) {
                 <div className="divide-y">
                   <AboutItem
                     name="scikit-learn Risk Model (active)"
-                    description="Logistic-regression classifier that predicts wildfire risk from four live inputs: EVI (vegetation), LST (land-surface temperature), wind speed, and elevation. Drives the 3-tier risk-zone coloring (green / yellow / red) across Dashboard, Risk Map, and Research views. Per-zone overrides are applied through POST /api/predict-custom."
+                    description="Classifier that predicts wildfire risk from five live inputs: EVI (vegetation), air-temperature-encoded (°C + 273.15) / 0.02, wind speed, relative humidity, and elevation. Drives the 3-tier risk-zone coloring (green / yellow / red) across Dashboard, Risk Map, and Research views. Per-zone overrides are applied through POST /api/predict-custom."
                     badge="ML model"
                     badgeColor="bg-red-100 text-red-700"
-                  />
-                  <AboutItem
-                    name="ActiveFireSnapshot Pipeline (planned retrain)"
-                    description="Tracking schema logged for the next model retrain (option 3): Date, Latitude, Longitude, EVI, TA (thermal anomalies), LST, Wind, Elevation, Fire (binary outcome), NDVI (vegetation cover). Researcher sliders already expose the full feature set so the snapshot-capture job can consume them directly."
-                    badge="Pipeline"
-                    badgeColor="bg-slate-100 text-slate-700"
                   />
                 </div>
               </div>
