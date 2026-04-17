@@ -20,6 +20,7 @@ import { GoogleMapsOverlay } from '@deck.gl/google-maps';
 import { IconLayer } from '@deck.gl/layers';
 import Supercluster from 'supercluster';
 import { apiFetch } from '../services/api';
+import { FirePerimetersOverlay, SavedLocationsOverlay } from './GoogleRiskMap';
 
 const evacuationZones = [
   {
@@ -810,7 +811,9 @@ export function EvacuationRoutes() {
               gestureHandling="greedy"
               disableDefaultUI={false}
             >
+              <FirePerimetersOverlay />
               <FireFacilitiesOverlay smallDots={smallDots} />
+              <SavedLocationsOverlay />
             </Map>
           </div>
 
@@ -869,6 +872,20 @@ export function EvacuationRoutes() {
                   </div>
                 </div>
               </div>
+            </div>
+
+            {/* Active Fire Perimeters */}
+            <div className="mt-4 pt-4 border-t border-gray-200">
+              <div className="text-base font-semibold text-muted-foreground mb-2">Active Fires — Avoid These Areas</div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
+                <div className="flex items-center gap-2"><span className="inline-block w-4 h-3 rounded border border-gray-300" style={{ backgroundColor: '#dc2626' }} /> 0–24% contained</div>
+                <div className="flex items-center gap-2"><span className="inline-block w-4 h-3 rounded border border-gray-300" style={{ backgroundColor: '#f97316' }} /> 25–49%</div>
+                <div className="flex items-center gap-2"><span className="inline-block w-4 h-3 rounded border border-gray-300" style={{ backgroundColor: '#facc15' }} /> 50–99%</div>
+                <div className="flex items-center gap-2"><span className="inline-block w-4 h-3 rounded border border-gray-300" style={{ backgroundColor: '#2563eb' }} /> Your saved location</div>
+              </div>
+              <p className="text-xs text-muted-foreground mt-2">
+                Fire perimeter polygons come from NIFC WFIGS (live California active fires, &lt;100% contained). Size + location reflect the real fire footprint — route around them.
+              </p>
             </div>
 
             {/* Instructions */}
