@@ -656,18 +656,6 @@ function ResearchMapView() {
                         <input type="range" min={0} max={3000} step={50} value={elevSlider} onChange={(e) => { const v = Number(e.target.value); setElevSlider(v); updateZoneOverride("elevation", v); }} disabled={!useOverrides || !selectedZone} className="w-full mt-1 accent-gray-500 disabled:opacity-40" />
                       </div>
                       <div>
-                        <label className="text-xs font-medium flex justify-between">📅 Date (day of year) <span className="text-muted-foreground">{dateSlider}</span></label>
-                        <input type="range" min={1} max={366} step={1} value={dateSlider} onChange={(e) => { const v = Number(e.target.value); setDateSlider(v); updateZoneOverride("date", v); }} disabled={!useOverrides || !selectedZone} className="w-full mt-1 accent-purple-500 disabled:opacity-40" />
-                      </div>
-                      <div>
-                        <label className="text-xs font-medium flex justify-between">📍 Latitude <span className="text-muted-foreground">{latSlider.toFixed(2)}°</span></label>
-                        <input type="range" min={32} max={42} step={0.01} value={latSlider} onChange={(e) => { const v = Number(e.target.value); setLatSlider(v); updateZoneOverride("latitude", v); }} disabled={!useOverrides || !selectedZone} className="w-full mt-1 accent-sky-500 disabled:opacity-40" />
-                      </div>
-                      <div>
-                        <label className="text-xs font-medium flex justify-between">📍 Longitude <span className="text-muted-foreground">{lonSlider.toFixed(2)}°</span></label>
-                        <input type="range" min={-125} max={-114} step={0.01} value={lonSlider} onChange={(e) => { const v = Number(e.target.value); setLonSlider(v); updateZoneOverride("longitude", v); }} disabled={!useOverrides || !selectedZone} className="w-full mt-1 accent-sky-500 disabled:opacity-40" />
-                      </div>
-                      <div>
                         <label className="text-xs font-medium flex justify-between">🔥 TA (Thermal Anomalies) <span className="text-muted-foreground">{taSlider}</span></label>
                         <input type="range" min={0} max={100} step={1} value={taSlider} onChange={(e) => { const v = Number(e.target.value); setTaSlider(v); updateZoneOverride("ta", v); }} disabled={!useOverrides || !selectedZone} className="w-full mt-1 accent-red-500 disabled:opacity-40" />
                       </div>
@@ -680,7 +668,7 @@ function ResearchMapView() {
                         <input type="checkbox" checked={fireBinary} onChange={(e) => { const v = e.target.checked; setFireBinary(v); updateZoneOverride("fire", v as any); }} disabled={!useOverrides || !selectedZone} className="accent-red-500 disabled:opacity-40" />
                       </label>
                       <p className="text-[10px] text-muted-foreground">
-                        EVI · LST · Wind · Elevation drive the current model. Date · Lat · Lon · TA · NDVI · Fire are logged for the next retrain (see ActiveFireSnapshot in backend/routes/history.py).
+                        EVI · LST · Wind · Elevation drive the current model. TA · NDVI · Fire are logged for the next retrain (see ActiveFireSnapshot in backend/routes/history.py).
                       </p>
                     </div>
 

@@ -389,7 +389,7 @@ export function History() {
   // map opens on a year that actually has full CAL FIRE records.
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear() - 1);
   const selectedYears = [selectedYear]; // kept as an array locally so the existing overlay contract still works
-  const [mapTypeId, setMapTypeId] = useState<'roadmap' | 'satellite' | 'hybrid' | 'terrain'>('roadmap');
+  const mapTypeId: 'roadmap' = 'roadmap';
   const [searchQuery, setSearchQuery] = useState("");
   // Display controls removed — perimeters are always shown at full opacity,
   // structure damage (DINS) is intentionally not rendered on the history map.
@@ -614,18 +614,6 @@ export function History() {
                     </select>
                     {loadingYears && <span className="text-[11px] text-muted-foreground">loading…</span>}
                   </div>
-                  {/* Map Type Selector */}
-                  <Select value={mapTypeId} onValueChange={(value) => setMapTypeId(value as any)}>
-                    <SelectTrigger className="w-32">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="satellite">Satellite</SelectItem>
-                      <SelectItem value="terrain">Terrain</SelectItem>
-                      <SelectItem value="roadmap">Roadmap</SelectItem>
-                      <SelectItem value="hybrid">Hybrid</SelectItem>
-                    </SelectContent>
-                  </Select>
                 </div>
               </div>
             </CardHeader>
