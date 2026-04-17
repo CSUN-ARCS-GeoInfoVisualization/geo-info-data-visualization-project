@@ -507,7 +507,7 @@ export function History() {
     };
     load();
     return () => { cancelled = true; };
-  }, [selectedYears]);
+  }, [selectedYear]);
 
   // Close dropdown when clicking outside
   useEffect(() => {

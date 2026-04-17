@@ -1,0 +1,18 @@
+{
+  "mcpServers": {
+    "gsd-workflow": {
+      "command": "/home/cohedo/.nvm/versions/node/v22.22.2/bin/node",
+      "args": [
+        "/home/cohedo/.nvm/versions/node/v22.22.2/lib/node_modules/gsd-pi/packages/mcp-server/dist/cli.js"
+      ],
+      "cwd": "/home/cohedo/geo_info_data_visualization",
+      "env": {
+        "GSD_CLI_PATH": "/home/cohedo/.nvm/versions/node/v22.22.2/bin/gsd",
+        "GSD_WORKFLOW_EXECUTORS_MODULE": "/home/cohedo/.gsd/agent/extensions/gsd/tools/workflow-tool-executors.js",
+        "GSD_WORKFLOW_WRITE_GATE_MODULE": "/home/cohedo/.gsd/agent/extensions/gsd/bootstrap/write-gate.js",
+        "GSD_PERSIST_WRITE_GATE_STATE": "1",
+        "GSD_WORKFLOW_PROJECT_ROOT": "/home/cohedo/geo_info_data_visualization"
+      }
+    }
+  }
+}
