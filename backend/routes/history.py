@@ -132,7 +132,7 @@ def history_perimeters():
     where = f"YEAR_ >= {year_from} AND YEAR_ <= {year_to} AND GIS_ACRES >= {min_acres}"
     params = {
         'where': where,
-        'outFields': 'YEAR_,FIRE_NAME,INC_NUM,ALARM_DATE,CONT_DATE,CAUSE,AGENCY,UNIT_ID,GIS_ACRES,COMPLEX_NAME,IRWINID',
+        'outFields': 'OBJECTID,YEAR_,FIRE_NAME,INC_NUM,ALARM_DATE,CONT_DATE,CAUSE,AGENCY,UNIT_ID,GIS_ACRES,COMPLEX_NAME,IRWINID',
         'f': 'geojson',
         'resultRecordCount': 4000,
         'orderByFields': 'GIS_ACRES DESC',

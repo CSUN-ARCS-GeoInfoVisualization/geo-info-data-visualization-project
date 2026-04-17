@@ -81,19 +81,19 @@ function HistoricalFirePerimetersOverlay({ fireData }: { fireData: any }) {
           lineWidthMinPixels: 3,
           getLineWidth: (f: any) => {
             const sel = selectedFireRef.current;
-            return sel && f.properties.OBJECTID === sel.OBJECTID ? 6 : 3;
+            return sel && (f.properties.OBJECTID ?? `${f.properties.FIRE_NAME}-${f.properties.YEAR_}-${f.properties.INC_NUM}`) === (sel.OBJECTID ?? `${sel.FIRE_NAME}-${sel.YEAR_}-${sel.INC_NUM}`) ? 6 : 3;
           },
           getLineColor: (f: any) => {
             const sel = selectedFireRef.current;
-            if (sel && f.properties.OBJECTID === sel.OBJECTID) return [0, 255, 255, 255];
+            if (sel && (f.properties.OBJECTID ?? `${f.properties.FIRE_NAME}-${f.properties.YEAR_}-${f.properties.INC_NUM}`) === (sel.OBJECTID ?? `${sel.FIRE_NAME}-${sel.YEAR_}-${sel.INC_NUM}`)) return [0, 255, 255, 255];
             return colorForAcres(f.properties.GIS_ACRES || 0);
           },
           getFillColor: (f: any) => colorForAcres(f.properties.GIS_ACRES || 0),
           onClick: (info: any) => { if (info.object) setSelectedFire(info.object.properties); },
           updateTriggers: {
             getFillColor: [fireData],
-            getLineColor: [fireData, selectedFire?.OBJECTID],
-            getLineWidth: [fireData, selectedFire?.OBJECTID],
+            getLineColor: [fireData, (selectedFire ? `${selectedFire.OBJECTID ?? ''}-${selectedFire.FIRE_NAME ?? ''}-${selectedFire.YEAR_ ?? ''}-${selectedFire.INC_NUM ?? ''}` : '')],
+            getLineWidth: [fireData, (selectedFire ? `${selectedFire.OBJECTID ?? ''}-${selectedFire.FIRE_NAME ?? ''}-${selectedFire.YEAR_ ?? ''}-${selectedFire.INC_NUM ?? ''}` : '')],
           },
         }),
       ],
