@@ -21,6 +21,12 @@ WFIGS_URL = (
     "https://services3.arcgis.com/T4QMspbfLg3qTGWY/ArcGIS/rest/services/"
     "WFIGS_Incident_Locations_YearToDate/FeatureServer/0/query"
 )
+WFIGS_PERIMETERS_URL = (
+    "https://services3.arcgis.com/T4QMspbfLg3qTGWY/ArcGIS/rest/services/"
+    "WFIGS_Interagency_Perimeters_YearToDate/FeatureServer/0/query"
+)
+INCIWEB_RSS = "https://inciweb.wildfire.gov/incidents/rss.xml"
+CA_BBOX = "-125,32,-114,42"  # west,south,east,north
 
 _cache: dict = {}
 CACHE_TTL = 300  # 5 minutes
@@ -72,17 +78,21 @@ def _fetch_calfire():
 
 
 def _fetch_wfigs():
+    # Broadened query: use CA bbox spatial filter (POOState can be null for brand-new
+    # incidents), drop IncidentTypeCategory filter so we catch any fire regardless of
+    # how it's classified in IRWIN.
     params = {
-        "where": "POOState='US-CA' AND IncidentTypeCategory='WF'",
-        "outFields": (
-            "IncidentName,IrwinID,DailyAcres,PercentContained,"
-            "FireDiscoveryDateTime,POOCounty,IncidentTypeCategory,IsFireCauseDetermined"
-        ),
+        "where": "1=1",
+        "geometry": CA_BBOX,
+        "geometryType": "esriGeometryEnvelope",
+        "inSR": "4326",
+        "spatialRel": "esriSpatialRelIntersects",
+        "outFields": "*",
         "f": "geojson",
-        "resultRecordCount": 2000,
+        "resultRecordCount": 5000,
     }
     try:
-        r = http_requests.get(WFIGS_URL, params=params, timeout=15)
+        r = http_requests.get(WFIGS_URL, params=params, timeout=20)
         r.raise_for_status()
         data = r.json()
     except Exception as e:
@@ -108,11 +118,17 @@ def _fetch_wfigs():
             pct = int(float(props.get("PercentContained") or 0))
         except Exception:
             pct = 0
+        acres = (
+            props.get("DailyAcres")
+            or props.get("CalculatedAcres")
+            or props.get("IncidentSize")
+            or props.get("DiscoveryAcres")
+        )
         out.append({
             "name": props.get("IncidentName") or "Unnamed Incident",
             "lat": float(coords[1]),
             "lon": float(coords[0]),
-            "acres": props.get("DailyAcres"),
+            "acres": acres,
             "contained": pct,
             "started": started_iso,
             "county": props.get("POOCounty"),
@@ -123,6 +139,116 @@ def _fetch_wfigs():
             ),
             "active": True,
             "irwin_id": props.get("IrwinID"),
+        })
+    return out
+
+
+def _fetch_wfigs_perimeters():
+    """WFIGS perimeters layer — sometimes carries smaller incidents that the points layer misses."""
+    params = {
+        "where": "1=1",
+        "geometry": CA_BBOX,
+        "geometryType": "esriGeometryEnvelope",
+        "inSR": "4326",
+        "spatialRel": "esriSpatialRelIntersects",
+        "outFields": (
+            "poly_IncidentName,attr_IncidentName,attr_IrwinID,"
+            "attr_FireDiscoveryDateTime,poly_GISAcres,attr_PercentContained,attr_POOCounty"
+        ),
+        "f": "json",  # centroid-only summary
+        "returnCentroid": "true",
+        "resultRecordCount": 5000,
+    }
+    try:
+        r = http_requests.get(WFIGS_PERIMETERS_URL, params=params, timeout=20)
+        r.raise_for_status()
+        data = r.json()
+    except Exception as e:
+        logger.warning("WFIGS perimeters fetch failed: %s", e)
+        return []
+    out = []
+    for f in (data or {}).get("features", []) or []:
+        a = f.get("attributes") or {}
+        c = f.get("centroid") or f.get("geometry") or {}
+        lon, lat = c.get("x"), c.get("y")
+        if lat is None or lon is None:
+            continue
+        discovery = a.get("attr_FireDiscoveryDateTime")
+        started_iso = None
+        try:
+            if discovery is not None:
+                started_iso = time.strftime(
+                    "%Y-%m-%dT%H:%M:%SZ", time.gmtime(int(discovery) / 1000)
+                )
+        except Exception:
+            pass
+        try:
+            pct = int(float(a.get("attr_PercentContained") or 0))
+        except Exception:
+            pct = 0
+        out.append({
+            "name": a.get("poly_IncidentName") or a.get("attr_IncidentName") or "Unnamed Incident",
+            "lat": float(lat),
+            "lon": float(lon),
+            "acres": a.get("poly_GISAcres"),
+            "contained": pct,
+            "started": started_iso,
+            "county": a.get("attr_POOCounty"),
+            "source": "NIFC / WFIGS (perimeter)",
+            "source_url": "https://data-nifc.opendata.arcgis.com/",
+            "active": True,
+            "irwin_id": a.get("attr_IrwinID"),
+        })
+    return out
+
+
+def _fetch_inciweb():
+    """Parse the InciWeb RSS feed and keep items that mention California."""
+    try:
+        r = http_requests.get(INCIWEB_RSS, timeout=12)
+        r.raise_for_status()
+        xml = r.text
+    except Exception as e:
+        logger.warning("InciWeb fetch failed: %s", e)
+        return []
+    import re
+    out = []
+    # Each <item> ... </item> block
+    for block in re.findall(r"<item>(.*?)</item>", xml, flags=re.S):
+        def tag(t):
+            m = re.search(rf"<{t}>(.*?)</{t}>", block, flags=re.S)
+            return (m.group(1).strip() if m else "").replace("<![CDATA[", "").replace("]]>", "")
+        title = tag("title")
+        desc = tag("description")
+        link = tag("link")
+        pub = tag("pubDate")
+        hay = (title + " " + desc).lower()
+        if "california" not in hay and ", ca" not in hay and " ca " not in hay:
+            continue
+        # InciWeb RSS doesn't include lat/lon in most items. Skip unless geo-tagged.
+        mlat = re.search(r"<geo:lat>([-\d.]+)</geo:lat>", block)
+        mlon = re.search(r"<geo:long>([-\d.]+)</geo:long>", block)
+        if not (mlat and mlon):
+            continue
+        started_iso = None
+        try:
+            started_iso = time.strftime(
+                "%Y-%m-%dT%H:%M:%SZ",
+                time.strptime(pub[:25], "%a, %d %b %Y %H:%M:%S"),
+            )
+        except Exception:
+            pass
+        out.append({
+            "name": title.split(" (")[0] or "InciWeb Incident",
+            "lat": float(mlat.group(1)),
+            "lon": float(mlon.group(1)),
+            "acres": None,
+            "contained": 0,
+            "started": started_iso,
+            "county": None,
+            "source": "InciWeb",
+            "source_url": link or "https://inciweb.wildfire.gov/",
+            "active": True,
         })
     return out
 
@@ -181,7 +307,12 @@ def wildfire_recent():
     if cached and (now - cached[0]) < CACHE_TTL:
         items = cached[1]
     else:
-        items = _merge(_fetch_calfire() + _fetch_wfigs())
+        items = _merge(
+            _fetch_calfire()
+            + _fetch_wfigs()
+            + _fetch_wfigs_perimeters()
+            + _fetch_inciweb()
+        )
         _cache["all"] = (now, items)
 
     # Optional filter: last N hours

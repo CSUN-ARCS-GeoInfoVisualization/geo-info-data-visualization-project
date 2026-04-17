@@ -120,9 +120,11 @@ function FireIncidentMarker({ incident, selected, onClick }: { incident: FireInc
     if (!map) return;
 
     const getIncidentColor = () => {
-      if (incident.status === 'active') return '#dc2626';
-      if (incident.status === 'contained') return '#f97316';
-      return '#eab308';
+      const pct = Number(incident.containment ?? 0);
+      if (pct >= 100) return '#ffffff';
+      if (pct >= 50) return '#facc15';
+      if (pct >= 25) return '#f97316';
+      return '#dc2626';
     };
 
     const marker = new google.maps.Marker({

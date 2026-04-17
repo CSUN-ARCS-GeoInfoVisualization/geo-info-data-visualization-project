@@ -152,8 +152,13 @@ export function FirePerimetersOverlay() {
           radiusMaxPixels: 22,
           getPosition: (d: CalFireIncident) => [d.Longitude, d.Latitude],
           getRadius: (d: CalFireIncident) => Math.sqrt(Math.max(d.AcresBurned ?? 1, 1)) * 300,
-          getFillColor: (d: CalFireIncident) =>
-            d.source === 'CAL FIRE' ? [220, 38, 38, 220] : [249, 115, 22, 220],
+          getFillColor: (d: CalFireIncident) => {
+            const pct = Number(d.PercentContained ?? 0);
+            if (pct >= 100) return [255, 255, 255, 220];
+            if (pct >= 50) return [250, 204, 21, 220];
+            if (pct >= 25) return [249, 115, 22, 220];
+            return [220, 38, 38, 220];
+          },
           getLineColor: [255, 255, 255, 255],
           getLineWidth: 2,
           onClick: (info: any) => {
