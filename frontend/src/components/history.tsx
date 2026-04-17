@@ -33,7 +33,10 @@ function HistoricalFirePerimetersOverlay({ fireData }: { fireData: any }) {
   const map = useMap();
   const overlayRef = useRef<GoogleMapsOverlay | null>(null);
   const [selectedFire, setSelectedFire] = useState<any>(null);
-  const [hoveredFire, setHoveredFire] = useState<any>(null);
+  // Hover state intentionally removed — onHover fired on every mouse move,
+  // which cascaded through useEffect → setProps → new GeoJsonLayer → deck.gl
+  // re-hydrating the GeoJSON → visible flash. Click-only selection now.
+  const hoveredFire: any = null;
 
   // Create the overlay ONCE per map, destroy only on unmount. Switching map
   // types (roadmap/terrain/satellite/hybrid) mustn't rebuild this — otherwise
@@ -51,13 +54,13 @@ function HistoricalFirePerimetersOverlay({ fireData }: { fireData: any }) {
     };
   }, [map]);
 
-  // Update layers via setProps — reuses the same WebGL context. Runs whenever
-  // data changes or hover flips, without teardown.
+  // Rebuild layers ONLY when fireData reference changes. Hover state is gone,
+  // click handler just sets selectedFire (doesn't re-run this effect because
+  // selectedFire isn't in deps).
   useEffect(() => {
     const overlay = overlayRef.current;
     if (!overlay) return;
-    const features = Array.isArray(fireData?.features) ? fireData.features : [];
-    if (features.length === 0) {
+    if (!fireData?.features?.length) {
       overlay.setProps({ layers: [] });
       return;
     }
@@ -71,29 +74,20 @@ function HistoricalFirePerimetersOverlay({ fireData }: { fireData: any }) {
       layers: [
         new GeoJsonLayer({
           id: 'historical-fire-perimeters',
-          data: { type: 'FeatureCollection', features },
+          data: fireData, // stable ref from parent; no per-render object churn
           pickable: true,
           stroked: true,
           filled: true,
           lineWidthMinPixels: 3,
           getLineWidth: 3,
-          getLineColor: (f: any) => {
-            if (hoveredFire && f.properties.OBJECTID === hoveredFire.OBJECTID) {
-              return [0, 255, 255, 255];
-            }
-            return colorForAcres(f.properties.GIS_ACRES || 0);
-          },
+          getLineColor: (f: any) => colorForAcres(f.properties.GIS_ACRES || 0),
           getFillColor: (f: any) => colorForAcres(f.properties.GIS_ACRES || 0),
-          onHover: (info: any) => setHoveredFire(info.object ? info.object.properties : null),
           onClick: (info: any) => { if (info.object) setSelectedFire(info.object.properties); },
-          updateTriggers: {
-            getFillColor: [features.length],
-            getLineColor: [features.length, hoveredFire?.OBJECTID],
-          },
+          updateTriggers: { getFillColor: [fireData], getLineColor: [fireData] },
         }),
       ],
     });
-  }, [fireData, hoveredFire]);
+  }, [fireData]);
 
   /* -----------------------------------------------------------------------
      Legacy props-based setter, kept commented so nothing else references it.
