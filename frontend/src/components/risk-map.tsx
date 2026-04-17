@@ -38,6 +38,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { Alert, AlertDescription } from "./ui/alert";
 import { Map as GoogleMap, useMap } from '@vis.gl/react-google-maps';
+import { FirePerimetersOverlay } from './GoogleRiskMap';
 import { GoogleMapsOverlay } from '@deck.gl/google-maps';
 import { GeoJsonLayer } from '@deck.gl/layers';
 import { apiFetch } from "../services/api";
@@ -332,19 +333,8 @@ export function RiskMap() {
                     {zoneLevel === "census-tracts" && <CensusTractRiskOverlay />}
                     {zoneLevel === "neighborhoods" && <NeighborhoodRiskOverlay />}
 
-                    {/* Live Fire Incidents from CAL FIRE */}
-                    {layers.find(l => l.id === "fire-incidents")?.enabled &&
-                      fireIncidents.map((incident) => (
-                        <FireIncidentMarker
-                          key={incident.id}
-                          incident={incident}
-                          selected={selectedIncident === incident.id}
-                          onClick={() => setSelectedIncident(
-                            selectedIncident === incident.id ? null : incident.id
-                          )}
-                        />
-                      ))
-                    }
+                    {/* Live Active Fires — NIFC perimeter polygons (<100% contained) */}
+                    {layers.find(l => l.id === "fire-incidents")?.enabled && <FirePerimetersOverlay />}
 
                     {/* Weather Stations - awaiting real data source */}
                   </GoogleMap>

@@ -226,13 +226,14 @@ function UnifiedResearchOverlay({ features, showHeatmap, zoneGeoJson, zoneRiskDa
           stroked: true,
           filled: true,
           lineWidthMinPixels: 2,
-          getLineColor: [220, 38, 38, 220],
+          getLineColor: [255, 255, 255, 180],
           getFillColor: (f: any) => {
-            const pct = f.properties?.attr_PercentContained ?? 0;
-            if (pct >= 100) return [255, 255, 255, 160];
-            if (pct >= 50) return [250, 204, 21, 160];
-            if (pct >= 25) return [249, 115, 22, 160];
-            return [220, 38, 38, 180];
+            const raw = f.properties?.attr_PercentContained;
+            const pct = raw == null ? 0 : Number(raw);
+            if (pct >= 100) return [255, 255, 255, 200];
+            if (pct >= 50) return [250, 204, 21, 210];
+            if (pct >= 25) return [249, 115, 22, 210];
+            return [220, 38, 38, 210];
           },
           getLineWidth: 2,
           onClick: (info: any) => {

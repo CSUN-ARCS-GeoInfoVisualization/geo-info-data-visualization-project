@@ -114,13 +114,14 @@ export function FirePerimetersOverlay() {
           stroked: true,
           filled: true,
           lineWidthMinPixels: 2,
-          getLineColor: [60, 60, 60, 220],
+          getLineColor: [255, 255, 255, 180],
           getFillColor: (f: any) => {
-            const pct = Number(f.properties?.attr_PercentContained ?? 0);
-            if (pct >= 100) return [255, 255, 255, 180]; // shouldn't be reached (filtered)
-            if (pct >= 50) return [250, 204, 21, 180];    // 50-99% yellow
-            if (pct >= 25) return [249, 115, 22, 180];    // 25-49% orange
-            return [220, 38, 38, 200];                    // 0-24% red
+            const raw = f.properties?.attr_PercentContained;
+            const pct = raw == null ? 0 : Number(raw);
+            if (pct >= 100) return [255, 255, 255, 200]; // 100% white (shouldn't reach, filtered)
+            if (pct >= 50) return [250, 204, 21, 210];   // 50-99% yellow
+            if (pct >= 25) return [249, 115, 22, 210];   // 25-49% orange
+            return [220, 38, 38, 210];                    // 0-24% red
           },
           getLineWidth: 2,
           onClick: (info: any) => {
