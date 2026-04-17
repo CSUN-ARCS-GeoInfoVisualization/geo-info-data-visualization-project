@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from "react";
+import { useState, useEffect, useRef, useMemo, useCallback, memo } from "react";
 import {
   Calendar,
   Filter,
@@ -33,7 +33,7 @@ import { GeoJsonLayer, ScatterplotLayer } from '@deck.gl/layers';
 // composite of name/year/incident).
 const keyFor = (p: any) => `${p?.OBJECTID ?? ''}-${p?.FIRE_NAME ?? ''}-${p?.YEAR_ ?? ''}-${p?.INC_NUM ?? ''}`;
 
-function HistoricalFirePerimetersOverlay({ fireData, selectedFire, onSelect }: { fireData: any; selectedFire: any; onSelect: (props: any | null) => void }) {
+const HistoricalFirePerimetersOverlay = memo(function HistoricalFirePerimetersOverlay({ fireData, selectedFire, onSelect }: { fireData: any; selectedFire: any; onSelect: (props: any | null) => void }) {
   const map = useMap();
   const overlayRef = useRef<GoogleMapsOverlay | null>(null);
   // Keep the latest onSelect / selectedFire in refs so the deck.gl layer's
@@ -203,7 +203,7 @@ function HistoricalFirePerimetersOverlay({ fireData, selectedFire, onSelect }: {
       </div>
     </>
   );
-}
+});
 
 // DINS Damage Overlay Component
 function DINSDamageOverlay({
@@ -439,6 +439,34 @@ export function History() {
     });
   }, [fireData]);
 
+  const handleOverlaySelect = useCallback((props: any | null) => {
+    setSelectedFire(props);
+    setFocusedFireKey(props ? `${props.OBJECTID ?? ''}-${props.FIRE_NAME ?? ''}-${props.YEAR_ ?? ''}-${props.INC_NUM ?? ''}` : null);
+  }, []);
+
+  // Memoize the option list JSX — 400+ <option> children would otherwise
+  // re-reconcile on every parent render, including selection state changes.
+  const quickStats = useMemo(() => {
+    const feats: any[] = fireData?.features || [];
+    if (feats.length === 0) return null;
+    let largest = feats[0];
+    const countByYear: Record<number, number> = {};
+    for (const f of feats) {
+      const p = f.properties || {};
+      if ((p.GIS_ACRES || 0) > (largest.properties?.GIS_ACRES || 0)) largest = f;
+      if (p.YEAR_) countByYear[p.YEAR_] = (countByYear[p.YEAR_] || 0) + 1;
+    }
+    const mostActive = Object.entries(countByYear).sort((a, b) => b[1] - a[1])[0];
+    return { largest, mostActive };
+  }, [fireData]);
+
+  const fireOptionElements = useMemo(
+    () => fireOptions.map((o: { key: string; label: string }) => (
+      <option key={o.key} value={o.key}>{o.label}</option>
+    )),
+    [fireOptions]
+  );
+
   const [stats, setStats] = useState({
     totalFires: 0,
     totalAcres: 0,
@@ -648,9 +676,7 @@ export function History() {
                       className="text-sm border rounded px-2 py-1.5 bg-background w-56"
                     >
                       <option value="">All fires ({fireOptions.length})</option>
-                      {fireOptions.map((o: { key: string; label: string }) => (
-                        <option key={o.key} value={o.key}>{o.label}</option>
-                      ))}
+                      {fireOptionElements}
                     </select>
                   </div>
 
@@ -693,10 +719,7 @@ export function History() {
                   <HistoricalFirePerimetersOverlay
                     fireData={fireData}
                     selectedFire={selectedFire}
-                    onSelect={(props) => {
-                      setSelectedFire(props);
-                      setFocusedFireKey(props ? `${props.OBJECTID ?? ''}-${props.FIRE_NAME ?? ''}-${props.YEAR_ ?? ''}-${props.INC_NUM ?? ''}` : null);
-                    }}
+                    onSelect={handleOverlaySelect}
                   />
                 </GoogleMap>
               </div>
@@ -741,43 +764,31 @@ export function History() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3 text-sm">
-              {(() => {
-                const feats: any[] = fireData?.features || [];
-                if (feats.length === 0) {
-                  return <p className="text-muted-foreground text-xs">Select a year to see stats.</p>;
-                }
-                let largest = feats[0];
-                const countByYear: Record<number, number> = {};
-                for (const f of feats) {
-                  const p = f.properties || {};
-                  if ((p.GIS_ACRES || 0) > (largest.properties?.GIS_ACRES || 0)) largest = f;
-                  if (p.YEAR_) countByYear[p.YEAR_] = (countByYear[p.YEAR_] || 0) + 1;
-                }
-                const mostActive = Object.entries(countByYear).sort((a, b) => b[1] - a[1])[0];
-                return (
-                  <>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Largest Fire:</span>
-                      <span className="font-medium text-right">
-                        {largest.properties?.FIRE_NAME || 'Unknown'} ({largest.properties?.YEAR_})
-                        <span className="block text-[10px] text-muted-foreground">{Math.round(largest.properties?.GIS_ACRES || 0).toLocaleString()} ac</span>
-                      </span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Most Active Year:</span>
-                      <span className="font-medium">{mostActive?.[0]} ({mostActive?.[1]} fires)</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Peak Season:</span>
-                      <span className="font-medium">July – October</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-muted-foreground">Counties in CA:</span>
-                      <span className="font-medium">58</span>
-                    </div>
-                  </>
-                );
-              })()}
+              {!quickStats ? (
+                <p className="text-muted-foreground text-xs">Select a year to see stats.</p>
+              ) : (
+                <>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Largest Fire:</span>
+                    <span className="font-medium text-right">
+                      {quickStats.largest.properties?.FIRE_NAME || 'Unknown'} ({quickStats.largest.properties?.YEAR_})
+                      <span className="block text-[10px] text-muted-foreground">{Math.round(quickStats.largest.properties?.GIS_ACRES || 0).toLocaleString()} ac</span>
+                    </span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Most Active Year:</span>
+                    <span className="font-medium">{quickStats.mostActive?.[0]} ({quickStats.mostActive?.[1]} fires)</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Peak Season:</span>
+                    <span className="font-medium">July – October</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-muted-foreground">Counties in CA:</span>
+                    <span className="font-medium">58</span>
+                  </div>
+                </>
+              )}
             </CardContent>
           </Card>
 
