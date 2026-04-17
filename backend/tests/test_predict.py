@@ -75,7 +75,7 @@ def test_predict_falls_back_when_live_data_fails(client):
     assert resp.status_code == 200
     data = resp.get_json()
     assert data['features']['evi_source'] == 'fallback'
-    assert data['features']['lst_source'] == 'fallback'
+    assert data['features']['air_temp_encoded_source'] == 'fallback'
     assert data['features']['elevation_source'] == 'fallback'
 
 
@@ -88,7 +88,7 @@ def test_predict_live_sources_reported(client):
 
     data = resp.get_json()
     assert data['features']['evi_source'] == 'live'
-    assert data['features']['lst_source'] == 'live'
+    assert data['features']['air_temp_encoded_source'] == 'live'
     assert data['features']['elevation_source'] == 'live'
 
 
