@@ -41,8 +41,6 @@ function HistoricalFirePerimetersOverlay({ fireData, selectedFire, onSelect }: {
   // being rebuilt on every parent re-render.
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
-  const selectedKeyRef = useRef<string | null>(null);
-  selectedKeyRef.current = selectedFire ? keyFor(selectedFire) : null;
 
   // Create the overlay ONCE per map, destroy only on unmount.
   useEffect(() => {
@@ -57,11 +55,10 @@ function HistoricalFirePerimetersOverlay({ fireData, selectedFire, onSelect }: {
     };
   }, [map]);
 
-  const selectedKey = selectedFire ? keyFor(selectedFire) : null;
-
-  // Rebuild layer when data changes OR when the selection key changes. Because
-  // `data: fireData` is a stable reference, deck.gl reuses its tessellation
-  // cache — only the color accessors re-run via updateTriggers.
+  // Rebuild layer ONLY when fireData changes — exactly the same contract the
+  // research map's UnifiedResearchOverlay uses for its NIFC perimeter layer.
+  // Selection is popup-only; no per-feature highlight = no layer rebuild on
+  // click = no GeoJSON re-tessellation on the main thread = no freeze.
   useEffect(() => {
     const overlay = overlayRef.current;
     if (!overlay) return;
@@ -75,7 +72,6 @@ function HistoricalFirePerimetersOverlay({ fireData, selectedFire, onSelect }: {
       if (acres >= 100) return [249, 115, 22, 240];
       return [234, 179, 8, 240];
     };
-    const CYAN: [number, number, number, number] = [0, 229, 255, 255];
     overlay.setProps({
       layers: [
         new GeoJsonLayer({
@@ -85,19 +81,18 @@ function HistoricalFirePerimetersOverlay({ fireData, selectedFire, onSelect }: {
           stroked: true,
           filled: true,
           lineWidthMinPixels: 3,
-          getLineWidth: (f: any) => (selectedKeyRef.current && keyFor(f.properties) === selectedKeyRef.current ? 6 : 3),
-          getLineColor: (f: any) => (selectedKeyRef.current && keyFor(f.properties) === selectedKeyRef.current ? CYAN : colorForAcres(f.properties.GIS_ACRES || 0)),
+          getLineWidth: 3,
+          getLineColor: (f: any) => colorForAcres(f.properties.GIS_ACRES || 0),
           getFillColor: (f: any) => colorForAcres(f.properties.GIS_ACRES || 0),
           onClick: (info: any) => { if (info.object) onSelectRef.current(info.object.properties); },
           updateTriggers: {
-            getFillColor: [fireData],
-            getLineColor: [fireData, selectedKey],
-            getLineWidth: [fireData, selectedKey],
+            getFillColor: [fireData.features.length],
+            getLineColor: [fireData.features.length],
           },
         }),
       ],
     });
-  }, [fireData, selectedKey]);
+  }, [fireData]);
 
   // Render tooltips
   // Aggregate stats used when no individual fire is selected. Computed inline
