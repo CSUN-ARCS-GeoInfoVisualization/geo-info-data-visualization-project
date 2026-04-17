@@ -1,4 +1,4 @@
-import { useState, useMemo } from "react";
+import { useState, useEffect, useMemo, useCallback } from "react";
 import { Bell, Menu, Settings, Search, LogOut } from "lucide-react";
 import { GooeyNav } from "./components/GooeyNav";
 import { FireScopeBrandMark } from "./components/firescope-brand";
@@ -21,7 +21,10 @@ import { AuthPage } from "./components/auth-page";
 import { NotificationSettings } from "./components/notification-settings";
 import { SettingsPage } from "./components/settings-page";
 import { History } from "./components/history";
+import { AdminPage } from "./components/admin-page";
+import { ResearchPage } from "./components/research-page";
 import { Toaster } from "sonner";
+import { apiFetch } from "./services/api";
 
 type Page =
   | "dashboard"
@@ -30,7 +33,9 @@ type Page =
   | "risk-map"
   | "alerts"
   | "history"
-  | "settings";
+  | "settings"
+  | "research"
+  | "admin";
 
 type SettingsTab = "profile" | "locations" | "notifications";
 
@@ -48,16 +53,41 @@ export default function App() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [authToken, setAuthToken] = useState<string | null>(() => localStorage.getItem("token"));
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("profile");
+  const [userRole, setUserRole] = useState<string | null>(null);
   const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string;
   const isAuthenticated = Boolean(authToken);
 
+  const fetchUserRole = useCallback(async () => {
+    try {
+      const r = await apiFetch("/me");
+      if (r.ok) {
+        const data = await r.json();
+        setUserRole(data.role);
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => {
+    if (isAuthenticated) fetchUserRole();
+  }, [isAuthenticated, fetchUserRole]);
+
+  const extraNavLinks = useMemo(() => {
+    const links: { page: Page; label: string }[] = [
+      { page: "research", label: "Research" },
+    ];
+    if (userRole === "Admin") links.push({ page: "admin", label: "Admin" });
+    return links;
+  }, [userRole]);
+
   const onAuthSuccess = () => {
     setAuthToken(localStorage.getItem("token"));
+    fetchUserRole();
   };
 
   const onSignOut = () => {
     localStorage.removeItem("token");
     setAuthToken(null);
+    setUserRole(null);
   };
 
   const goToPage = (page: Page) => {
@@ -106,6 +136,17 @@ export default function App() {
                     timeVariance={150}
                     colors={[1, 2, 3, 1, 2, 3, 1, 4]}
                   />
+                  {extraNavLinks.map(({ page, label }) => (
+                    <Button
+                      key={page}
+                      variant={currentPage === page ? "default" : "ghost"}
+                      size="sm"
+                      onClick={() => setCurrentPage(page)}
+                      className="ml-2"
+                    >
+                      {label}
+                    </Button>
+                  ))}
                 </div>
               </div>
 
@@ -171,6 +212,15 @@ export default function App() {
                         {label}
                       </DropdownMenuItem>
                     ))}
+                    {extraNavLinks.map(({ page, label }) => (
+                      <DropdownMenuItem
+                        key={page}
+                        onSelect={() => goToPage(page)}
+                        className={currentPage === page ? "text-red-600 font-medium" : undefined}
+                      >
+                        {label}
+                      </DropdownMenuItem>
+                    ))}
                     <DropdownMenuSeparator />
                     <DropdownMenuItem
                       onSelect={() => goToPage("settings")}
@@ -200,6 +250,8 @@ export default function App() {
             <NotificationSettings token={authToken as string} />
           )}
           {currentPage === "history" && <History />}
+          {currentPage === "research" && <ResearchPage userRole={userRole} />}
+          {currentPage === "admin" && userRole === "Admin" && <AdminPage />}
           {currentPage === "settings" && <SettingsPage key={settingsTab} defaultTab={settingsTab} />}
         </main>
 

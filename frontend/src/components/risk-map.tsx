@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import {
   Map,
   Layers,
@@ -38,8 +38,14 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from ".
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
 import { Alert, AlertDescription } from "./ui/alert";
 import { Map as GoogleMap, useMap } from '@vis.gl/react-google-maps';
+import { FirePerimetersOverlay } from './GoogleRiskMap';
 import { GoogleMapsOverlay } from '@deck.gl/google-maps';
 import { GeoJsonLayer } from '@deck.gl/layers';
+import { apiFetch } from "../services/api";
+import { CountyRiskOverlay } from "./CountyRiskOverlay";
+import { ZipCodeRiskOverlay } from "./ZipCodeRiskOverlay";
+import { CensusTractRiskOverlay } from "./CensusTractRiskOverlay";
+import { NeighborhoodRiskOverlay } from "./NeighborhoodRiskOverlay";
 
 interface MapLayer {
   id: string;
@@ -72,9 +78,37 @@ interface WeatherStation {
   lastReading: string;
 }
 
-// No mock data - will load from real sources
+// Old square grid removed — using county/zip/tract/neighborhood overlays
 
-// No mock data - will load from real sources
+type ZoneLevel = "counties" | "zip-codes" | "census-tracts" | "neighborhoods";
+
+async function fetchCalFireIncidents(): Promise<FireIncident[]> {
+  try {
+    const res = await apiFetch("/calfire/incidents?inactive=false");
+    if (!res.ok) return [];
+    const data = await res.json();
+    return (data as any[])
+      .filter((d: any) => d.Latitude && d.Longitude && d.IsActive !== false && Number(d.PercentContained ?? 0) < 100)
+      .map((d: any, i: number) => ({
+        id: d.UniqueId || String(i),
+        name: d.Name || "Unknown Fire",
+        status: d.IsActive ? "active" as const : "contained" as const,
+        acres: d.AcresBurned ?? 0,
+        containment: d.PercentContained ?? 0,
+        coordinates: { lat: d.Latitude, lng: d.Longitude },
+        startDate: d.StartedDateOnly || d.Started || "",
+        threatLevel: (d.AcresBurned ?? 0) > 10000
+          ? "extreme" as const
+          : (d.AcresBurned ?? 0) > 1000
+            ? "high" as const
+            : (d.AcresBurned ?? 0) > 100
+              ? "moderate" as const
+              : "low" as const,
+      }));
+  } catch {
+    return [];
+  }
+}
 
 // Fire Perimeters component removed - use History tab for perimeter data
 
@@ -87,9 +121,11 @@ function FireIncidentMarker({ incident, selected, onClick }: { incident: FireInc
     if (!map) return;
 
     const getIncidentColor = () => {
-      if (incident.status === 'active') return '#dc2626';
-      if (incident.status === 'contained') return '#f97316';
-      return '#eab308';
+      const pct = Number(incident.containment ?? 0);
+      if (pct >= 100) return '#ffffff';
+      if (pct >= 50) return '#facc15';
+      if (pct >= 25) return '#f97316';
+      return '#dc2626';
     };
 
     const marker = new google.maps.Marker({
@@ -97,11 +133,15 @@ function FireIncidentMarker({ incident, selected, onClick }: { incident: FireInc
       map,
       icon: {
         path: google.maps.SymbolPath.CIRCLE,
-        scale: selected ? 12 : 10,
-        fillColor: getIncidentColor(),
-        fillOpacity: 1,
-        strokeColor: '#ffffff',
+        scale: selected ? 16 : 13,
+        fillColor: '#f5f5f5',
+        fillOpacity: 0.9,
+        strokeColor: getIncidentColor(),
         strokeWeight: 2
+      },
+      label: {
+        text: '\uD83D\uDD25',
+        fontSize: selected ? '18px' : '14px',
       },
       title: incident.name
     });
@@ -156,6 +196,22 @@ export function RiskMap() {
   const [mapTypeId, setMapTypeId] = useState<'roadmap' | 'satellite' | 'hybrid' | 'terrain'>('satellite');
   const [timeframe, setTimeframe] = useState<"current" | "forecast-6h" | "forecast-24h">("current");
   const [searchQuery, setSearchQuery] = useState("");
+  const [fireIncidents, setFireIncidents] = useState<FireIncident[]>([]);
+  const [zoneLevel, setZoneLevel] = useState<ZoneLevel>("counties");
+  const [loadingFires, setLoadingFires] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    async function load() {
+      setLoadingFires(true);
+      const fires = await fetchCalFireIncidents();
+      if (cancelled) return;
+      setFireIncidents(fires);
+      setLoadingFires(false);
+    }
+    load();
+    return () => { cancelled = true; };
+  }, []);
 
   const [layers, setLayers] = useState<MapLayer[]>([
     { id: "fire-incidents", name: "Fire Incidents", icon: Flame, enabled: true, opacity: 100, color: "red" },
@@ -177,8 +233,8 @@ export function RiskMap() {
     ));
   };
 
-  const selectedIncidentData = null; // Will be populated with real data
-  const selectedStationData = null; // Will be populated with real data
+  const selectedIncidentData = fireIncidents.find(f => f.id === selectedIncident) ?? null;
+  const selectedStationData = null; // Will be populated with real weather data
 
   return (
     <TooltipProvider>
@@ -271,31 +327,65 @@ export function RiskMap() {
                     gestureHandling="greedy"
                     disableDefaultUI={false}
                   >
-                    {/* Fire Perimeters removed - use History tab for perimeter data */}
+                    {/* Risk Zone Overlay */}
+                    {zoneLevel === "counties" && <CountyRiskOverlay />}
+                    {zoneLevel === "zip-codes" && <ZipCodeRiskOverlay />}
+                    {zoneLevel === "census-tracts" && <CensusTractRiskOverlay />}
+                    {zoneLevel === "neighborhoods" && <NeighborhoodRiskOverlay />}
 
-                    {/* Fire Incidents - removed mock data */}
-                    {/* Add real fire incident data source here */}
+                    {/* Live Active Fires — NIFC perimeter polygons (<100% contained) */}
+                    <FirePerimetersOverlay />
 
-                    {/* Weather Stations - removed mock data */}
-                    {/* Add real weather station data source here */}
+                    {/* Weather Stations - awaiting real data source */}
                   </GoogleMap>
                 </div>
 
                 {/* Map Legend */}
-                <div className="mt-4 bg-gray-50 rounded-lg p-4">
-                  <h4 className="font-semibold text-sm mb-3">Map Legend</h4>
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
-                    <div className="flex items-center gap-2">
-                      <div className="w-4 h-4 bg-red-600 rounded-full border-2 border-white"></div>
-                      <span>Active Fire</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="w-3 h-3 bg-blue-500 border-2 border-white rounded-full"></div>
-                      <span>Weather Station</span>
+                <div className="mt-4 bg-gray-50 rounded-lg p-4 space-y-4">
+                  <div>
+                    <h4 className="font-semibold text-sm mb-2">Risk Zones</h4>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                      <div className="flex items-center gap-2">
+                        <div className="w-4 h-3 rounded border border-gray-300 opacity-70" style={{ backgroundColor: "#22c55e" }} />
+                        <span>Low Risk</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-4 h-3 rounded border border-gray-300 opacity-70" style={{ backgroundColor: "#eab308" }} />
+                        <span>Moderate</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-4 h-3 rounded border border-gray-300 opacity-70" style={{ backgroundColor: "#dc2626" }} />
+                        <span>High Risk</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-4 h-3 rounded border border-gray-300 opacity-70" style={{ backgroundColor: "#7f1d1d" }} />
+                        <span>Extreme</span>
+                      </div>
                     </div>
                   </div>
-                  <p className="text-xs text-muted-foreground mt-3">
-                    💡 Real-time risk assessment data. View historical fire perimeters in the History tab.
+                  <div>
+                    <h4 className="font-semibold text-sm mb-2">Active Fire Perimeters — by Containment</h4>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                      <div className="flex items-center gap-2">
+                        <div className="w-4 h-3 rounded border border-gray-300" style={{ backgroundColor: "#dc2626" }} />
+                        <span>0–24 % (red)</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-4 h-3 rounded border border-gray-300" style={{ backgroundColor: "#f97316" }} />
+                        <span>25–49 % (orange)</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-4 h-3 rounded border border-gray-300" style={{ backgroundColor: "#facc15" }} />
+                        <span>50–99 % (yellow)</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-4 h-3 rounded border border-gray-300" style={{ backgroundColor: "#ffffff" }} />
+                        <span>100 % (white — hidden)</span>
+                      </div>
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Fire perimeters are polygon boundaries from NIFC WFIGS. Fully-contained fires are hidden. Risk zones come from the ML model; click a zone for the input breakdown.
                   </p>
                 </div>
               </CardContent>
@@ -304,47 +394,18 @@ export function RiskMap() {
 
           {/* Sidebar */}
           <div className="space-y-4">
-            {/* Map Layers */}
+            {/* Zone Level */}
             <Card>
               <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Layers className="h-5 w-5" />
-                  Map Layers
-                </CardTitle>
+                <CardTitle className="text-sm">Risk Zone Level</CardTitle>
               </CardHeader>
-              <CardContent className="space-y-4">
-                {layers.map((layer) => {
-                  const Icon = layer.icon;
-                  return (
-                    <div key={layer.id} className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <Icon className="h-4 w-4" />
-                          <span className="text-sm">{layer.name}</span>
-                        </div>
-                        <Switch
-                          checked={layer.enabled}
-                          onCheckedChange={() => toggleLayer(layer.id)}
-                        />
-                      </div>
-                      {layer.enabled && (
-                        <div className="ml-6">
-                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                            <span>Opacity</span>
-                            <Slider
-                              value={[layer.opacity]}
-                              onValueChange={(value) => updateLayerOpacity(layer.id, value[0])}
-                              max={100}
-                              step={10}
-                              className="flex-1"
-                            />
-                            <span>{layer.opacity}%</span>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
+              <CardContent>
+                <select value={zoneLevel} onChange={(e) => setZoneLevel(e.target.value as ZoneLevel)} className="w-full text-sm border rounded px-2 py-1.5 bg-background">
+                  <option value="counties">Counties (58)</option>
+                  <option value="zip-codes">ZIP Codes (1,769)</option>
+                  <option value="neighborhoods">Neighborhoods (1,521)</option>
+                  <option value="census-tracts">Census Tracts (8,041)</option>
+                </select>
               </CardContent>
             </Card>
 
@@ -408,8 +469,10 @@ export function RiskMap() {
               <div className="flex items-center gap-2">
                 <AlertTriangle className="h-5 w-5 text-red-500" />
                 <div>
-                  <div className="text-2xl font-bold">-</div>
-                  <div className="text-sm text-muted-foreground">Active Fires (Load Data)</div>
+                  <div className="text-2xl font-bold">
+                    {loadingFires ? "..." : fireIncidents.filter(f => f.status === "active").length}
+                  </div>
+                  <div className="text-sm text-muted-foreground">Active Fires</div>
                 </div>
               </div>
             </CardContent>
@@ -420,7 +483,9 @@ export function RiskMap() {
               <div className="flex items-center gap-2">
                 <Flame className="h-5 w-5 text-orange-500" />
                 <div>
-                  <div className="text-2xl font-bold">-</div>
+                  <div className="text-2xl font-bold">
+                    {loadingFires ? "..." : fireIncidents.length}
+                  </div>
                   <div className="text-sm text-muted-foreground">Total Incidents</div>
                 </div>
               </div>
@@ -430,10 +495,10 @@ export function RiskMap() {
           <Card>
             <CardContent className="pt-6">
               <div className="flex items-center gap-2">
-                <Thermometer className="h-5 w-5 text-blue-500" />
+                <Map className="h-5 w-5 text-purple-500" />
                 <div>
-                  <div className="text-2xl font-bold">-</div>
-                  <div className="text-sm text-muted-foreground">Weather Stations</div>
+                  <div className="text-2xl font-bold">Active</div>
+                  <div className="text-sm text-muted-foreground">Risk Zones</div>
                 </div>
               </div>
             </CardContent>
@@ -444,7 +509,7 @@ export function RiskMap() {
               <div className="flex items-center gap-2">
                 <Clock className="h-5 w-5 text-green-500" />
                 <div>
-                  <div className="text-2xl font-bold">Live</div>
+                  <div className="text-2xl font-bold">{loadingFires ? "Loading" : "Live"}</div>
                   <div className="text-sm text-muted-foreground">Data Feed</div>
                 </div>
               </div>

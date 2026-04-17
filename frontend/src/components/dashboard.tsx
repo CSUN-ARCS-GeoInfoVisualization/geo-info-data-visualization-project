@@ -4,7 +4,7 @@ import { RiskLevelBadge, RiskLevel } from "./risk-level-badge";
 import { ConditionCard } from "./condition-card";
 import { RiskChart } from "./risk-chart";
 import { ActiveAlerts } from "./active-alerts";
-import { GoogleRiskMap } from "./GoogleRiskMap";
+import { GoogleRiskMap, ActiveFiresMap } from "./GoogleRiskMap";
 import { SavedLocationsWidget } from "./saved-locations-widget";
 import { FIRMSMap } from "./FIRMSMap";
 import { NewsTicker } from "./news-ticker";
@@ -239,26 +239,24 @@ export function Dashboard({ onAddLocation }: DashboardProps) {
           />
         </div>
 
-        {locations.length === 0 && (
-          <p className="text-xs text-muted-foreground mt-3">
-            <button onClick={onAddLocation} className="text-red-500 hover:underline">
-              Add a location
-            </button>{" "}
-            to see live weather conditions.
-          </p>
-        )}
       </div>
 
-      {/* Map + My Locations */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <div className="lg:col-span-2">
-          <GoogleRiskMap height="h-[420px]" />
+      {/* Risk Zone & Active Fire Maps */}
+      <section className="space-y-4">
+        <div className="flex items-center justify-between">
+          <div>
+            <h2 className="text-xl font-semibold tracking-tight">Risk Zone & Active Fire Maps</h2>
+            <p className="text-sm text-muted-foreground">California-wide wildfire risk and live fire activity</p>
+          </div>
         </div>
-        <SavedLocationsWidget onAddLocation={onAddLocation} />
-      </div>
-
-      {/* Active Fires (NASA FIRMS) */}
-      <FIRMSMap />
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-2">
+            <GoogleRiskMap />
+          </div>
+          <SavedLocationsWidget onAddLocation={onAddLocation} />
+        </div>
+        <ActiveFiresMap />
+      </section>
 
       {/* 7-Day Forecast + Active Alerts */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">

@@ -19,43 +19,30 @@ import { Badge } from "./ui/badge";
 import { Input } from "./ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Slider } from "./ui/slider";
+import { apiFetch } from "../services/api";
 import { Switch } from "./ui/switch";
 import { Checkbox } from "./ui/checkbox";
 import { Map as GoogleMap, useMap } from '@vis.gl/react-google-maps';
 import { GoogleMapsOverlay } from '@deck.gl/google-maps';
 import { GeoJsonLayer, ScatterplotLayer } from '@deck.gl/layers';
 
-// Fire Perimeters Overlay Component
-function HistoricalFirePerimetersOverlay({
-  enabled,
-  opacity,
-  selectedYears
-}: {
-  enabled: boolean;
-  opacity: number;
-  selectedYears: number[];
-}) {
+// Historical fire perimeters overlay — mirrors the research page's
+// `UnifiedResearchOverlay` pattern: a single GoogleMapsOverlay per map,
+// data passed in as a prop (no internal fetch), layers rebuilt in one effect.
+function HistoricalFirePerimetersOverlay({ fireData }: { fireData: any }) {
   const map = useMap();
-  // Ref so the overlay is created once — no new WebGL context on re-renders
   const overlayRef = useRef<GoogleMapsOverlay | null>(null);
-  const [fireData, setFireData] = useState<any>(null);
   const [selectedFire, setSelectedFire] = useState<any>(null);
-  const [hoveredFire, setHoveredFire] = useState<any>(null);
+  // Keep the latest selectedFire in a ref so the layer's line-color accessor
+  // (and the onClick handler) can see it without re-running the setProps
+  // effect on every click — which would re-hydrate the GeoJSON and flash.
+  const selectedFireRef = useRef<any>(null);
+  selectedFireRef.current = selectedFire;
 
-  // Load fire perimeter GeoJSON — runs once
-  useEffect(() => {
-    fetch('/Data/California_Fire_Perimeters.geojson')
-      .then(response => response.json())
-      .then(data => {
-        console.log('Loaded fire perimeters:', data.features.length);
-        setFireData(data);
-      })
-      .catch(error => {
-        console.error('Error loading fire perimeters:', error);
-      });
-  }, []);
-
-  // Create the overlay ONCE when the map is ready, destroy only on unmount
+  // Create the overlay ONCE per map, destroy only on unmount. Switching map
+  // types (roadmap/terrain/satellite/hybrid) mustn't rebuild this — otherwise
+  // the deck.gl canvas is torn down and recreated on every related re-render,
+  // causing the polygons to disappear and flash back.
   useEffect(() => {
     if (!map) return;
     const deckOverlay = new GoogleMapsOverlay({ layers: [] });
@@ -68,78 +55,65 @@ function HistoricalFirePerimetersOverlay({
     };
   }, [map]);
 
-  // Update layers via setProps — reuses the same WebGL context, no leak
+  // Rebuild layers when data OR selection changes. Layer data uses the
+  // parent's stable fireData ref, so switching map type doesn't re-hydrate.
   useEffect(() => {
-    if (!overlayRef.current) return;
-
-    if (!fireData || !enabled) {
-      overlayRef.current.setProps({ layers: [] });
+    const overlay = overlayRef.current;
+    if (!overlay) return;
+    if (!fireData?.features?.length) {
+      overlay.setProps({ layers: [] });
       return;
     }
-
-    let filteredData = fireData;
-    if (selectedYears.length > 0 && selectedYears.length < fireData.features.length) {
-      filteredData = {
-        ...fireData,
-        features: fireData.features.filter((f: any) => selectedYears.includes(f.properties.YEAR_))
-      };
-    }
-
-    overlayRef.current.setProps({
+    const colorForAcres = (acres: number): [number, number, number, number] => {
+      if (acres >= 10000) return [139, 0, 0, 240];
+      if (acres >= 1000) return [220, 38, 38, 240];
+      if (acres >= 100) return [249, 115, 22, 240];
+      return [234, 179, 8, 240];
+    };
+    overlay.setProps({
       layers: [
         new GeoJsonLayer({
           id: 'historical-fire-perimeters',
-          data: filteredData,
+          data: fireData,
           pickable: true,
           stroked: true,
           filled: true,
-          autoHighlight: true,
-
-          getFillColor: (d: any) => {
-            const acres = d.properties.GIS_ACRES || 0;
-            const baseOpacity = opacity * 1.5;
-            if (acres >= 10000) return [139, 0, 0, baseOpacity];
-            if (acres >= 1000)  return [220, 38, 38, baseOpacity];
-            if (acres >= 100)   return [249, 115, 22, baseOpacity];
-            return [234, 179, 8, baseOpacity];
+          lineWidthMinPixels: 3,
+          getLineWidth: (f: any) => {
+            const sel = selectedFireRef.current;
+            return sel && (f.properties.OBJECTID ?? `${f.properties.FIRE_NAME}-${f.properties.YEAR_}-${f.properties.INC_NUM}`) === (sel.OBJECTID ?? `${sel.FIRE_NAME}-${sel.YEAR_}-${sel.INC_NUM}`) ? 6 : 3;
           },
-
-          getLineColor: (d: any) => {
-            if (hoveredFire && d.properties.OBJECTID === hoveredFire.OBJECTID) {
-              return [0, 255, 255, 255];
-            }
-            return [255, 255, 255, 200];
-          },
-
-          getLineWidth: (d: any) => {
-            if (hoveredFire && d.properties.OBJECTID === hoveredFire.OBJECTID) return 4;
-            return 2;
-          },
-          lineWidthMinPixels: 1,
-
-          onHover: (info: any) => {
-            setHoveredFire(info.object ? info.object.properties : null);
-          },
-
-          onClick: (info: any) => {
-            if (info.object) setSelectedFire(info.object.properties);
-          },
-
+          // Selection uses the same tier color as the fire's fill, just with
+          // a thicker outline (see getLineWidth). No cyan.
+          getLineColor: (f: any) => colorForAcres(f.properties.GIS_ACRES || 0),
+          getFillColor: (f: any) => colorForAcres(f.properties.GIS_ACRES || 0),
+          onClick: (info: any) => { if (info.object) setSelectedFire(info.object.properties); },
           updateTriggers: {
-            getFillColor: [opacity, selectedYears],
-            getLineColor: [hoveredFire],
-            getLineWidth: [hoveredFire]
-          }
-        })
-      ]
+            getFillColor: [fireData],
+            getLineColor: [fireData, (selectedFire ? `${selectedFire.OBJECTID ?? ''}-${selectedFire.FIRE_NAME ?? ''}-${selectedFire.YEAR_ ?? ''}-${selectedFire.INC_NUM ?? ''}` : '')],
+            getLineWidth: [fireData, (selectedFire ? `${selectedFire.OBJECTID ?? ''}-${selectedFire.FIRE_NAME ?? ''}-${selectedFire.YEAR_ ?? ''}-${selectedFire.INC_NUM ?? ''}` : '')],
+          },
+        }),
+      ],
     });
-  }, [fireData, enabled, opacity, selectedYears, hoveredFire]);
+  }, [fireData, selectedFire]);
+
+  /* -----------------------------------------------------------------------
+     Legacy props-based setter, kept commented so nothing else references it.
+     Replaced with the single-effect pattern above that mirrors research-page.
+  ----------------------------------------------------------------------- */
+  if (false) {
+    // @ts-ignore
+    (overlayRef.current as any)?.setProps({
+      layers: [],
+    });
+  }
 
   // Render tooltips
   return (
     <>
       {/* Hover tooltip - small tooltip on hover */}
-      {hoveredFire && !selectedFire && (
+      {false && (
         <div
           style={{
             position: 'absolute',
@@ -239,7 +213,7 @@ function DINSDamageOverlay({
 
   // Load DINS data — runs once
   useEffect(() => {
-    fetch('/Data/POSTFIRE_MASTER_DATA.geojson')
+    apiFetch('/history/dins')
       .then(response => response.json())
       .then(data => {
         console.log('Loaded DINS structures:', data.features?.length || 0);
@@ -411,76 +385,91 @@ function DINSDamageOverlay({
 }
 
 export function History() {
-  const [selectedYears, setSelectedYears] = useState<number[]>([2025]); // Start with 2025 selected
-  const [mapTypeId, setMapTypeId] = useState<'roadmap' | 'satellite' | 'hybrid' | 'terrain'>('satellite');
+  // Default to the most recent *complete* fire year (current year − 1) so the
+  // map opens on a year that actually has full CAL FIRE records.
+  const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear() - 1);
+  const selectedYears = [selectedYear]; // kept as an array locally so the existing overlay contract still works
+  const mapTypeId: 'roadmap' = 'roadmap';
   const [searchQuery, setSearchQuery] = useState("");
-  const [opacity, setOpacity] = useState(60);
-  const [showPerimeters, setShowPerimeters] = useState(true);
-  const [showDINS, setShowDINS] = useState(false); // DINS damage layer toggle
-  const [dinsRadius, setDinsRadius] = useState(4); // DINS dot base radius
-  const [fireData, setFireData] = useState<any>(null); // Store full dataset
-  const [availableYears, setAvailableYears] = useState<number[]>([]); // All years in dataset
-  const [showYearDropdown, setShowYearDropdown] = useState(false); // Year filter dropdown visibility
+  // Display controls removed — perimeters are always shown at full opacity,
+  // structure damage (DINS) is intentionally not rendered on the history map.
+  const opacity = 100;
+  const showPerimeters = true;
+  const [fireData, setFireData] = useState<any>(null); // Merged features for selected years
+  const [availableYears, setAvailableYears] = useState<number[]>([]); // All years from backend (1878-current)
+  const [showYearDropdown, setShowYearDropdown] = useState(false);
+  const [loadingYears, setLoadingYears] = useState(false);
+  const yearCacheRef = useRef<Record<number, any[]>>({}); // in-memory per-year GeoJSON feature cache
 
-  // Calculate statistics from fire data
   const [stats, setStats] = useState({
     totalFires: 0,
     totalAcres: 0,
-    yearRange: '2020-2025',
-    averageSize: 0
+    yearRange: '',
+    averageSize: 0,
   });
 
+  // 1. Load the available-year list once (min..max from ArcGIS stats), clamped
+  //    to 1950+ because CAL FIRE's older records are sparse and noisy.
   useEffect(() => {
-    // Load fire data to calculate stats
-    fetch('/Data/California_Fire_Perimeters.geojson')
-      .then(response => response.json())
-      .then(data => {
-        setFireData(data); // Store full dataset
-
-        // Extract all unique years and sort
-        const features = data.features;
-        const years = [...new Set(features.map((f: any) => f.properties.YEAR_).filter(Boolean))].sort((a, b) => b - a);
-        setAvailableYears(years as number[]);
-
-        // Calculate stats for initial year (2025)
-        const filteredFeatures = features.filter((f: any) => f.properties.YEAR_ === 2025);
-
-        const totalFires = filteredFeatures.length;
-        const totalAcres = filteredFeatures.reduce((sum: number, f: any) => sum + (f.properties.GIS_ACRES || 0), 0);
-        const minYear = Math.min(...(years as number[]));
-        const maxYear = Math.max(...(years as number[]));
-
-        setStats({
-          totalFires,
-          totalAcres,
-          yearRange: `${minYear}-${maxYear}`,
-          averageSize: totalFires > 0 ? Math.round(totalAcres / totalFires) : 0
-        });
+    apiFetch('/history/perimeters/years')
+      .then((r) => r.json())
+      .then((data) => {
+        if (Array.isArray(data?.years) && data.years.length) {
+          const floor = 1950;
+          const clipped = data.years.filter((y: number) => y >= floor);
+          const maxY = clipped[0] ?? data.max;
+          setAvailableYears(clipped);
+          setStats((s) => ({ ...s, yearRange: `${floor}-${maxY}` }));
+          // Ensure the initial selection is actually in the list
+          setSelectedYear((y) => (clipped.includes(y) ? y : clipped[0]));
+        }
       })
-      .catch(error => {
-        console.error('Error loading fire statistics:', error);
-      });
+      .catch((e) => console.warn('Year list fetch failed:', e));
   }, []);
 
-  // Recalculate statistics when year filter changes
+  // 2. When the user's year selection changes, fetch each selected year
+  //    (cached) and merge into fireData. This is how the "largest-extent
+  //    per-year polygons" layer refreshes as years are toggled.
   useEffect(() => {
-    if (!fireData) return;
-
-    const features = fireData.features;
-    const filteredFeatures = selectedYears.length === 0 || selectedYears.length === availableYears.length
-      ? features  // All years selected or none selected = show all
-      : features.filter((f: any) => selectedYears.includes(f.properties.YEAR_));
-
-    const totalFires = filteredFeatures.length;
-    const totalAcres = filteredFeatures.reduce((sum: number, f: any) => sum + (f.properties.GIS_ACRES || 0), 0);
-
-    setStats(prev => ({
-      ...prev,
-      totalFires,
-      totalAcres,
-      averageSize: totalFires > 0 ? Math.round(totalAcres / totalFires) : 0
-    }));
-  }, [selectedYears, fireData, availableYears]);
+    let cancelled = false;
+    const load = async () => {
+      if (selectedYears.length === 0) {
+        setFireData({ type: 'FeatureCollection', features: [] });
+        return;
+      }
+      setLoadingYears(true);
+      const results = await Promise.all(
+        selectedYears.map(async (y) => {
+          if (yearCacheRef.current[y]) return yearCacheRef.current[y];
+          try {
+            const r = await apiFetch(`/history/perimeters?year=${y}&min_acres=100`);
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            const data = await r.json();
+            const feats = Array.isArray(data?.features) ? data.features : [];
+            yearCacheRef.current[y] = feats;
+            return feats;
+          } catch (e) {
+            console.warn(`history year ${y} fetch failed:`, e);
+            return [];
+          }
+        })
+      );
+      if (cancelled) return;
+      const features = results.flat();
+      setFireData({ type: 'FeatureCollection', features });
+      const totalFires = features.length;
+      const totalAcres = features.reduce((sum: number, f: any) => sum + (f.properties?.GIS_ACRES || 0), 0);
+      setStats((s) => ({
+        ...s,
+        totalFires,
+        totalAcres,
+        averageSize: totalFires > 0 ? Math.round(totalAcres / totalFires) : 0,
+      }));
+      setLoadingYears(false);
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [selectedYears]);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -609,88 +598,22 @@ export function History() {
                     />
                   </div>
 
-                  {/* Year Filter - Multi-select with checkboxes */}
-                  <div className="relative year-filter-dropdown">
-                    <Button
-                      variant="outline"
-                      className="w-48 justify-between"
-                      onClick={() => setShowYearDropdown(!showYearDropdown)}
+                  {/* Year Filter — native single-select, scrolls after 6 rows */}
+                  <div className="flex items-center gap-2">
+                    <label htmlFor="history-year" className="text-sm text-muted-foreground">Year:</label>
+                    <select
+                      id="history-year"
+                      value={selectedYear}
+                      onChange={(e) => setSelectedYear(Number(e.target.value))}
+                      size={1}
+                      className="text-sm border rounded px-2 py-1.5 bg-background w-28"
                     >
-                      <span className="text-sm">
-                        {selectedYears.length === 0 || selectedYears.length === availableYears.length
-                          ? 'All Years'
-                          : selectedYears.length === 1
-                          ? selectedYears[0]
-                          : `${selectedYears.length} years selected`}
-                      </span>
-                      <ChevronDown className="h-4 w-4 ml-2 opacity-50" />
-                    </Button>
-
-                    {showYearDropdown && (
-                      <Card className="absolute top-full mt-1 w-56 p-3 z-50 shadow-lg">
-                        <div className="space-y-2">
-                          <div className="font-medium text-sm mb-2">Filter by Year</div>
-
-                          {/* Select/Deselect All */}
-                          <div className="flex items-center space-x-2 pb-2 border-b">
-                            <Checkbox
-                              id="all-years"
-                              checked={selectedYears.length === availableYears.length}
-                              onCheckedChange={(checked) => {
-                                if (checked) {
-                                  setSelectedYears([...availableYears]);
-                                } else {
-                                  setSelectedYears([]);
-                                }
-                              }}
-                            />
-                            <label
-                              htmlFor="all-years"
-                              className="text-sm font-medium leading-none cursor-pointer"
-                            >
-                              All Years
-                            </label>
-                          </div>
-
-                          {/* Individual years */}
-                          {availableYears.map((year) => (
-                            <div key={year} className="flex items-center space-x-2">
-                              <Checkbox
-                                id={`year-${year}`}
-                                checked={selectedYears.includes(year)}
-                                onCheckedChange={(checked) => {
-                                  if (checked) {
-                                    setSelectedYears([...selectedYears, year].sort((a, b) => b - a));
-                                  } else {
-                                    setSelectedYears(selectedYears.filter(y => y !== year));
-                                  }
-                                }}
-                              />
-                              <label
-                                htmlFor={`year-${year}`}
-                                className="text-sm leading-none cursor-pointer"
-                              >
-                                {year}
-                              </label>
-                            </div>
-                          ))}
-                        </div>
-                      </Card>
-                    )}
+                      {availableYears.map((y) => (
+                        <option key={y} value={y}>{y}</option>
+                      ))}
+                    </select>
+                    {loadingYears && <span className="text-[11px] text-muted-foreground">loading…</span>}
                   </div>
-
-                  {/* Map Type Selector */}
-                  <Select value={mapTypeId} onValueChange={(value) => setMapTypeId(value as any)}>
-                    <SelectTrigger className="w-32">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      <SelectItem value="satellite">Satellite</SelectItem>
-                      <SelectItem value="terrain">Terrain</SelectItem>
-                      <SelectItem value="roadmap">Roadmap</SelectItem>
-                      <SelectItem value="hybrid">Hybrid</SelectItem>
-                    </SelectContent>
-                  </Select>
                 </div>
               </div>
             </CardHeader>
@@ -703,160 +626,44 @@ export function History() {
                   defaultZoom={6}
                   mapTypeId={mapTypeId}
                   gestureHandling="greedy"
-                  disableDefaultUI={false}
+                  disableDefaultUI={true}
                 >
-                  {/* Fire Perimeters Layer */}
-                  <HistoricalFirePerimetersOverlay
-                    enabled={showPerimeters}
-                    opacity={opacity}
-                    selectedYears={selectedYears}
-                  />
-
-                  {/* DINS Damage Layer */}
-                  <DINSDamageOverlay
-                    enabled={showDINS}
-                    opacity={1}
-                    radius={dinsRadius}
-                  />
+                  {/* Fire Perimeters Layer — rendered last so it sits on top of the map tiles */}
+                  <HistoricalFirePerimetersOverlay fireData={fireData} />
                 </GoogleMap>
               </div>
 
               {/* Map Legend */}
-              {(showPerimeters || showDINS) && (
               <div className="mt-4 bg-gray-50 rounded-lg p-4">
-                {showPerimeters && (
-                  <>
-                    <h4 className="font-semibold text-base mb-3">Fire Size Legend</h4>
-                    <div className="grid grid-cols-2 md:grid-cols-2 gap-3 text-base">
-                      <div className="flex items-center gap-2">
-                        <div className="w-6 h-4 border border-white rounded" style={{ backgroundColor: 'rgb(234, 179, 8)' }}></div>
-                        <span>&lt;100 acres</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="w-6 h-4 border border-white rounded" style={{ backgroundColor: 'rgb(249, 115, 22)' }}></div>
-                        <span>100–1k acres</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="w-6 h-4 border border-white rounded" style={{ backgroundColor: 'rgb(220, 38, 38)' }}></div>
-                        <span>1k–10k acres</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="w-6 h-4 border border-white rounded" style={{ backgroundColor: 'rgb(139, 0, 0)' }}></div>
-                        <span>10k+ acres</span>
-                      </div>
-                    </div>
-                    <p className="text-sm text-muted-foreground mt-3">
-                       Hover for fire name. Click for details. Cyan outline = hovered fire.
-                    </p>
-                  </>
-                )}
-
-                {/* DINS Damage Legend - show when enabled */}
-                {showDINS && (
-                  <div className="mt-4 pt-4 border-t">
-                    <h4 className="font-semibold text-base mb-3">Structure Damage Levels</h4>
-                    <div className="grid grid-cols-2 gap-2 text-sm">
-                      <div className="flex items-center gap-2">
-                        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: 'rgb(220, 38, 38)' }}></div>
-                        <span>Destroyed (&gt;50%)</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: 'rgb(249, 115, 22)' }}></div>
-                        <span>Major (26-50%)</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: 'rgb(234, 179, 8)' }}></div>
-                        <span>Minor (11-25%)</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: 'rgb(34, 197, 94)' }}></div>
-                        <span>Affected (&lt;10%)</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="w-3 h-3 rounded-full" style={{ backgroundColor: 'rgb(59, 130, 246)' }}></div>
-                        <span>No Damage</span>
-                      </div>
-                    </div>
-                    <p className="text-xs text-muted-foreground mt-2">
-                       Hover structure for details. Data: CAL FIRE DINS inspections
-                    </p>
+                <h4 className="font-semibold text-base mb-3">Fire Size Legend</h4>
+                <div className="grid grid-cols-2 md:grid-cols-2 gap-3 text-base">
+                  <div className="flex items-center gap-2">
+                    <div className="w-6 h-4 border border-white rounded" style={{ backgroundColor: 'rgb(234, 179, 8)' }}></div>
+                    <span>&lt;100 acres</span>
                   </div>
-                )}
+                  <div className="flex items-center gap-2">
+                    <div className="w-6 h-4 border border-white rounded" style={{ backgroundColor: 'rgb(249, 115, 22)' }}></div>
+                    <span>100–1k acres</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-6 h-4 border border-white rounded" style={{ backgroundColor: 'rgb(220, 38, 38)' }}></div>
+                    <span>1k–10k acres</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <div className="w-6 h-4 border border-white rounded" style={{ backgroundColor: 'rgb(139, 0, 0)' }}></div>
+                    <span>10k+ acres</span>
+                  </div>
+                </div>
+                <p className="text-sm text-muted-foreground mt-3">
+                  Hover for fire name. Click for details. Cyan outline = hovered fire.
+                </p>
               </div>
-              )}
             </CardContent>
           </Card>
         </div>
 
         {/* Sidebar */}
         <div className="space-y-4">
-          {/* Display Controls */}
-          <Card>
-            <CardHeader>
-              <CardTitle className="flex items-center gap-2">
-                <Filter className="h-5 w-5" />
-                Display Controls
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="space-y-2">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Flame className="h-4 w-4" />
-                    <span className="text-sm">Show Perimeters</span>
-                  </div>
-                  <Switch
-                    checked={showPerimeters}
-                    onCheckedChange={setShowPerimeters}
-                  />
-                </div>
-                {showPerimeters && (
-                  <div className="ml-6">
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <span>Opacity</span>
-                      <Slider
-                        value={[opacity]}
-                        onValueChange={(value) => setOpacity(value[0])}
-                        max={100}
-                        step={10}
-                        className="flex-1"
-                      />
-                      <span>{opacity}%</span>
-                    </div>
-                  </div>
-                )}
-
-                {/* DINS Damage Layer Toggle */}
-                <div className="flex items-center justify-between pt-2 border-t">
-                  <div className="flex items-center gap-2">
-                    <AlertTriangle className="h-4 w-4 text-red-500" />
-                    <span className="text-sm">Show Structure Damage</span>
-                  </div>
-                  <Switch
-                    checked={showDINS}
-                    onCheckedChange={setShowDINS}
-                  />
-                </div>
-                {showDINS && (
-                  <div className="ml-6">
-                    <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                      <span>Radius</span>
-                      <Slider
-                        value={[dinsRadius]}
-                        onValueChange={(value) => setDinsRadius(value[0])}
-                        min={1}
-                        max={20}
-                        step={1}
-                        className="flex-1"
-                      />
-                      <span>{dinsRadius}px</span>
-                    </div>
-                  </div>
-                )}
-              </div>
-            </CardContent>
-          </Card>
-
           {/* Quick Stats */}
           <Card>
             <CardHeader>
@@ -866,22 +673,43 @@ export function History() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3 text-sm">
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Largest Fire:</span>
-                <span className="font-medium">August Complex (2020)</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Most Active Year:</span>
-                <span className="font-medium">2020</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Peak Season:</span>
-                <span className="font-medium">July - October</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Total Counties:</span>
-                <span className="font-medium">58</span>
-              </div>
+              {(() => {
+                const feats: any[] = fireData?.features || [];
+                if (feats.length === 0) {
+                  return <p className="text-muted-foreground text-xs">Select a year to see stats.</p>;
+                }
+                let largest = feats[0];
+                const countByYear: Record<number, number> = {};
+                for (const f of feats) {
+                  const p = f.properties || {};
+                  if ((p.GIS_ACRES || 0) > (largest.properties?.GIS_ACRES || 0)) largest = f;
+                  if (p.YEAR_) countByYear[p.YEAR_] = (countByYear[p.YEAR_] || 0) + 1;
+                }
+                const mostActive = Object.entries(countByYear).sort((a, b) => b[1] - a[1])[0];
+                return (
+                  <>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Largest Fire:</span>
+                      <span className="font-medium text-right">
+                        {largest.properties?.FIRE_NAME || 'Unknown'} ({largest.properties?.YEAR_})
+                        <span className="block text-[10px] text-muted-foreground">{Math.round(largest.properties?.GIS_ACRES || 0).toLocaleString()} ac</span>
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Most Active Year:</span>
+                      <span className="font-medium">{mostActive?.[0]} ({mostActive?.[1]} fires)</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Peak Season:</span>
+                      <span className="font-medium">July – October</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Counties in CA:</span>
+                      <span className="font-medium">58</span>
+                    </div>
+                  </>
+                );
+              })()}
             </CardContent>
           </Card>
 

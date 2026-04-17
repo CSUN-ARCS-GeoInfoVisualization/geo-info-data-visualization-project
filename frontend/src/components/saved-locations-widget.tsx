@@ -83,7 +83,10 @@ export function SavedLocationsWidget({ onAddLocation }: SavedLocationsWidgetProp
   return (
     <Card>
       <CardHeader className="flex flex-row items-center justify-between pb-3">
-        <CardTitle className="text-base">My Locations</CardTitle>
+        <div>
+          <CardTitle className="text-base">My Locations</CardTitle>
+          <p className="text-[11px] text-muted-foreground mt-0.5">Up to 20 locations shown on the maps</p>
+        </div>
         {onAddLocation && (
           <button
             onClick={onAddLocation}

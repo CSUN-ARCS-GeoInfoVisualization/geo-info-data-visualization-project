@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef } from "react";
 import {
   MapPin,
   Navigation,
@@ -17,8 +17,10 @@ import { Badge } from "./ui/badge";
 import { Alert, AlertDescription } from "./ui/alert";
 import { Map, Marker, useMap } from '@vis.gl/react-google-maps';
 import { GoogleMapsOverlay } from '@deck.gl/google-maps';
-import { IconLayer } from '@deck.gl/layers';
+import { IconLayer, GeoJsonLayer } from '@deck.gl/layers';
 import Supercluster from 'supercluster';
+import { apiFetch } from '../services/api';
+import { SavedLocationsOverlay } from './GoogleRiskMap';
 
 const evacuationZones = [
   {
@@ -122,7 +124,20 @@ function FireFacilitiesOverlay({ smallDots = false }: { smallDots?: boolean }) {
   const [hoveredShelter, setHoveredShelter] = useState<any>(null);
   const [facilitiesData, setFacilitiesData] = useState<any[]>([]);
   const [clusteredData, setClusteredData] = useState<any[]>([]);
+  const [firePerimeters, setFirePerimeters] = useState<any>(null);
   const [zoom, setZoom] = useState(8);
+
+  // NIFC fire perimeters — so the evac map renders the same "avoid these areas"
+  // polygons as the dashboard / risk map. Kept in the same GoogleMapsOverlay as
+  // shelter icons so only ONE deck.gl canvas exists on this map.
+  useEffect(() => {
+    apiFetch('/fire-perimeters')
+      .then((r) => (r.ok ? r.json() : { features: [] }))
+      .then((data) => {
+        if (data?.features) setFirePerimeters(data);
+      })
+      .catch((e) => console.warn('NIFC perimeters fetch failed (evac):', e));
+  }, []);
 
   // Shelter facility type icons and colors based on usage code
   const getFacilityStyle = (usageCode: string, facilityType: string) => {
@@ -146,7 +161,7 @@ function FireFacilitiesOverlay({ smallDots = false }: { smallDots?: boolean }) {
 
   // Load GeoJSON data
   useEffect(() => {
-    fetch('/Data/National_Shelter_System_Facilities.geojson')
+    apiFetch('/shelters?state=CA')
       .then(response => response.json())
       .then(data => {
         console.log('Loaded shelters:', data.features.length);
@@ -243,7 +258,8 @@ function FireFacilitiesOverlay({ smallDots = false }: { smallDots?: boolean }) {
   }, [map, facilitiesData, smallDots]);
 
   useEffect(() => {
-    if (!map || clusteredData.length === 0) return;
+    if (!map) return;
+    if (clusteredData.length === 0 && !firePerimeters?.features?.length) return;
 
     // Clean up old overlay first
     if (overlay) {
@@ -251,9 +267,36 @@ function FireFacilitiesOverlay({ smallDots = false }: { smallDots?: boolean }) {
       overlay.finalize();
     }
 
+    const colorForPct = (raw: any): [number, number, number, number] => {
+      const pct = raw == null ? 0 : Number(raw);
+      if (pct >= 100) return [255, 255, 255, 230];
+      if (pct >= 50) return [250, 204, 21, 240];
+      if (pct >= 25) return [249, 115, 22, 240];
+      return [220, 38, 38, 240];
+    };
+
+    const fireLayer = firePerimeters?.features?.length
+      ? new GeoJsonLayer({
+          id: 'evac-nifc-perimeters',
+          data: firePerimeters,
+          pickable: false,
+          stroked: true,
+          filled: true,
+          lineWidthMinPixels: 3,
+          getLineColor: (f: any) => colorForPct(f.properties?.attr_PercentContained),
+          getFillColor: (f: any) => colorForPct(f.properties?.attr_PercentContained),
+          getLineWidth: 3,
+          updateTriggers: {
+            getFillColor: [firePerimeters.features.length],
+            getLineColor: [firePerimeters.features.length],
+          },
+        })
+      : null;
+
     // Create new deck.gl overlay
     const deckOverlay = new GoogleMapsOverlay({
       layers: [
+        ...(fireLayer ? [fireLayer] : []),
         new IconLayer({
           id: 'fire-facilities-clustered',
           data: clusteredData,
@@ -354,10 +397,15 @@ function FireFacilitiesOverlay({ smallDots = false }: { smallDots?: boolean }) {
               } else {
                 // Show tooltip for individual shelter
                 const props = info.object.properties;
+                const coords = info.object.geometry?.coordinates;
                 setTooltip({
                   x: info.x,
                   y: info.y,
-                  content: props
+                  content: {
+                    ...props,
+                    longitude: coords?.[0],
+                    latitude: coords?.[1],
+                  }
                 });
               }
             }
@@ -375,7 +423,7 @@ function FireFacilitiesOverlay({ smallDots = false }: { smallDots?: boolean }) {
         deckOverlay.finalize();
       }
     };
-  }, [map, clusteredData]);
+  }, [map, clusteredData, firePerimeters]);
 
   return (
     <>
@@ -450,6 +498,27 @@ function FireFacilitiesOverlay({ smallDots = false }: { smallDots?: boolean }) {
               <div style={{color: '#16a34a'}}>⚡ Generator On-Site</div>
             )}
           </div>
+          {tooltip.content.latitude != null && tooltip.content.longitude != null && (
+            <a
+              href={`https://www.google.com/maps/dir/?api=1&destination=${tooltip.content.latitude},${tooltip.content.longitude}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              style={{
+                display: 'block',
+                marginTop: 10,
+                textAlign: 'center',
+                background: '#2563eb',
+                color: 'white',
+                padding: '8px 12px',
+                borderRadius: 6,
+                fontSize: 12,
+                fontWeight: 600,
+                textDecoration: 'none',
+              }}
+            >
+              Get Directions (Google Maps)
+            </a>
+          )}
         </div>
       )}
 
@@ -503,11 +572,188 @@ function FireFacilitiesOverlay({ smallDots = false }: { smallDots?: boolean }) {
   );
 }
 
+/* ------------------------------------------------------------------ */
+/*  Directions panel — routes to nearest shelter via Google Directions */
+/* ------------------------------------------------------------------ */
+function DirectionsPanel({
+  open,
+  onClose,
+}: {
+  open: boolean;
+  onClose: () => void;
+}) {
+  const map = useMap();
+  const [userLat, setUserLat] = useState<number | null>(null);
+  const [userLng, setUserLng] = useState<number | null>(null);
+  const [destination, setDestination] = useState("");
+  const [routeInfo, setRouteInfo] = useState<{
+    distance: string;
+    duration: string;
+    durationInTraffic?: string;
+    steps: string[];
+    summary: string;
+  } | null>(null);
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
+  const rendererRef = useRef<google.maps.DirectionsRenderer | null>(null);
+
+  // Get user location on mount
+  useEffect(() => {
+    if (open && !userLat) {
+      navigator.geolocation?.getCurrentPosition(
+        (pos) => {
+          setUserLat(pos.coords.latitude);
+          setUserLng(pos.coords.longitude);
+        },
+        () => {
+          // Default to LA if geolocation fails
+          setUserLat(34.0522);
+          setUserLng(-118.2437);
+        }
+      );
+    }
+  }, [open, userLat]);
+
+  // Cleanup renderer on close
+  useEffect(() => {
+    if (!open && rendererRef.current) {
+      rendererRef.current.setMap(null);
+      rendererRef.current = null;
+      setRouteInfo(null);
+    }
+  }, [open]);
+
+  const calculateRoute = async () => {
+    if (!map || !userLat || !userLng || !destination.trim()) return;
+    setLoading(true);
+    setError("");
+    setRouteInfo(null);
+
+    try {
+      const service = new google.maps.DirectionsService();
+      const result = await service.route({
+        origin: { lat: userLat, lng: userLng },
+        destination: destination,
+        travelMode: google.maps.TravelMode.DRIVING,
+        provideRouteAlternatives: true,
+        drivingOptions: {
+          departureTime: new Date(),
+          trafficModel: google.maps.TrafficModel.BEST_GUESS,
+        },
+      });
+
+      if (result.routes.length > 0) {
+        const route = result.routes[0];
+        const leg = route.legs[0];
+
+        // Render route on map
+        if (rendererRef.current) rendererRef.current.setMap(null);
+        const renderer = new google.maps.DirectionsRenderer({
+          map,
+          directions: result,
+          polylineOptions: { strokeColor: "#dc2626", strokeWeight: 5 },
+        });
+        rendererRef.current = renderer;
+
+        setRouteInfo({
+          distance: leg.distance?.text || "Unknown",
+          duration: leg.duration?.text || "Unknown",
+          durationInTraffic: leg.duration_in_traffic?.text,
+          steps: leg.steps.map((s) => s.instructions.replace(/<[^>]+>/g, "")),
+          summary: route.summary,
+        });
+      }
+    } catch (e: any) {
+      setError(e.message || "Failed to calculate route");
+    }
+    setLoading(false);
+  };
+
+  const findNearestShelter = () => {
+    setDestination("nearest emergency shelter California");
+  };
+
+  if (!open) return null;
+
+  return (
+    <Card className="border-red-200">
+      <CardHeader className="pb-3">
+        <div className="flex items-center justify-between">
+          <CardTitle className="text-sm flex items-center gap-2">
+            <Navigation className="h-4 w-4" /> Evacuation Directions
+          </CardTitle>
+          <Button variant="ghost" size="sm" onClick={onClose}>Close</Button>
+        </div>
+      </CardHeader>
+      <CardContent className="space-y-3">
+        <div>
+          <label className="text-xs font-medium">Your Location</label>
+          <div className="flex gap-2 mt-1">
+            <input
+              type="text"
+              value={userLat && userLng ? `${userLat.toFixed(4)}, ${userLng.toFixed(4)}` : "Detecting..."}
+              readOnly
+              className="flex-1 rounded-md border px-2 py-1 text-sm bg-muted"
+            />
+          </div>
+        </div>
+        <div>
+          <label className="text-xs font-medium">Destination</label>
+          <div className="flex gap-2 mt-1">
+            <input
+              type="text"
+              value={destination}
+              onChange={(e) => setDestination(e.target.value)}
+              placeholder="Shelter address or name..."
+              className="flex-1 rounded-md border px-2 py-1 text-sm"
+            />
+            <Button size="sm" variant="outline" onClick={findNearestShelter}>Nearest</Button>
+          </div>
+        </div>
+        <Button
+          size="sm"
+          className="w-full"
+          onClick={calculateRoute}
+          disabled={loading || !destination.trim()}
+        >
+          {loading ? "Calculating..." : "Get Route"}
+        </Button>
+
+        {error && <p className="text-sm text-red-600">{error}</p>}
+
+        {routeInfo && (
+          <div className="space-y-2 pt-2 border-t">
+            <div className="flex items-center justify-between">
+              <div>
+                <span className="text-lg font-bold">{routeInfo.duration}</span>
+                {routeInfo.durationInTraffic && routeInfo.durationInTraffic !== routeInfo.duration && (
+                  <span className="text-sm text-orange-600 ml-2">({routeInfo.durationInTraffic} with traffic)</span>
+                )}
+              </div>
+              <Badge variant="outline">{routeInfo.distance}</Badge>
+            </div>
+            <p className="text-xs text-muted-foreground">via {routeInfo.summary}</p>
+            <div className="max-h-48 overflow-y-auto space-y-1">
+              {routeInfo.steps.map((step, i) => (
+                <div key={i} className="text-xs text-muted-foreground flex gap-2">
+                  <span className="text-foreground font-medium shrink-0">{i + 1}.</span>
+                  <span>{step}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </CardContent>
+    </Card>
+  );
+}
+
 export function EvacuationRoutes() {
   const [selectedZone, setSelectedZone] = useState<string | null>(null);
   const [checklistLevel, setChecklistLevel] = useState<'prepare' | 'fireWatch' | 'evacuationWarning' | 'evacuateNow'>('prepare');
   const [checkedItems, setCheckedItems] = useState<{[key: string]: boolean}>({});
-  const [smallDots, setSmallDots] = useState(false); // Small dots toggle
+  const [smallDots, setSmallDots] = useState(false);
+  const [directionsOpen, setDirectionsOpen] = useState(false);
 
   const toggleCheckbox = (level: string, index: number) => {
     const key = `${level}-${index}`;
@@ -547,9 +793,9 @@ export function EvacuationRoutes() {
           </p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline" size="sm">
+          <Button variant="outline" size="sm" onClick={() => setDirectionsOpen(!directionsOpen)}>
             <Navigation className="h-4 w-4 mr-2" />
-            Get Directions
+            {directionsOpen ? "Hide Directions" : "Get Directions"}
           </Button>
           <Button size="sm">
             <Phone className="h-4 w-4 mr-2" />
@@ -573,6 +819,9 @@ export function EvacuationRoutes() {
           </div>
         </AlertDescription>
       </Alert>
+
+      {/* Directions Panel */}
+      <DirectionsPanel open={directionsOpen} onClose={() => setDirectionsOpen(false)} />
 
       {/* Interactive Map with Fire Facilities */}
       <Card>
@@ -604,6 +853,7 @@ export function EvacuationRoutes() {
               disableDefaultUI={false}
             >
               <FireFacilitiesOverlay smallDots={smallDots} />
+              <SavedLocationsOverlay />
             </Map>
           </div>
 
@@ -662,6 +912,20 @@ export function EvacuationRoutes() {
                   </div>
                 </div>
               </div>
+            </div>
+
+            {/* Active Fire Perimeters */}
+            <div className="mt-4 pt-4 border-t border-gray-200">
+              <div className="text-base font-semibold text-muted-foreground mb-2">Active Fires — Avoid These Areas</div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
+                <div className="flex items-center gap-2"><span className="inline-block w-4 h-3 rounded border border-gray-300" style={{ backgroundColor: '#dc2626' }} /> 0–24% contained</div>
+                <div className="flex items-center gap-2"><span className="inline-block w-4 h-3 rounded border border-gray-300" style={{ backgroundColor: '#f97316' }} /> 25–49%</div>
+                <div className="flex items-center gap-2"><span className="inline-block w-4 h-3 rounded border border-gray-300" style={{ backgroundColor: '#facc15' }} /> 50–99%</div>
+                <div className="flex items-center gap-2"><span className="inline-block w-4 h-3 rounded border border-gray-300" style={{ backgroundColor: '#2563eb' }} /> Your saved location</div>
+              </div>
+              <p className="text-xs text-muted-foreground mt-2">
+                Fire perimeter polygons come from NIFC WFIGS (live California active fires, &lt;100% contained). Size + location reflect the real fire footprint — route around them.
+              </p>
             </div>
 
             {/* Instructions */}

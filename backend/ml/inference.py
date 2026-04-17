@@ -46,20 +46,6 @@ def predict_from_features(
     model_path: str = _DEFAULT_MODEL,
     scaler_path: str = _DEFAULT_SCALER,
 ) -> dict:
-    """
-    Run wildfire risk inference from pre-extracted feature values.
-
-    Args:
-        evi:              Enhanced Vegetation Index (scaled, 0–1 range)
-        air_temp_encoded: Air temperature encoded as (T_celsius + 273.15) / 0.02.
-                          NOT MODIS Land Surface Temperature — derived from Open-Meteo air temp.
-        wind:             Wind speed in m/s
-        humidity:         Relative humidity in % (0–100)
-        elevation:        Terrain elevation in meters
-
-    Returns:
-        dict with keys: evi, air_temp_encoded, wind, humidity, elevation, risk_score, label
-    """
     model, scaler = _load(model_path, scaler_path)
 
     features        = np.array([[evi, air_temp_encoded, wind, humidity, elevation]])
@@ -77,3 +63,23 @@ def predict_from_features(
         "risk_score":       risk_score,
         "label":            label,
     }
+
+
+def predict_batch_features(items: list[tuple[float, float, float, float, float]]) -> list[dict]:
+    """Predict risk for multiple locations at once. Much faster than calling predict_from_features in a loop.
+
+    Args:
+        items: list of (evi, air_temp_encoded, wind, humidity, elevation) tuples
+    Returns:
+        list of dicts with risk_score and label
+    """
+    if not items:
+        return []
+    model, scaler = _load(_DEFAULT_MODEL, _DEFAULT_SCALER)
+    features = np.array(items)
+    features_scaled = scaler.transform(features)
+    probas = model.predict_proba(features_scaled)[:, 1]
+    return [
+        {"risk_score": float(p), "label": risk_label(float(p))}
+        for p in probas
+    ]

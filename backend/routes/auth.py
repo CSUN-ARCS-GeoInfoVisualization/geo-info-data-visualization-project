@@ -22,8 +22,13 @@ def register():
     except EmailNotValidError as e:
         return jsonify({'error': str(e)}), 400
 
-    # Prevent Admin self-registration
-    role_name = 'Researcher' if requested_role == 'Researcher' else 'Resident'
+    # Supreme admins auto-promoted; others pick Researcher or default Resident
+    if email.lower() in [e.lower() for e in Config.SUPREME_ADMINS]:
+        role_name = 'Admin'
+    elif requested_role == 'Researcher':
+        role_name = 'Researcher'
+    else:
+        role_name = 'Resident'
     role = Role.query.filter_by(name=role_name).first()
     if not role:
         return jsonify({'error': 'Role not configured'}), 500

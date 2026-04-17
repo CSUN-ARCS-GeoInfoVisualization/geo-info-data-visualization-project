@@ -1,14 +1,9 @@
 import { useEffect, useState } from "react";
-import { User, MapPin, Bell, Shield, Save, Loader2, ChevronRight } from "lucide-react";
-import { Label } from "./ui/label";
-import { Switch } from "./ui/switch";
-import { Slider } from "./ui/slider";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
-import { Button } from "./ui/button";
+import { User, MapPin, Bell, Shield, ChevronRight, Info, Satellite, Building2, Newspaper, Map, Brain } from "lucide-react";
 import { Badge } from "./ui/badge";
-import { Separator } from "./ui/separator";
 import { Skeleton } from "./ui/skeleton";
 import { MyLocations } from "./my-locations";
+import { NotificationSettings } from "./notification-settings";
 import { apiFetch } from "../services/api";
 
 interface UserProfile {
@@ -17,16 +12,7 @@ interface UserProfile {
   role: string;
 }
 
-interface NotificationPrefs {
-  opted_in: boolean;
-  frequency: string;
-  risk_threshold: number;
-  paused_until: string | null;
-  blackout_start: string | null;
-  blackout_end: string | null;
-}
-
-type Tab = "profile" | "locations" | "notifications";
+type Tab = "profile" | "locations" | "notifications" | "about";
 
 interface SettingsPageProps {
   defaultTab?: Tab;
@@ -44,81 +30,24 @@ const ROLE_DESCRIPTIONS: Record<string, string> = {
   Resident: "Access to risk predictions and alert notifications.",
 };
 
-function toDatetimeLocal(iso: string | null): string {
-  if (!iso) return "";
-  return iso.replace("Z", "").slice(0, 16);
-}
-
-function toISOOrNull(local: string): string | null {
-  if (!local) return null;
-  return new Date(local).toISOString();
-}
-
 const NAV_ITEMS: { id: Tab; label: string; icon: React.ElementType; description: string }[] = [
   { id: "profile", label: "Profile", icon: User, description: "Your account details" },
   { id: "locations", label: "My Locations", icon: MapPin, description: "Saved places & risk" },
   { id: "notifications", label: "Alert Preferences", icon: Bell, description: "Notification settings" },
+  { id: "about", label: "About", icon: Info, description: "Data sources & credits" },
 ];
 
 export function SettingsPage({ defaultTab = "profile" }: SettingsPageProps) {
   const [activeTab, setActiveTab] = useState<Tab>(defaultTab ?? "profile");
   const [profile, setProfile] = useState<UserProfile | null>(null);
-  const [prefs, setPrefs] = useState<NotificationPrefs | null>(null);
   const [loadingProfile, setLoadingProfile] = useState(true);
-  const [loadingPrefs, setLoadingPrefs] = useState(true);
-  const [saving, setSaving] = useState(false);
-  const [saveError, setSaveError] = useState<string | null>(null);
-  const [saveSuccess, setSaveSuccess] = useState(false);
 
   useEffect(() => {
     apiFetch("/me")
       .then(async (r) => { if (r.ok) setProfile(await r.json()); })
       .catch(() => {})
       .finally(() => setLoadingProfile(false));
-
-    apiFetch("/me/notifications")
-      .then(async (r) => { if (r.ok) setPrefs(await r.json()); })
-      .catch(() => {})
-      .finally(() => setLoadingPrefs(false));
   }, []);
-
-  const handleToggleOptIn = async (checked: boolean) => {
-    if (!prefs) return;
-    const endpoint = checked ? "/notifications/subscribe" : "/notifications/unsubscribe";
-    const res = await apiFetch(endpoint, { method: "POST" });
-    if (res.ok) setPrefs(await res.json());
-  };
-
-  const handleSave = async () => {
-    if (!prefs) return;
-    setSaving(true);
-    setSaveError(null);
-    setSaveSuccess(false);
-    try {
-      const res = await apiFetch("/me/notifications", {
-        method: "PUT",
-        body: JSON.stringify({
-          frequency: prefs.frequency,
-          risk_threshold: prefs.risk_threshold,
-          paused_until: prefs.paused_until,
-          blackout_start: prefs.blackout_start,
-          blackout_end: prefs.blackout_end,
-        }),
-      });
-      const data = await res.json();
-      if (!res.ok) {
-        setSaveError(data.error || "Failed to save");
-      } else {
-        setPrefs(data);
-        setSaveSuccess(true);
-        setTimeout(() => setSaveSuccess(false), 3000);
-      }
-    } catch {
-      setSaveError("Could not reach the server");
-    } finally {
-      setSaving(false);
-    }
-  };
 
   return (
     <div className="space-y-2">
@@ -221,155 +150,195 @@ export function SettingsPage({ defaultTab = "profile" }: SettingsPageProps) {
             </div>
           )}
 
-          {/* Alert Preferences */}
+          {/* Alert Preferences — reuses the full NotificationSettings component */}
           {activeTab === "notifications" && (
-            <div className="border rounded-xl bg-white overflow-hidden">
-              <div className="px-6 py-4 border-b bg-muted/30">
-                <h2 className="font-semibold text-base">Alert Preferences</h2>
-                <p className="text-xs text-muted-foreground mt-0.5">Control when and how you receive wildfire alerts</p>
+            <NotificationSettings token={localStorage.getItem("token") || ""} />
+          )}
+
+          {/* About — Data Sources & Credits */}
+          {activeTab === "about" && (
+            <div className="space-y-6">
+              <div className="border rounded-xl bg-white overflow-hidden">
+                <div className="px-6 py-4 border-b bg-muted/30">
+                  <h2 className="font-semibold text-base">About FireScope</h2>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    FireScope aggregates open-source data from government agencies, satellite systems, and news providers to deliver real-time wildfire risk intelligence for California.
+                  </p>
+                </div>
+                <div className="px-6 py-5 text-sm text-muted-foreground">
+                  All data is sourced from publicly available APIs and open datasets. FireScope does not generate fire reports — it visualizes and analyzes data from the sources listed below.
+                </div>
               </div>
-              <div className="divide-y">
-                {loadingPrefs ? (
-                  <div className="px-6 py-6 space-y-4">
-                    <Skeleton className="h-8 w-full" />
-                    <Skeleton className="h-8 w-full" />
-                    <Skeleton className="h-8 w-full" />
-                  </div>
-                ) : prefs ? (
-                  <>
-                    {/* Enable toggle */}
-                    <div className="px-6 py-5 flex items-center justify-between gap-4">
-                      <div>
-                        <p className="text-sm font-medium">Enable email alerts</p>
-                        <p className="text-xs text-muted-foreground mt-0.5">
-                          Receive wildfire risk notifications to your email
-                        </p>
-                      </div>
-                      <Switch checked={prefs.opted_in} onCheckedChange={handleToggleOptIn} />
-                    </div>
 
-                    {/* Frequency */}
-                    <div className="px-6 py-5 space-y-3">
-                      <div>
-                        <p className="text-sm font-medium">Alert frequency</p>
-                        <p className="text-xs text-muted-foreground mt-0.5">How often you want to be notified</p>
-                      </div>
-                      <Select
-                        value={prefs.frequency}
-                        onValueChange={(val) => setPrefs({ ...prefs, frequency: val })}
-                        disabled={false}
-                      >
-                        <SelectTrigger className="w-full sm:w-80">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          <SelectItem value="instant">Instant — as soon as risk is detected</SelectItem>
-                          <SelectItem value="daily">Daily digest</SelectItem>
-                          <SelectItem value="weekly">Weekly digest</SelectItem>
-                        </SelectContent>
-                      </Select>
-                    </div>
+              {/* Satellite Data */}
+              <div className="border rounded-xl bg-white overflow-hidden">
+                <div className="px-6 py-4 border-b bg-muted/30 flex items-center gap-2">
+                  <Satellite className="h-4 w-4 text-blue-500" />
+                  <h3 className="font-semibold text-sm">Satellite Data</h3>
+                </div>
+                <div className="divide-y">
+                  <AboutItem
+                    name="NASA FIRMS (VIIRS SNPP)"
+                    description="Real-time satellite fire detection. Provides active fire hotspots with latitude, longitude, confidence level, and Fire Radiative Power (FRP) measurements updated multiple times daily."
+                    badge="Real-time"
+                    badgeColor="bg-red-100 text-red-700"
+                  />
+                  <AboutItem
+                    name="NASA ORNL DAAC — MODIS (MOD13Q1)"
+                    description="Enhanced Vegetation Index (EVI) data used to assess fire fuel load and vegetation dryness. Sourced from the MODIS satellite via the Oak Ridge National Laboratory DAAC web service."
+                    badge="250m resolution"
+                    badgeColor="bg-green-100 text-green-700"
+                  />
+                </div>
+              </div>
 
-                    {/* Risk threshold */}
-                    <div className="px-6 py-5 space-y-4">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <p className="text-sm font-medium">Minimum risk threshold</p>
-                          <p className="text-xs text-muted-foreground mt-0.5">
-                            Only alert when risk exceeds this level
-                          </p>
-                        </div>
-                        <Badge variant="outline" className="text-sm font-semibold px-3">
-                          {prefs.risk_threshold}%
-                        </Badge>
-                      </div>
-                      <Slider
-                        min={0}
-                        max={100}
-                        step={5}
-                        value={[prefs.risk_threshold]}
-                        onValueChange={([val]) => setPrefs({ ...prefs, risk_threshold: val })}
-                        disabled={false}
-                        className="w-full"
-                      />
-                      <div className="flex justify-between text-xs text-muted-foreground">
-                        <span>Alert on any risk (0%)</span>
-                        <span>High risk only (100%)</span>
-                      </div>
-                    </div>
+              {/* Fire Agencies */}
+              <div className="border rounded-xl bg-white overflow-hidden">
+                <div className="px-6 py-4 border-b bg-muted/30 flex items-center gap-2">
+                  <Building2 className="h-4 w-4 text-orange-500" />
+                  <h3 className="font-semibold text-sm">Fire Agencies</h3>
+                </div>
+                <div className="divide-y">
+                  <AboutItem
+                    name="CAL FIRE Incidents API"
+                    description="California Department of Forestry and Fire Protection active incident data — fire name, county, acres, percent contained. Used on the Active Fires map and as the containment-enrichment source when NIFC perimeters have null containment."
+                    badge="State agency"
+                    badgeColor="bg-orange-100 text-orange-700"
+                  />
+                  <AboutItem
+                    name="NIFC WFIGS Interagency Perimeters (YearToDate)"
+                    description="National Interagency Fire Center year-to-date California fire perimeter polygons with incident names, acreage, and containment status. The Active Fires map only renders perimeters where containment is below 100% — fully contained fires are hidden."
+                    badge="Federal"
+                    badgeColor="bg-amber-100 text-amber-700"
+                  />
+                  <AboutItem
+                    name="NIFC WFIGS Incident Locations (YearToDate)"
+                    description="Point-level WFIGS incident records with IRWIN IDs and PercentContained. Used to backfill containment percentages onto perimeter polygons that the perimeter layer reports as null, so the 4-tier color coding can actually kick in."
+                    badge="Federal"
+                    badgeColor="bg-amber-100 text-amber-700"
+                  />
+                  <AboutItem
+                    name="CAL FIRE Historic Fire Perimeters (1878–present)"
+                    description="California's authoritative fire-perimeter archive — 22k+ polygons back to 1878. Powers the History page's year-by-year selector; fetched server-side via /api/history/perimeters?year=N with a 1-hour cache. Filter: GIS_ACRES ≥ 100."
+                    badge="State agency"
+                    badgeColor="bg-orange-100 text-orange-700"
+                  />
+                  <AboutItem
+                    name="CAL FIRE DINS (Damage Inspection)"
+                    description="Post-fire structure damage inspection records available via /api/history/dins. Endpoint shipped; UI layer is currently disabled on the History page."
+                    badge="State agency"
+                    badgeColor="bg-orange-100 text-orange-700"
+                  />
+                  <AboutItem
+                    name="FEMA National Shelter System"
+                    description="Backend proxy /api/shelters queries FEMA's NSS (FEMA_NSS + OpenShelters fallback) for active California emergency shelters. Populates the Evacuation Routes map shelter clusters when FEMA has an open event for CA; otherwise the feed is intentionally empty."
+                    badge="Federal"
+                    badgeColor="bg-amber-100 text-amber-700"
+                  />
+                </div>
+              </div>
 
-                    {/* Pause until */}
-                    <div className="px-6 py-5 space-y-3">
-                      <div>
-                        <p className="text-sm font-medium">Pause alerts until</p>
-                        <p className="text-xs text-muted-foreground mt-0.5">Temporarily silence all alerts until a date</p>
-                      </div>
-                      <input
-                        type="datetime-local"
-                        className="border rounded-md px-3 py-2 text-sm bg-background w-full sm:w-80 disabled:opacity-50"
-                        value={toDatetimeLocal(prefs.paused_until)}
-                        onChange={(e) => setPrefs({ ...prefs, paused_until: toISOOrNull(e.target.value) })}
-                        disabled={false}
-                      />
-                    </div>
+              {/* News & Weather */}
+              <div className="border rounded-xl bg-white overflow-hidden">
+                <div className="px-6 py-4 border-b bg-muted/30 flex items-center gap-2">
+                  <Newspaper className="h-4 w-4 text-purple-500" />
+                  <h3 className="font-semibold text-sm">News & Weather</h3>
+                </div>
+                <div className="divide-y">
+                  <AboutItem
+                    name="National Weather Service (NWS)"
+                    description="NOAA weather alerts for California including Red Flag Warnings, Fire Weather Watches, and other hazardous weather advisories delivered via the ATOM feed."
+                    badge="Government"
+                    badgeColor="bg-blue-100 text-blue-700"
+                  />
+                  <AboutItem
+                    name="GNews API"
+                    description="Aggregated news articles from major outlets covering California wildfires, fire prevention, and emergency response. Used to power the news feed and breaking alerts."
+                    badge="News aggregator"
+                    badgeColor="bg-purple-100 text-purple-700"
+                  />
+                </div>
+              </div>
 
-                    {/* Quiet hours */}
-                    <div className="px-6 py-5 space-y-3">
-                      <div>
-                        <p className="text-sm font-medium">Quiet hours</p>
-                        <p className="text-xs text-muted-foreground mt-0.5">No alerts will be sent during this window</p>
-                      </div>
-                      <div className="flex flex-col sm:flex-row gap-4">
-                        <div className="space-y-1.5">
-                          <Label className="text-xs text-muted-foreground">Start</Label>
-                          <input
-                            type="datetime-local"
-                            className="border rounded-md px-3 py-2 text-sm bg-background w-full sm:w-60 disabled:opacity-50"
-                            value={toDatetimeLocal(prefs.blackout_start)}
-                            onChange={(e) => setPrefs({ ...prefs, blackout_start: toISOOrNull(e.target.value) })}
-                            disabled={false}
-                          />
-                        </div>
-                        <div className="space-y-1.5">
-                          <Label className="text-xs text-muted-foreground">End</Label>
-                          <input
-                            type="datetime-local"
-                            className="border rounded-md px-3 py-2 text-sm bg-background w-full sm:w-60 disabled:opacity-50"
-                            value={toDatetimeLocal(prefs.blackout_end)}
-                            onChange={(e) => setPrefs({ ...prefs, blackout_end: toISOOrNull(e.target.value) })}
-                            disabled={false}
-                          />
-                        </div>
-                      </div>
-                    </div>
+              {/* Mapping & Visualization */}
+              <div className="border rounded-xl bg-white overflow-hidden">
+                <div className="px-6 py-4 border-b bg-muted/30 flex items-center gap-2">
+                  <Map className="h-4 w-4 text-emerald-500" />
+                  <h3 className="font-semibold text-sm">Mapping & Visualization</h3>
+                </div>
+                <div className="divide-y">
+                  <AboutItem
+                    name="Google Maps Platform"
+                    description="Interactive base maps, geocoding, and satellite imagery powering all map views throughout the application."
+                    badge="Mapping"
+                    badgeColor="bg-emerald-100 text-emerald-700"
+                  />
+                  <AboutItem
+                    name="deck.gl (v9)"
+                    description="Open-source WebGL-powered geospatial visualization framework by Vis.gl. Renders fire hotspots, risk heatmaps, zone polygons, and fire perimeter overlays with high-performance GPU acceleration."
+                    badge="Open source"
+                    badgeColor="bg-gray-100 text-gray-700"
+                  />
+                </div>
+              </div>
 
-                    {/* Save */}
-                    <div className="px-6 py-4 bg-muted/30 flex items-center justify-between gap-4">
-                      <div>
-                        {saveError && <p className="text-sm text-red-500">{saveError}</p>}
-                        {saveSuccess && <p className="text-sm text-green-600">Preferences saved!</p>}
-                      </div>
-                      <Button
-                        onClick={handleSave}
-                        disabled={saving}
-                        className="bg-red-500 hover:bg-red-600"
-                      >
-                        {saving
-                          ? <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                          : <Save className="h-4 w-4 mr-2" />}
-                        Save preferences
-                      </Button>
-                    </div>
-                  </>
-                ) : (
-                  <div className="px-6 py-6 text-sm text-muted-foreground">Could not load preferences.</div>
-                )}
+              {/* Machine Learning */}
+              <div className="border rounded-xl bg-white overflow-hidden">
+                <div className="px-6 py-4 border-b bg-muted/30 flex items-center gap-2">
+                  <Brain className="h-4 w-4 text-red-500" />
+                  <h3 className="font-semibold text-sm">Machine Learning</h3>
+                </div>
+                <div className="divide-y">
+                  <AboutItem
+                    name="scikit-learn Risk Model (active)"
+                    description="Logistic-regression classifier that predicts wildfire risk from four live inputs: EVI (vegetation), LST (land-surface temperature), wind speed, and elevation. Drives the 3-tier risk-zone coloring (green / yellow / red) across Dashboard, Risk Map, and Research views. Per-zone overrides are applied through POST /api/predict-custom."
+                    badge="ML model"
+                    badgeColor="bg-red-100 text-red-700"
+                  />
+                  <AboutItem
+                    name="ActiveFireSnapshot Pipeline (planned retrain)"
+                    description="Tracking schema logged for the next model retrain (option 3): Date, Latitude, Longitude, EVI, TA (thermal anomalies), LST, Wind, Elevation, Fire (binary outcome), NDVI (vegetation cover). Researcher sliders already expose the full feature set so the snapshot-capture job can consume them directly."
+                    badge="Pipeline"
+                    badgeColor="bg-slate-100 text-slate-700"
+                  />
+                </div>
+              </div>
+
+              {/* Zone Data */}
+              <div className="border rounded-xl bg-white overflow-hidden">
+                <div className="px-6 py-4 border-b bg-muted/30 flex items-center gap-2">
+                  <MapPin className="h-4 w-4 text-indigo-500" />
+                  <h3 className="font-semibold text-sm">Geographic Boundaries</h3>
+                </div>
+                <div className="px-6 py-4 text-sm text-muted-foreground">
+                  Risk zones are available at four levels of granularity: 58 counties, 1,769 ZIP codes, 8,041 census tracts, and 1,521 neighborhoods — all derived from U.S. Census Bureau TIGER/Line shapefiles and California-specific boundary datasets.
+                </div>
               </div>
             </div>
           )}
 
         </div>
       </div>
+    </div>
+  );
+}
+
+/* ------------------------------------------------------------------ */
+/*  About section helper                                               */
+/* ------------------------------------------------------------------ */
+function AboutItem({ name, description, badge, badgeColor }: {
+  name: string;
+  description: string;
+  badge: string;
+  badgeColor: string;
+}) {
+  return (
+    <div className="px-6 py-4">
+      <div className="flex items-center gap-2 mb-1">
+        <p className="text-sm font-medium">{name}</p>
+        <Badge variant="outline" className={`text-[10px] px-1.5 py-0 ${badgeColor}`}>{badge}</Badge>
+      </div>
+      <p className="text-xs text-muted-foreground leading-relaxed">{description}</p>
     </div>
   );
 }

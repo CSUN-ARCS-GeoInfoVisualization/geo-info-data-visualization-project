@@ -47,9 +47,10 @@ def _article(pub_days_ago: float, **kw):
     return out
 
 
-def test_news_requires_jwt(client):
+def test_news_works_without_jwt(client):
+    """News endpoint allows unauthenticated access (jwt optional)."""
     r = client.get("/api/news?segment=recent&category=all")
-    assert r.status_code == 401
+    assert r.status_code == 200
 
 
 def test_news_first_page_covers_90d_window(client, monkeypatch):

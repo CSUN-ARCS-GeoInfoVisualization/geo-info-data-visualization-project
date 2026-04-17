@@ -12,6 +12,9 @@ from routes.notifications import notifications_bp
 from routes.predict import predict_bp
 from routes.locations import locations_bp
 from routes.news import news_bp
+from routes.research import research_bp
+from routes.shelters import shelters_bp
+from routes.history import history_bp
 
 
 def create_app(config_class=Config):
@@ -33,6 +36,9 @@ def create_app(config_class=Config):
     app.register_blueprint(predict_bp, url_prefix='/api')
     app.register_blueprint(locations_bp, url_prefix='/api')
     app.register_blueprint(news_bp, url_prefix='/api')
+    app.register_blueprint(research_bp, url_prefix='/api/research')
+    app.register_blueprint(shelters_bp, url_prefix='/api')
+    app.register_blueprint(history_bp, url_prefix='/api/history')
 
     # Initialize email service if RESEND_API_KEY is configured
     if os.getenv('RESEND_API_KEY'):
