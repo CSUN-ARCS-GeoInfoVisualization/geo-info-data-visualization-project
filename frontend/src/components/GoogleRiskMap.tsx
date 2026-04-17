@@ -68,27 +68,34 @@ export function FirePerimetersOverlay() {
   const [selectedPerimeter, setSelectedPerimeter] = useState<any>(null);
 
   useEffect(() => {
-    apiFetch('/fire-perimeters')
-      .then((r) => {
-        if (!r.ok) throw new Error(`HTTP ${r.status}`);
-        return r.json();
-      })
-      .then((data) => {
-        if (!data?.features?.length) {
-          console.warn('NIFC perimeters: empty response');
-          setNifcPerimeters({ type: 'FeatureCollection', features: [] });
+    let cancelled = false;
+    let attempt = 0;
+    const maxAttempts = 5;
+    const load = async () => {
+      while (!cancelled && attempt < maxAttempts) {
+        attempt += 1;
+        try {
+          const r = await apiFetch('/fire-perimeters');
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          const data = await r.json();
+          if (cancelled) return;
+          const features = Array.isArray(data?.features)
+            ? data.features.filter((f: any) => {
+                const raw = f?.properties?.attr_PercentContained;
+                return raw == null || Number(raw) < 100;
+              })
+            : [];
+          console.info(`[dashboard] NIFC perimeters loaded: ${features.length} active CA fires`);
+          setNifcPerimeters({ type: 'FeatureCollection', ...data, features });
           return;
+        } catch (e) {
+          console.warn(`[dashboard] NIFC perimeters attempt ${attempt} failed:`, e);
         }
-        // Backend already filters POOState='US-CA' AND <100% contained.
-        // Client-side safety net: drop anything explicitly 100.
-        const features = data.features.filter((f: any) => {
-          const raw = f?.properties?.attr_PercentContained;
-          return raw == null || Number(raw) < 100;
-        });
-        console.info(`NIFC perimeters loaded: ${features.length} active CA fires`);
-        setNifcPerimeters({ ...data, features });
-      })
-      .catch((e) => console.error('NIFC perimeters fetch failed:', e));
+        await new Promise((res) => setTimeout(res, 3000 * attempt));
+      }
+    };
+    load();
+    return () => { cancelled = true; };
   }, []);
 
   useEffect(() => {

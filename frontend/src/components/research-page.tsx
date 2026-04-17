@@ -216,7 +216,32 @@ function UnifiedResearchOverlay({ features, showHeatmap, zoneGeoJson, zoneRiskDa
       );
     }
 
-    // 3. NIFC fire perimeters (active fire boundaries)
+    // 3. FIRMS hotspot zones (polygon boundaries sized by FRP) — below perimeters
+    if (features.length > 0) {
+      const polygonCollection = firmsPointsToPolygonCollection(features);
+      layers.push(
+        new GeoJsonLayer({
+          id: "firms-zones",
+          data: polygonCollection,
+          pickable: false,
+          stroked: true,
+          filled: true,
+          lineWidthMinPixels: 1,
+          getLineColor: [255, 255, 255, 180],
+          getFillColor: (f: any) => {
+            const c = f.properties?.confidence || 50;
+            if (c >= 80) return [220, 38, 38, 160];
+            if (c >= 60) return [234, 88, 12, 140];
+            if (c >= 40) return [234, 179, 8, 120];
+            return [34, 197, 94, 100];
+          },
+          getLineWidth: 1,
+          updateTriggers: { getFillColor: [features.length] },
+        })
+      );
+    }
+
+    // 4. NIFC fire perimeters — rendered LAST so they sit on top of everything
     if (showPerimeters && nifcPerimeters?.features?.length) {
       layers.push(
         new GeoJsonLayer({
@@ -242,31 +267,6 @@ function UnifiedResearchOverlay({ features, showHeatmap, zoneGeoJson, zoneRiskDa
             }
           },
           updateTriggers: { getFillColor: [nifcPerimeters.features.length] },
-        })
-      );
-    }
-
-    // 4. FIRMS hotspot zones (polygon boundaries sized by FRP)
-    if (features.length > 0) {
-      const polygonCollection = firmsPointsToPolygonCollection(features);
-      layers.push(
-        new GeoJsonLayer({
-          id: "firms-zones",
-          data: polygonCollection,
-          pickable: false,
-          stroked: true,
-          filled: true,
-          lineWidthMinPixels: 1,
-          getLineColor: [255, 255, 255, 180],
-          getFillColor: (f: any) => {
-            const c = f.properties?.confidence || 50;
-            if (c >= 80) return [220, 38, 38, 160];
-            if (c >= 60) return [234, 88, 12, 140];
-            if (c >= 40) return [234, 179, 8, 120];
-            return [34, 197, 94, 100];
-          },
-          getLineWidth: 1,
-          updateTriggers: { getFillColor: [features.length] },
         })
       );
     }
@@ -316,10 +316,34 @@ function ResearchMapView() {
   const [zoneOverrides, setZoneOverrides] = useState<Record<string, { evi: number; lst: number; wind: number; elevation: number }>>({});
 
   useEffect(() => {
-    apiFetch("/fire-perimeters")
-      .then((r) => r.json())
-      .then((data) => { if (data?.features) setNifcPerimeters(data); })
-      .catch((e) => console.warn("NIFC perimeters load failed:", e));
+    let cancelled = false;
+    let attempt = 0;
+    const maxAttempts = 5;
+    const loadPerimeters = async () => {
+      while (!cancelled && attempt < maxAttempts) {
+        attempt += 1;
+        try {
+          const r = await apiFetch("/fire-perimeters");
+          if (!r.ok) throw new Error(`HTTP ${r.status}`);
+          const data = await r.json();
+          if (!cancelled && data?.features?.length) {
+            console.info(`[research] NIFC perimeters loaded: ${data.features.length}`);
+            setNifcPerimeters(data);
+            return;
+          }
+          if (!cancelled && data?.features?.length === 0) {
+            console.info("[research] NIFC perimeters: 0 features (backend warm, empty state)");
+            setNifcPerimeters(data);
+            return;
+          }
+        } catch (e) {
+          console.warn(`[research] NIFC perimeters attempt ${attempt} failed:`, e);
+        }
+        await new Promise((res) => setTimeout(res, 3000 * attempt));
+      }
+    };
+    loadPerimeters();
+    return () => { cancelled = true; };
   }, []);
 
   const fetchData = useCallback(async () => {
