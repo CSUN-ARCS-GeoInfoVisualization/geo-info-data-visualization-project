@@ -424,8 +424,18 @@ export function History() {
   const [searchQuery, setSearchQuery] = useState("");
   const [focusedFireKey, setFocusedFireKey] = useState<string | null>(null);
 
+  // Display controls removed — perimeters are always shown at full opacity,
+  // structure damage (DINS) is intentionally not rendered on the history map.
+  const opacity = 100;
+  const showPerimeters = true;
+  const [fireData, setFireData] = useState<any>(null); // Merged features for selected years
+  const [availableYears, setAvailableYears] = useState<number[]>([]); // All years from backend (1878-current)
+  const [showYearDropdown, setShowYearDropdown] = useState(false);
+  const [loadingYears, setLoadingYears] = useState(false);
+  const yearCacheRef = useRef<Record<number, any[]>>({}); // in-memory per-year GeoJSON feature cache
+
   // Memoize the fire-dropdown options so the heavy sort doesn't re-run on
-  // every state change (dropdown open, stats update, etc.).
+  // every state change. Declared AFTER fireData to avoid a TDZ ReferenceError.
   const fireOptions = useMemo(() => {
     const feats = (fireData?.features || []).slice();
     feats.sort((a: any, b: any) => (b.properties?.GIS_ACRES || 0) - (a.properties?.GIS_ACRES || 0));
@@ -437,15 +447,6 @@ export function History() {
       return { key, label: `${name} · ${acres} ac` };
     });
   }, [fireData]);
-  // Display controls removed — perimeters are always shown at full opacity,
-  // structure damage (DINS) is intentionally not rendered on the history map.
-  const opacity = 100;
-  const showPerimeters = true;
-  const [fireData, setFireData] = useState<any>(null); // Merged features for selected years
-  const [availableYears, setAvailableYears] = useState<number[]>([]); // All years from backend (1878-current)
-  const [showYearDropdown, setShowYearDropdown] = useState(false);
-  const [loadingYears, setLoadingYears] = useState(false);
-  const yearCacheRef = useRef<Record<number, any[]>>({}); // in-memory per-year GeoJSON feature cache
 
   const [stats, setStats] = useState({
     totalFires: 0,
