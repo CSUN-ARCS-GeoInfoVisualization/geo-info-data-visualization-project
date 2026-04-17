@@ -334,7 +334,7 @@ export function RiskMap() {
                     {zoneLevel === "neighborhoods" && <NeighborhoodRiskOverlay />}
 
                     {/* Live Active Fires — NIFC perimeter polygons (<100% contained) */}
-                    {layers.find(l => l.id === "fire-incidents")?.enabled && <FirePerimetersOverlay />}
+                    <FirePerimetersOverlay />
 
                     {/* Weather Stations - awaiting real data source */}
                   </GoogleMap>
@@ -406,50 +406,6 @@ export function RiskMap() {
                   <option value="neighborhoods">Neighborhoods (1,521)</option>
                   <option value="census-tracts">Census Tracts (8,041)</option>
                 </select>
-              </CardContent>
-            </Card>
-
-            {/* Map Layers */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center gap-2">
-                  <Layers className="h-5 w-5" />
-                  Map Layers
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-4">
-                {layers.map((layer) => {
-                  const Icon = layer.icon;
-                  return (
-                    <div key={layer.id} className="space-y-2">
-                      <div className="flex items-center justify-between">
-                        <div className="flex items-center gap-2">
-                          <Icon className="h-4 w-4" />
-                          <span className="text-sm">{layer.name}</span>
-                        </div>
-                        <Switch
-                          checked={layer.enabled}
-                          onCheckedChange={() => toggleLayer(layer.id)}
-                        />
-                      </div>
-                      {layer.enabled && (
-                        <div className="ml-6">
-                          <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                            <span>Opacity</span>
-                            <Slider
-                              value={[layer.opacity]}
-                              onValueChange={(value) => updateLayerOpacity(layer.id, value[0])}
-                              max={100}
-                              step={10}
-                              className="flex-1"
-                            />
-                            <span>{layer.opacity}%</span>
-                          </div>
-                        </div>
-                      )}
-                    </div>
-                  );
-                })}
               </CardContent>
             </Card>
 
