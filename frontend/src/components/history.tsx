@@ -96,27 +96,35 @@ function HistoricalFirePerimetersOverlay({
           filled: true,
           autoHighlight: true,
 
+          // Match the live fire-perimeter styling used elsewhere on the site:
+          // colored fill AND matching stroke so sub-pixel polygons stay visible
+          // as tier-colored dots at CA-wide zoom. Tiers here are by acreage
+          // since historic fires are all final (100% contained).
           getFillColor: (d: any) => {
             const acres = d.properties.GIS_ACRES || 0;
-            const baseOpacity = opacity * 1.5;
-            if (acres >= 10000) return [139, 0, 0, baseOpacity];
-            if (acres >= 1000)  return [220, 38, 38, baseOpacity];
-            if (acres >= 100)   return [249, 115, 22, baseOpacity];
-            return [234, 179, 8, baseOpacity];
+            const a = Math.min(255, Math.round(opacity * 2.4));
+            if (acres >= 10000) return [139, 0, 0, a];
+            if (acres >= 1000)  return [220, 38, 38, a];
+            if (acres >= 100)   return [249, 115, 22, a];
+            return [234, 179, 8, a];
           },
 
           getLineColor: (d: any) => {
             if (hoveredFire && d.properties.OBJECTID === hoveredFire.OBJECTID) {
               return [0, 255, 255, 255];
             }
-            return [255, 255, 255, 200];
+            const acres = d.properties.GIS_ACRES || 0;
+            if (acres >= 10000) return [139, 0, 0, 255];
+            if (acres >= 1000)  return [220, 38, 38, 255];
+            if (acres >= 100)   return [249, 115, 22, 255];
+            return [234, 179, 8, 255];
           },
 
           getLineWidth: (d: any) => {
             if (hoveredFire && d.properties.OBJECTID === hoveredFire.OBJECTID) return 4;
-            return 2;
+            return 3;
           },
-          lineWidthMinPixels: 1,
+          lineWidthMinPixels: 3,
 
           onHover: (info: any) => {
             setHoveredFire(info.object ? info.object.properties : null);
@@ -412,7 +420,8 @@ function DINSDamageOverlay({
 }
 
 export function History() {
-  const [selectedYears, setSelectedYears] = useState<number[]>([2025]); // Start with 2025 selected
+  const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear());
+  const selectedYears = [selectedYear]; // kept as an array locally so the existing overlay contract still works
   const [mapTypeId, setMapTypeId] = useState<'roadmap' | 'satellite' | 'hybrid' | 'terrain'>('satellite');
   const [searchQuery, setSearchQuery] = useState("");
   const [opacity, setOpacity] = useState(60);
@@ -432,14 +441,20 @@ export function History() {
     averageSize: 0,
   });
 
-  // 1. Load the full available-year list once (min..max from ArcGIS stats)
+  // 1. Load the available-year list once (min..max from ArcGIS stats), clamped
+  //    to 1950+ because CAL FIRE's older records are sparse and noisy.
   useEffect(() => {
     apiFetch('/history/perimeters/years')
       .then((r) => r.json())
       .then((data) => {
         if (Array.isArray(data?.years) && data.years.length) {
-          setAvailableYears(data.years);
-          setStats((s) => ({ ...s, yearRange: `${data.min}-${data.max}` }));
+          const floor = 1950;
+          const clipped = data.years.filter((y: number) => y >= floor);
+          const maxY = clipped[0] ?? data.max;
+          setAvailableYears(clipped);
+          setStats((s) => ({ ...s, yearRange: `${floor}-${maxY}` }));
+          // Ensure the initial selection is actually in the list
+          setSelectedYear((y) => (clipped.includes(y) ? y : clipped[0]));
         }
       })
       .catch((e) => console.warn('Year list fetch failed:', e));
@@ -616,75 +631,22 @@ export function History() {
                     />
                   </div>
 
-                  {/* Year Filter - Multi-select with checkboxes */}
-                  <div className="relative year-filter-dropdown">
-                    <Button
-                      variant="outline"
-                      className="w-48 justify-between"
-                      onClick={() => setShowYearDropdown(!showYearDropdown)}
+                  {/* Year Filter — native single-select, scrolls after 6 rows */}
+                  <div className="flex items-center gap-2">
+                    <label htmlFor="history-year" className="text-sm text-muted-foreground">Year:</label>
+                    <select
+                      id="history-year"
+                      value={selectedYear}
+                      onChange={(e) => setSelectedYear(Number(e.target.value))}
+                      size={1}
+                      className="text-sm border rounded px-2 py-1.5 bg-background w-28"
                     >
-                      <span className="text-sm">
-                        {selectedYears.length === 0
-                          ? 'No years selected'
-                          : selectedYears.length === 1
-                          ? selectedYears[0]
-                          : `${selectedYears.length} years selected`}
-                        {loadingYears && ' (loading…)'}
-                      </span>
-                      <ChevronDown className="h-4 w-4 ml-2 opacity-50" />
-                    </Button>
-
-                    {showYearDropdown && (
-                      <Card className="absolute top-full mt-1 w-56 p-3 z-50 shadow-lg">
-                        <div className="space-y-2">
-                          <div className="font-medium text-sm mb-1">Filter by Year</div>
-                          <p className="text-[11px] text-muted-foreground mb-2">
-                            CAL FIRE historic perimeters {availableYears.length > 0 ? `(${availableYears[availableYears.length - 1]}–${availableYears[0]})` : ''}. Each year is fetched on-demand.
-                          </p>
-
-                          {/* Quick-select helpers */}
-                          <div className="flex gap-2 pb-2 border-b flex-wrap">
-                            <button
-                              className="text-[11px] px-2 py-0.5 rounded border hover:bg-muted"
-                              onClick={() => setSelectedYears(availableYears.slice(0, 5))}
-                            >Last 5 yrs</button>
-                            <button
-                              className="text-[11px] px-2 py-0.5 rounded border hover:bg-muted"
-                              onClick={() => setSelectedYears(availableYears.slice(0, 20))}
-                            >Last 20 yrs</button>
-                            <button
-                              className="text-[11px] px-2 py-0.5 rounded border hover:bg-muted"
-                              onClick={() => setSelectedYears([])}
-                            >Clear</button>
-                          </div>
-
-                          {/* Individual years */}
-                          {availableYears.map((year) => (
-                            <div key={year} className="flex items-center space-x-2">
-                              <Checkbox
-                                id={`year-${year}`}
-                                checked={selectedYears.includes(year)}
-                                onCheckedChange={(checked) => {
-                                  if (checked) {
-                                    setSelectedYears([...selectedYears, year].sort((a, b) => b - a));
-                                  } else {
-                                    setSelectedYears(selectedYears.filter(y => y !== year));
-                                  }
-                                }}
-                              />
-                              <label
-                                htmlFor={`year-${year}`}
-                                className="text-sm leading-none cursor-pointer"
-                              >
-                                {year}
-                              </label>
-                            </div>
-                          ))}
-                        </div>
-                      </Card>
-                    )}
+                      {availableYears.map((y) => (
+                        <option key={y} value={y}>{y}</option>
+                      ))}
+                    </select>
+                    {loadingYears && <span className="text-[11px] text-muted-foreground">loading…</span>}
                   </div>
-
                   {/* Map Type Selector */}
                   <Select value={mapTypeId} onValueChange={(value) => setMapTypeId(value as any)}>
                     <SelectTrigger className="w-32">
