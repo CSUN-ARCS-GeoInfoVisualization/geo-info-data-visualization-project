@@ -55,6 +55,31 @@ function HistoricalFirePerimetersOverlay({ fireData, focusedFireKey }: { fireDat
     };
   }, [map]);
 
+  // When the user picks a fire from the header dropdown, frame that fire
+  // tightly (fitBounds over its polygon) and open the detail popup.
+  useEffect(() => {
+    if (!map || !focusedFireKey || !fireData?.features?.length) return;
+    const f = fireData.features.find((ft: any) => {
+      const p = ft.properties || {};
+      return `${p.OBJECTID ?? ''}-${p.FIRE_NAME ?? ''}-${p.INC_NUM ?? ''}` === focusedFireKey;
+    });
+    if (!f?.geometry) return;
+    const bounds = new google.maps.LatLngBounds();
+    const walk = (c: any) => {
+      if (!Array.isArray(c)) return;
+      if (typeof c[0] === 'number' && typeof c[1] === 'number') {
+        bounds.extend({ lat: c[1], lng: c[0] });
+      } else {
+        for (const sub of c) walk(sub);
+      }
+    };
+    walk(f.geometry.coordinates);
+    if (!bounds.isEmpty()) {
+      map.fitBounds(bounds, 80);
+      setSelectedFire(f.properties);
+    }
+  }, [map, focusedFireKey, fireData]);
+
   // Rebuild layers when data OR selection changes. Layer data uses the
   // parent's stable fireData ref, so switching map type doesn't re-hydrate.
   useEffect(() => {
@@ -616,20 +641,23 @@ export function History() {
                     </select>
                   </div>
 
-                  {/* Year Filter — native single-select, scrolls after 6 rows */}
+                  {/* Year Filter — shadcn Select with a fixed-height scrolling
+                      popup so the list doesn't run off the page with 75+ years. */}
                   <div className="flex items-center gap-2">
-                    <label htmlFor="history-year" className="text-sm text-muted-foreground">Year:</label>
-                    <select
-                      id="history-year"
-                      value={selectedYear}
-                      onChange={(e) => setSelectedYear(Number(e.target.value))}
-                      size={1}
-                      className="text-sm border rounded px-2 py-1.5 bg-background w-28"
+                    <span className="text-sm text-muted-foreground">Year:</span>
+                    <Select
+                      value={String(selectedYear)}
+                      onValueChange={(v) => setSelectedYear(Number(v))}
                     >
-                      {availableYears.map((y) => (
-                        <option key={y} value={y}>{y}</option>
-                      ))}
-                    </select>
+                      <SelectTrigger className="w-24 h-8">
+                        <SelectValue />
+                      </SelectTrigger>
+                      <SelectContent className="max-h-56">
+                        {availableYears.map((y) => (
+                          <SelectItem key={y} value={String(y)}>{y}</SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
                   </div>
                 </div>
               </div>
