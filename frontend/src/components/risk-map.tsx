@@ -341,36 +341,51 @@ export function RiskMap() {
                 </div>
 
                 {/* Map Legend */}
-                <div className="mt-4 bg-gray-50 rounded-lg p-4">
-                  <h4 className="font-semibold text-sm mb-3">Map Legend</h4>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-                    <div className="flex items-center gap-2">
-                      <span className="text-base">🔥</span>
-                      <span>Active Fire</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="w-3 h-3 bg-blue-500 border-2 border-white rounded-full"></div>
-                      <span>Weather Station</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="w-4 h-3 bg-green-500 rounded border border-gray-300 opacity-70"></div>
-                      <span>Low Risk</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="w-4 h-3 bg-yellow-400 rounded border border-gray-300 opacity-70"></div>
-                      <span>Moderate</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="w-4 h-3 bg-red-600 rounded border border-gray-300 opacity-70"></div>
-                      <span>High Risk</span>
-                    </div>
-                    <div className="flex items-center gap-2">
-                      <div className="w-4 h-3 bg-red-900 rounded border border-gray-300 opacity-70"></div>
-                      <span>Extreme</span>
+                <div className="mt-4 bg-gray-50 rounded-lg p-4 space-y-4">
+                  <div>
+                    <h4 className="font-semibold text-sm mb-2">Risk Zones</h4>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                      <div className="flex items-center gap-2">
+                        <div className="w-4 h-3 rounded border border-gray-300 opacity-70" style={{ backgroundColor: "#22c55e" }} />
+                        <span>Low Risk</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-4 h-3 rounded border border-gray-300 opacity-70" style={{ backgroundColor: "#eab308" }} />
+                        <span>Moderate</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-4 h-3 rounded border border-gray-300 opacity-70" style={{ backgroundColor: "#dc2626" }} />
+                        <span>High Risk</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-4 h-3 rounded border border-gray-300 opacity-70" style={{ backgroundColor: "#7f1d1d" }} />
+                        <span>Extreme</span>
+                      </div>
                     </div>
                   </div>
-                  <p className="text-xs text-muted-foreground mt-3">
-                    💡 Real-time risk assessment data. View historical fire perimeters in the History tab.
+                  <div>
+                    <h4 className="font-semibold text-sm mb-2">Active Fire Perimeters — by Containment</h4>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
+                      <div className="flex items-center gap-2">
+                        <div className="w-4 h-3 rounded border border-gray-300" style={{ backgroundColor: "#dc2626" }} />
+                        <span>0–24 % (red)</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-4 h-3 rounded border border-gray-300" style={{ backgroundColor: "#f97316" }} />
+                        <span>25–49 % (orange)</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-4 h-3 rounded border border-gray-300" style={{ backgroundColor: "#facc15" }} />
+                        <span>50–99 % (yellow)</span>
+                      </div>
+                      <div className="flex items-center gap-2">
+                        <div className="w-4 h-3 rounded border border-gray-300" style={{ backgroundColor: "#ffffff" }} />
+                        <span>100 % (white — hidden)</span>
+                      </div>
+                    </div>
+                  </div>
+                  <p className="text-xs text-muted-foreground">
+                    Fire perimeters are polygon boundaries from NIFC WFIGS. Fully-contained fires are hidden. Risk zones come from the ML model; click a zone for the input breakdown.
                   </p>
                 </div>
               </CardContent>
