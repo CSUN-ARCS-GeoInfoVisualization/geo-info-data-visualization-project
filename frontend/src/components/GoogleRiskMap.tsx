@@ -108,10 +108,10 @@ export function FirePerimetersOverlay() {
 
     const colorForPct = (raw: any): [number, number, number, number] => {
       const pct = raw == null ? 0 : Number(raw);
-      if (pct >= 100) return [255, 255, 255, 220];
-      if (pct >= 50) return [250, 204, 21, 230];
-      if (pct >= 25) return [249, 115, 22, 230];
-      return [220, 38, 38, 230];
+      if (pct >= 100) return [255, 255, 255, 230];
+      if (pct >= 50) return [250, 204, 21, 240];
+      if (pct >= 25) return [249, 115, 22, 240];
+      return [220, 38, 38, 240];
     };
 
     const overlay = new GoogleMapsOverlay({
@@ -122,10 +122,10 @@ export function FirePerimetersOverlay() {
           pickable: true,
           stroked: true,
           filled: true,
-          lineWidthMinPixels: 2,
-          getLineColor: [255, 255, 255, 220],
+          lineWidthMinPixels: 3,
+          getLineColor: (f: any) => colorForPct(f.properties?.attr_PercentContained),
           getFillColor: (f: any) => colorForPct(f.properties?.attr_PercentContained),
-          getLineWidth: 2,
+          getLineWidth: 3,
           onClick: (info: any) => {
             if (info.object) {
               setSelectedPerimeter({ ...info.object.properties, x: info.x, y: info.y });
@@ -133,7 +133,10 @@ export function FirePerimetersOverlay() {
             }
             return false;
           },
-          updateTriggers: { getFillColor: [nifcPerimeters.features.length] },
+          updateTriggers: {
+            getFillColor: [nifcPerimeters.features.length],
+            getLineColor: [nifcPerimeters.features.length],
+          },
         }),
       ],
     });
