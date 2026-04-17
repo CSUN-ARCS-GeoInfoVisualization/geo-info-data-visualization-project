@@ -39,8 +39,6 @@ function HistoricalFirePerimetersOverlay({ fireData, selectedFire, onSelect }: {
   // Keep the latest onSelect / selectedFire in refs so the deck.gl layer's
   // click handler and line-color accessor can read them without the layer
   // being rebuilt on every parent re-render.
-  const onSelectRef = useRef(onSelect);
-  onSelectRef.current = onSelect;
 
   // Create the overlay ONCE per map, destroy only on unmount.
   useEffect(() => {
@@ -77,14 +75,19 @@ function HistoricalFirePerimetersOverlay({ fireData, selectedFire, onSelect }: {
         new GeoJsonLayer({
           id: 'historical-fire-perimeters',
           data: fireData,
-          pickable: true,
+          // pickable is deliberately FALSE. deck.gl's GPU picking pass on a
+          // GeoJSON FeatureCollection with hundreds of MultiPolygons is the
+          // last remaining freeze vector on this map — every repeatable hang
+          // report has been on clicking a polygon. Selection is done via the
+          // header dropdown, which is identical behaviour-wise to the research
+          // map's navbar pick flow.
+          pickable: false,
           stroked: true,
           filled: true,
           lineWidthMinPixels: 3,
           getLineWidth: 3,
           getLineColor: (f: any) => colorForAcres(f.properties.GIS_ACRES || 0),
           getFillColor: (f: any) => colorForAcres(f.properties.GIS_ACRES || 0),
-          onClick: (info: any) => { if (info.object) onSelectRef.current(info.object.properties); },
           updateTriggers: {
             getFillColor: [fireData.features.length],
             getLineColor: [fireData.features.length],
