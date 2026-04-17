@@ -529,9 +529,27 @@ function ResearchMapView() {
                       {selectedPerimeter.poly_GISAcres != null && (
                         <div>Acres: <span className="font-medium text-foreground">{Number(selectedPerimeter.poly_GISAcres).toLocaleString(undefined, { maximumFractionDigits: 2 })}</span></div>
                       )}
-                      {selectedPerimeter.attr_PercentContained != null
-                        ? <div>Contained: <span className="font-medium text-foreground">{selectedPerimeter.attr_PercentContained}%</span></div>
-                        : <div>Contained: <span className="font-medium text-foreground">Unknown</span></div>}
+                      {(() => {
+                        const raw = selectedPerimeter.attr_PercentContained;
+                        const pct = raw == null ? null : Number(raw);
+                        const label = pct == null
+                          ? 'Unknown (treated as 0–24%)'
+                          : pct >= 100 ? `${pct}% (100%)`
+                          : pct >= 50 ? `${pct}% (50–99%)`
+                          : pct >= 25 ? `${pct}% (25–49%)`
+                          : `${pct}% (0–24%)`;
+                        const color = pct == null ? '#dc2626'
+                          : pct >= 100 ? '#ffffff'
+                          : pct >= 50 ? '#facc15'
+                          : pct >= 25 ? '#f97316'
+                          : '#dc2626';
+                        return (
+                          <div className="flex items-center gap-1.5">
+                            <span style={{ width: 10, height: 10, borderRadius: 2, background: color, border: '1px solid #d1d5db', display: 'inline-block' }} />
+                            <span>Contained: <span className="font-medium text-foreground">{label}</span></span>
+                          </div>
+                        );
+                      })()}
                       {selectedPerimeter.poly_FeatureCategory && (
                         <div>Type: <span className="font-medium text-foreground">{selectedPerimeter.poly_FeatureCategory}</span></div>
                       )}

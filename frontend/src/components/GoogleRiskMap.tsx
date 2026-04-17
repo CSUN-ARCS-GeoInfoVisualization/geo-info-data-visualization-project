@@ -176,8 +176,19 @@ export function FirePerimetersOverlay() {
             style={{ position: 'absolute', top: 4, right: 8, background: 'none', border: 'none', cursor: 'pointer', fontSize: 16, color: '#6b7280' }}
           >×</button>
           <div style={{ fontWeight: 700, marginBottom: 4, paddingRight: 16 }}>{selectedPerimeter.poly_IncidentName || selectedPerimeter.attr_IncidentName || 'Fire Perimeter'}</div>
-          {selectedPerimeter.poly_GISAcres != null && <div><strong>Acres:</strong> {Number(selectedPerimeter.poly_GISAcres).toLocaleString()}</div>}
-          {selectedPerimeter.attr_PercentContained != null && <div><strong>Contained:</strong> {selectedPerimeter.attr_PercentContained}%</div>}
+          {selectedPerimeter.poly_GISAcres != null && <div><strong>Acres:</strong> {Number(selectedPerimeter.poly_GISAcres).toLocaleString(undefined, { maximumFractionDigits: 2 })}</div>}
+          {(() => {
+            const raw = selectedPerimeter.attr_PercentContained;
+            const pct = raw == null ? null : Number(raw);
+            const tier = pct == null ? 'Unknown (0–24%)' : pct >= 100 ? '100%' : pct >= 50 ? `${pct}% (50–99%)` : pct >= 25 ? `${pct}% (25–49%)` : `${pct}% (0–24%)`;
+            const color = pct == null ? '#dc2626' : pct >= 100 ? '#ffffff' : pct >= 50 ? '#facc15' : pct >= 25 ? '#f97316' : '#dc2626';
+            return (
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 2 }}>
+                <span style={{ width: 10, height: 10, borderRadius: 2, background: color, border: '1px solid #d1d5db', display: 'inline-block' }} />
+                <div><strong>Contained:</strong> {tier}</div>
+              </div>
+            );
+          })()}
           {selectedPerimeter.poly_FeatureCategory && <div><strong>Category:</strong> {selectedPerimeter.poly_FeatureCategory}</div>}
         </div>
       )}
