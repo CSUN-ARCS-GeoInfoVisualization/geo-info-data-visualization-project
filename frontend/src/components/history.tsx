@@ -29,7 +29,7 @@ import { GeoJsonLayer, ScatterplotLayer } from '@deck.gl/layers';
 // Historical fire perimeters overlay — mirrors the research page's
 // `UnifiedResearchOverlay` pattern: a single GoogleMapsOverlay per map,
 // data passed in as a prop (no internal fetch), layers rebuilt in one effect.
-function HistoricalFirePerimetersOverlay({ fireData }: { fireData: any }) {
+function HistoricalFirePerimetersOverlay({ fireData, focusedFireKey }: { fireData: any; focusedFireKey: string | null }) {
   const map = useMap();
   const overlayRef = useRef<GoogleMapsOverlay | null>(null);
   const [selectedFire, setSelectedFire] = useState<any>(null);
@@ -391,6 +391,7 @@ export function History() {
   const selectedYears = [selectedYear]; // kept as an array locally so the existing overlay contract still works
   const mapTypeId: 'roadmap' = 'roadmap';
   const [searchQuery, setSearchQuery] = useState("");
+  const [focusedFireKey, setFocusedFireKey] = useState<string | null>(null);
   // Display controls removed — perimeters are always shown at full opacity,
   // structure damage (DINS) is intentionally not rendered on the history map.
   const opacity = 100;
@@ -587,15 +588,32 @@ export function History() {
                   Historical Fire Perimeters Map
                 </CardTitle>
                 <div className="flex flex-wrap items-center gap-2">
-                  {/* Search */}
-                  <div className="relative">
-                    <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-                    <Input
-                      placeholder="Search fire name..."
-                      value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
-                      className="w-48 pl-8"
-                    />
+                  {/* Fire-name dropdown — lists every fire for the selected year;
+                      browser-native scroll after the first 6 options. Selecting a
+                      fire pans the map to that polygon via focusedFireKey. */}
+                  <div className="flex items-center gap-2">
+                    <label htmlFor="history-fire" className="text-sm text-muted-foreground">Fire:</label>
+                    <select
+                      id="history-fire"
+                      value={focusedFireKey || ""}
+                      onChange={(e) => setFocusedFireKey(e.target.value || null)}
+                      size={1}
+                      className="text-sm border rounded px-2 py-1.5 bg-background w-56"
+                    >
+                      <option value="">All fires ({fireData?.features?.length ?? 0})</option>
+                      {(fireData?.features || [])
+                        .slice()
+                        .sort((a: any, b: any) => (b.properties?.GIS_ACRES || 0) - (a.properties?.GIS_ACRES || 0))
+                        .map((f: any) => {
+                          const p = f.properties || {};
+                          const key = `${p.OBJECTID ?? ''}-${p.FIRE_NAME ?? ''}-${p.INC_NUM ?? ''}`;
+                          const name = p.FIRE_NAME || 'Unnamed';
+                          const acres = p.GIS_ACRES ? Math.round(p.GIS_ACRES).toLocaleString() : '?';
+                          return (
+                            <option key={key} value={key}>{name} · {acres} ac</option>
+                          );
+                        })}
+                    </select>
                   </div>
 
                   {/* Year Filter — native single-select, scrolls after 6 rows */}
@@ -612,7 +630,6 @@ export function History() {
                         <option key={y} value={y}>{y}</option>
                       ))}
                     </select>
-                    {loadingYears && <span className="text-[11px] text-muted-foreground">loading…</span>}
                   </div>
                 </div>
               </div>
@@ -629,7 +646,7 @@ export function History() {
                   disableDefaultUI={true}
                 >
                   {/* Fire Perimeters Layer — rendered last so it sits on top of the map tiles */}
-                  <HistoricalFirePerimetersOverlay fireData={fireData} />
+                  <HistoricalFirePerimetersOverlay fireData={fireData} focusedFireKey={focusedFireKey} />
                 </GoogleMap>
               </div>
 

@@ -97,11 +97,12 @@ def risk_by_zone(zone_type):
             continue
         lat, lon = centroid
         evi = _interpolate_feature(lat, lon, "evi")
-        lst = _interpolate_feature(lat, lon, "lst")
+        air_temp = _interpolate_feature(lat, lon, "air_temp_encoded")
         wind = _interpolate_feature(lat, lon, "wind")
+        humidity = _interpolate_feature(lat, lon, "humidity")
         elev = _interpolate_feature(lat, lon, "elevation")
         sampled_names.append(name)
-        sampled_inputs.append((evi, lst, wind, elev))
+        sampled_inputs.append((evi, air_temp, wind, humidity, elev))
 
     # Single batch prediction call (loads model once, predicts all at once via numpy)
     try:
@@ -111,8 +112,8 @@ def risk_by_zone(zone_type):
         batch_results = [{"risk_score": 0, "label": "Low"}] * len(sampled_inputs)
 
     sampled_risk = {
-        name: {**risk, "features": {"evi": evi, "lst": lst, "wind": wind, "elevation": elev}}
-        for name, risk, (evi, lst, wind, elev) in zip(sampled_names, batch_results, sampled_inputs)
+        name: {**risk, "features": {"evi": evi, "air_temp_encoded": air_temp, "wind": wind, "humidity": humidity, "elevation": elev}}
+        for name, risk, (evi, air_temp, wind, humidity, elev) in zip(sampled_names, batch_results, sampled_inputs)
     }
 
     # Propagate to all zones
@@ -228,12 +229,13 @@ def _build_risk_grid(evi_ov, lst_ov, wind_ov, elev_ov):
         while lon <= lon_end:
             # Use overrides if provided, otherwise interpolate from sample data
             evi = evi_ov if evi_ov is not None else _interpolate_feature(lat, lon, "evi")
-            lst = lst_ov if lst_ov is not None else _interpolate_feature(lat, lon, "lst")
+            air_temp = lst_ov if lst_ov is not None else _interpolate_feature(lat, lon, "air_temp_encoded")
             wind = wind_ov if wind_ov is not None else _interpolate_feature(lat, lon, "wind")
+            humidity = _interpolate_feature(lat, lon, "humidity")
             elev = elev_ov if elev_ov is not None else _interpolate_feature(lat, lon, "elevation")
 
             try:
-                result = predict_from_features(evi, lst, wind, elev)
+                result = predict_from_features(evi=evi, air_temp_encoded=air_temp, wind=wind, humidity=humidity, elevation=elev)
                 features.append({
                     "type": "Feature",
                     "geometry": {"type": "Point", "coordinates": [lon, lat]},
@@ -241,8 +243,9 @@ def _build_risk_grid(evi_ov, lst_ov, wind_ov, elev_ov):
                         "risk_score": result["risk_score"],
                         "label": result["label"],
                         "evi": round(evi, 1),
-                        "lst": round(lst, 1),
+                        "air_temp_encoded": round(air_temp, 1),
                         "wind": round(wind, 1),
+                        "humidity": round(humidity, 1),
                         "elevation": round(elev, 1),
                         "layer": "risk_grid",
                     },
@@ -306,11 +309,12 @@ def risk_by_county():
     inputs = []
     for name, lat, lon in CA_COUNTY_CENTROIDS:
         evi = evi_ov if evi_ov is not None else _interpolate_feature(lat, lon, "evi")
-        lst = lst_ov if lst_ov is not None else _interpolate_feature(lat, lon, "lst")
+        air_temp = lst_ov if lst_ov is not None else _interpolate_feature(lat, lon, "air_temp_encoded")
         wind = wind_ov if wind_ov is not None else _interpolate_feature(lat, lon, "wind")
+        humidity = _interpolate_feature(lat, lon, "humidity")
         elev = elev_ov if elev_ov is not None else _interpolate_feature(lat, lon, "elevation")
         names.append(name)
-        inputs.append((evi, lst, wind, elev))
+        inputs.append((evi, air_temp, wind, humidity, elev))
     try:
         batch = predict_batch_features(inputs)
     except Exception:
@@ -318,9 +322,9 @@ def risk_by_county():
     results = {
         name: {
             **risk,
-            "features": {"evi": evi, "lst": lst, "wind": wind, "elevation": elev},
+            "features": {"evi": evi, "air_temp_encoded": air_temp, "wind": wind, "humidity": humidity, "elevation": elev},
         }
-        for name, risk, (evi, lst, wind, elev) in zip(names, batch, inputs)
+        for name, risk, (evi, air_temp, wind, humidity, elev) in zip(names, batch, inputs)
     }
 
     data = {"counties": results, "overrides": {"evi": evi_ov, "lst": lst_ov, "wind": wind_ov, "elevation": elev_ov}}
