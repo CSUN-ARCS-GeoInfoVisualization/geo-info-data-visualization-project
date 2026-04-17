@@ -1,18 +1,17 @@
-# geo-info-data-visualization-project
-Wildfire  Prediction Senior Research Project conducted at California State University, Northridge
+# FireScope
 
-Team Members:
+**Live site:** https://firescope.netlify.app
+
+California wildfire risk visualization and prediction platform. Senior research project at California State University, Northridge (2025–2026).
 
 ## Overview
 
-This project aims to help residents and researchers understand wildfire risk across California by combining:
+FireScope aggregates open-source wildfire data from government agencies, satellite systems, and news providers into a single interactive dashboard for California. It combines:
 
-- geospatial data ingestion and preprocessing,
-- machine learning risk prediction,
-- map-based visualization,
-- alerts and notifications.
-
-The system is documented in `software-requirements-specification.md` and is currently in active development.
+- **Geospatial ingestion** — CAL FIRE, NIFC WFIGS, NASA FIRMS, NASA MODIS EVI, Open-Meteo, FEMA NSS
+- **Machine-learning risk prediction** — scikit-learn classifier over 5 live features (EVI, air temperature, wind, humidity, elevation)
+- **Map-based visualization** — deck.gl + Google Maps with risk zones, active fire perimeters, historical perimeters (1950–present), evacuation routes, and emergency shelters
+- **Alerts and notifications** — user-defined risk thresholds with email delivery
 
 ## Team
 
@@ -22,169 +21,134 @@ The system is documented in `software-requirements-specification.md` and is curr
 - Tony Song
 - Sannia Jean
 
+## Features
+
+- **Dashboard** — Split view: risk-zone map (county / ZIP / tract / neighborhood) + active-fire perimeter map with 4-tier containment coloring
+- **Research page** — Slider-driven per-zone overrides (EVI, temperature, wind, humidity, elevation) with live risk recomputation
+- **History page** — 22k+ CAL FIRE perimeters back to 1950, year selector, fire search dropdown, click-to-inspect info card, decoded CAUSE codes
+- **Evacuation Routes** — FEMA National Shelter System clusters across California with Google Maps directions links
+- **Active Fires** — NIFC year-to-date perimeters with CAL FIRE + WFIGS containment enrichment
+- **Alerts** — NWS Red Flag Warnings, GNews wildfire articles, user-threshold email notifications
+- **Admin** — User management, refresh schedules, model configuration
+
 ## Repository Structure
 
-Current top-level folders:
+```
+frontend/           React + TypeScript + Vite web app (deck.gl, @vis.gl/react-google-maps)
+backend/            Flask API
+  routes/           Endpoints: auth, predict, history, shelters, notifications, admin
+  ml/               scikit-learn risk model + inference
+  data/             Sample feature data and live-source adapters
+  tests/            pytest suite
+migrations/         Alembic database migrations
+```
 
-- `frontend/` - Web UI (map visualization, user workflows, reusable UI components)
-- `backend/` - API routes, ML inference module, and backend service logic
-  - `routes/` - API endpoints (auth, predict, notifications, admin)
-  - `ml/` - Wildfire risk ML model and inference module
-  - `data/` - Hardcoded sample location feature data
-  - `tests/` - pytest test suite
-- `migrations/` - Alembic database migrations
-
-Supporting docs:
-
-- `software-requirements-specification.md` - Full SRS (features, requirements, constraints)
-- `README.md` - Project entry point and contribution guide
-
-## Planned Core Features
-
-- Risk map visualization with date filters and GIS layer toggles
-- Prediction API for single and batch wildfire risk requests
-- Alerts/notifications based on user-defined risk thresholds
-- Data ingestion pipeline for weather, vegetation, elevation, and fire history data
-- Admin workflows for refresh schedules and configuration
-
-## Current Status
-
-This repository contains a working frontend (React + TypeScript) and backend (Flask) with a live wildfire risk prediction endpoint powered by a trained ML model.
+Supporting docs: `software-requirements-specification.md`, `backend/README.md`, `backend/ml/README.md`.
 
 ## Getting Started
 
-### Option 1 — Docker (Recommended)
+### Option 1 — Docker (recommended)
 
-The easiest way to run the full stack. Requires [Docker Desktop](https://www.docker.com/products/docker-desktop/).
+Requires [Docker Desktop](https://www.docker.com/products/docker-desktop/).
 
-**1. Create a `.env` file in the project root with the following variables:**
+1. Copy `.env.example` to `.env` in the project root and fill in the values:
 
-```env
-DB_USER=wildfire_app
-DB_PASSWORD=your_db_password
-DB_NAME=wildfire_db
-SECRET_KEY=your_secret_key
-JWT_SECRET_KEY=your_jwt_secret_key
-INITIAL_ADMIN_EMAIL=admin@example.com
-INITIAL_ADMIN_PASSWORD=your_admin_password
-VITE_GOOGLE_MAPS_API_KEY=your_google_maps_api_key
-```
+   ```env
+   DB_USER=wildfire_app
+   DB_PASSWORD=...
+   DB_NAME=wildfire_db
+   SECRET_KEY=...
+   JWT_SECRET_KEY=...
+   INITIAL_ADMIN_EMAIL=admin@example.com
+   INITIAL_ADMIN_PASSWORD=...
+   VITE_GOOGLE_MAPS_API_KEY=...
+   ```
 
-| Variable | Description |
-|---|---|
-| `DB_USER` | Postgres username |
-| `DB_PASSWORD` | Postgres password |
-| `DB_NAME` | Postgres database name |
-| `SECRET_KEY` | Flask session secret (any long random string) |
-| `JWT_SECRET_KEY` | JWT signing secret (any long random string, different from above) |
-| `INITIAL_ADMIN_EMAIL` | Email for the seeded admin account |
-| `INITIAL_ADMIN_PASSWORD` | Password for the seeded admin account |
-| `VITE_GOOGLE_MAPS_API_KEY` | Google Maps API key |
+   | Variable | Description |
+   |---|---|
+   | `DB_USER` / `DB_PASSWORD` / `DB_NAME` | Postgres credentials |
+   | `SECRET_KEY` | Flask session secret (long random string) |
+   | `JWT_SECRET_KEY` | JWT signing secret (different long random string) |
+   | `INITIAL_ADMIN_EMAIL` / `INITIAL_ADMIN_PASSWORD` | Seeded admin account |
+   | `VITE_GOOGLE_MAPS_API_KEY` | Google Maps JavaScript API key |
 
-**2. Build and start everything:**
+   **Never commit `.env`.** It is gitignored. Generate fresh secrets for every environment.
 
-```bash
-docker-compose up --build
-```
+2. Build and start:
 
-Docker will start Postgres, run database migrations, seed the admin account, and start both the backend and frontend automatically.
+   ```bash
+   docker-compose up --build
+   ```
 
-- Frontend → **http://localhost**
-- Backend API → **http://localhost:5000/api**
+   - Frontend → http://localhost
+   - Backend API → http://localhost:5000/api
 
-**Subsequent starts (no code changes):**
-```bash
-docker-compose up
-```
+Subsequent starts: `docker-compose up`. Stop: `docker-compose down`. Reset data: `docker-compose down -v`.
 
-**Stop everything:**
-```bash
-docker-compose down
-```
+### Option 2 — Manual setup
 
-**Wipe the database and start fresh:**
-```bash
-docker-compose down -v
-docker-compose up --build
-```
+Requirements: Node.js 18+, Python 3.10+, PostgreSQL 14+ (or `DATABASE_URL=sqlite:///dev.db`).
 
----
+**Backend**
 
-### Option 2 — Manual Setup
-
-Run the frontend and backend separately without Docker.
-
-#### Prerequisites
-
-- Node.js 18+
-- Python 3.10+
-- PostgreSQL 14+ (or use `DATABASE_URL=sqlite:///dev.db` for local development)
-
-#### Backend
-
-**Linux / macOS**
 ```bash
 cd backend
 python3 -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate        # Windows: .\.venv\Scripts\Activate.ps1
 pip install -r requirements.txt
-cp .env.example .env
-# Fill in SECRET_KEY, JWT_SECRET_KEY, DATABASE_URL, and admin credentials in .env
-python -m flask --app app.py db upgrade
+cp .env.example .env              # fill in SECRET_KEY, JWT_SECRET_KEY, DATABASE_URL, admin creds
+flask --app app.py db upgrade
 python seed.py
-python app.py
+python app.py                     # http://localhost:5000
 ```
 
-**Windows (PowerShell)**
-```powershell
-cd backend
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
-Copy-Item .env.example .env
-# Fill in SECRET_KEY, JWT_SECRET_KEY, DATABASE_URL, and admin credentials in .env
-flask db upgrade
-python seed.py
-python app.py
-```
-
-API will be available at **http://localhost:5000**
-
-#### Frontend
+**Frontend**
 
 ```bash
 cd frontend
 npm install
-cp .env.example .env
-# Fill in VITE_GOOGLE_MAPS_API_KEY and VITE_API_URL in .env
-npm run dev
+cp .env.example .env              # fill in VITE_GOOGLE_MAPS_API_KEY, VITE_API_URL
+npm run dev                       # http://localhost:3000
 ```
 
-App will be available at **http://localhost:3000**
+## Deployment
+
+- **Frontend:** Netlify — auto-deploys from `domain-deployment` branch. Build: `npm ci --prefix frontend && npm run build --prefix frontend`, publish dir: `frontend/build`.
+- **Backend:** Render — Python service running `gunicorn` on the `main` branch.
+- **Database:** Render-managed Postgres.
+
+Secrets are stored in Netlify and Render environment variables — never in the repo.
+
+## Data Sources
+
+See the in-app **Settings → About** page (`/settings`) for the full list with badges, or browse `backend/routes/` for the ingestion code. Summary:
+
+- **Satellite:** NASA FIRMS (VIIRS SNPP), NASA ORNL DAAC MODIS MOD13Q1 (EVI)
+- **Fire agencies:** CAL FIRE Incidents & Historic Fire Perimeters, NIFC WFIGS (perimeters + incident locations), CAL FIRE DINS
+- **Emergency management:** FEMA National Shelter System
+- **Weather & news:** NOAA NWS ATOM feed, Open-Meteo, GNews API
+- **Mapping:** Google Maps Platform, deck.gl v9
+- **Boundaries:** U.S. Census TIGER/Line — 58 counties, 1,769 ZIP codes, 8,041 census tracts, 1,521 neighborhoods
+
+## Machine-Learning Model
+
+scikit-learn classifier predicting wildfire risk from 5 live inputs:
+
+1. `evi` — Enhanced Vegetation Index (MODIS MOD13Q1)
+2. `air_temp_encoded` — `(°C + 273.15) / 0.02`
+3. `wind` — wind speed (m/s)
+4. `humidity` — relative humidity (%)
+5. `elevation` — meters above sea level
+
+Output: `risk_score` (0–1) + `label` (low / moderate / high). Drives the 3-tier risk-zone palette on the Dashboard, Risk Map, and Research views. Per-zone overrides via `POST /api/predict-custom`.
 
 ## Workflow Guidelines
 
-- Use feature branches for new work.
-- Keep pull requests focused and small.
-- Update documentation when requirements or architecture change.
-- Keep code aligned with the SRS feature definitions.
-
-## Documentation
-
-- [Backend setup and API reference](backend/README.md)
-- [ML model details](backend/ml/README.md)
-- [Software Requirements Specification](software-requirements-specification.md)
-
-## Roadmap (MVP Focus)
-
-1. Establish backend API contracts for prediction and map layer data.
-2. Build map visualization UI and connect API integration.
-3. Implement model inference pipeline and baseline prediction service.
-4. Add alerts/notification preferences and delivery flow.
-5. Expand test coverage for core user and API paths.
+- Feature branches for new work; keep PRs small and focused.
+- Run `npm run build` (frontend) and `pytest` (backend) before opening a PR.
+- Update the **About** page in `frontend/src/components/settings-page.tsx` when adding a new data source.
+- Never commit API keys, `.env` files, or database dumps.
 
 ## License
 
-No license has been declared yet.
-
-If this project will be shared publicly, add a license file before release.
+No license declared yet. Add one before any external release.
