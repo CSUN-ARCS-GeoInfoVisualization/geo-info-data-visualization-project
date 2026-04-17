@@ -93,6 +93,14 @@ _TIER_TEMPLATES = [
 ]
 
 
+_SIGNOFF_TEXT = (
+    "\n\n"
+    "Stay safe,\n"
+    "The FireScope Team\n"
+    "https://firescope.netlify.app"
+)
+
+
 def _tier_copy(score: float) -> dict:
     for floor, copy in _TIER_TEMPLATES:
         if score >= floor:
@@ -214,7 +222,7 @@ class EmailRenderer:
             text_lines.append("")
         text_lines.append(f"{ctx['cta_label']}: {ctx['map_url']}")
         text_lines.append(f"Unsubscribe: {ctx['unsubscribe_url']}")
-        text = "\n".join(text_lines)
+        text = "\n".join(text_lines) + _SIGNOFF_TEXT
 
         return html, text
 
@@ -259,7 +267,7 @@ def build_alert_subject(area_name: str, risk_score: float) -> str:
             text_lines.append(f"{item['area_name']}: {item.get('risk_score', 0)}% ({item.get('risk_level', '')})")
         text_lines.append("")
         text_lines.append(f"View Full Map: {ctx['map_url']}")
-        text = "\n".join(text_lines)
+        text = "\n".join(text_lines) + _SIGNOFF_TEXT
 
         return html, text
 
@@ -293,6 +301,6 @@ def build_alert_subject(area_name: str, risk_score: float) -> str:
             text_lines.append(f"{item['area_name']}: {item.get('avg_risk', 0)}% (trend: {trend})")
         text_lines.append("")
         text_lines.append(f"View Full Map: {ctx['map_url']}")
-        text = "\n".join(text_lines)
+        text = "\n".join(text_lines) + _SIGNOFF_TEXT
 
         return html, text

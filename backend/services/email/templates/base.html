@@ -19,6 +19,19 @@
         <div class="content">
             {% block content %}{% endblock %}
         </div>
+        <!-- Sign-off — shared across every FireScope email -->
+        <div style="padding: 20px 24px 8px 24px; font-size: 15px; color: #374151; line-height: 1.55;">
+            Stay safe,<br>
+            <strong>The FireScope Team</strong>
+        </div>
+        <div style="padding: 4px 24px 20px 24px;">
+            <a href="https://firescope.netlify.app" style="text-decoration: none;">
+                <img src="https://firescope.netlify.app/firescope-logo.png"
+                     alt="FireScope"
+                     width="140"
+                     style="display: block; max-width: 140px; height: auto; border: 0;">
+            </a>
+        </div>
         <div class="footer">
             <p>You received this email because you subscribed to wildfire risk alerts.</p>
             <p><a href="{{ unsubscribe_url }}">Unsubscribe</a> from future alerts.</p>
