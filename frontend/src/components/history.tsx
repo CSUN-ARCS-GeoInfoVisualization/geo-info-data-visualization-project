@@ -29,20 +29,22 @@ import { GeoJsonLayer, ScatterplotLayer } from '@deck.gl/layers';
 // Historical fire perimeters overlay — mirrors the research page's
 // `UnifiedResearchOverlay` pattern: a single GoogleMapsOverlay per map,
 // data passed in as a prop (no internal fetch), layers rebuilt in one effect.
-function HistoricalFirePerimetersOverlay({ fireData, focusedFireKey }: { fireData: any; focusedFireKey: string | null }) {
+// Build a stable key for a fire feature (OBJECTID when present, otherwise
+// composite of name/year/incident).
+const keyFor = (p: any) => `${p?.OBJECTID ?? ''}-${p?.FIRE_NAME ?? ''}-${p?.YEAR_ ?? ''}-${p?.INC_NUM ?? ''}`;
+
+function HistoricalFirePerimetersOverlay({ fireData, selectedFire, onSelect }: { fireData: any; selectedFire: any; onSelect: (props: any | null) => void }) {
   const map = useMap();
   const overlayRef = useRef<GoogleMapsOverlay | null>(null);
-  const [selectedFire, setSelectedFire] = useState<any>(null);
-  // Keep the latest selectedFire in a ref so the layer's line-color accessor
-  // (and the onClick handler) can see it without re-running the setProps
-  // effect on every click — which would re-hydrate the GeoJSON and flash.
-  const selectedFireRef = useRef<any>(null);
-  selectedFireRef.current = selectedFire;
+  // Keep the latest onSelect / selectedFire in refs so the deck.gl layer's
+  // click handler and line-color accessor can read them without the layer
+  // being rebuilt on every parent re-render.
+  const onSelectRef = useRef(onSelect);
+  onSelectRef.current = onSelect;
+  const selectedKeyRef = useRef<string | null>(null);
+  selectedKeyRef.current = selectedFire ? keyFor(selectedFire) : null;
 
-  // Create the overlay ONCE per map, destroy only on unmount. Switching map
-  // types (roadmap/terrain/satellite/hybrid) mustn't rebuild this — otherwise
-  // the deck.gl canvas is torn down and recreated on every related re-render,
-  // causing the polygons to disappear and flash back.
+  // Create the overlay ONCE per map, destroy only on unmount.
   useEffect(() => {
     if (!map) return;
     const deckOverlay = new GoogleMapsOverlay({ layers: [] });
@@ -55,49 +57,11 @@ function HistoricalFirePerimetersOverlay({ fireData, focusedFireKey }: { fireDat
     };
   }, [map]);
 
-  // Pan/zoom to a user-picked fire from the dropdown and open the detail popup.
-  // Use a plain centroid + fixed zoom instead of fitBounds — fitBounds on a
-  // 0.01-acre polygon sets zoom to max (22), which was triggering a cascade of
-  // Google Maps tile loads that blocked the main thread and froze the page.
-  useEffect(() => {
-    if (!map || !focusedFireKey || !fireData?.features?.length) return;
-    const raf = window.requestAnimationFrame(() => {
-      const f = fireData.features.find((ft: any) => {
-        const p = ft.properties || {};
-        return `${p.OBJECTID ?? ''}-${p.FIRE_NAME ?? ''}-${p.INC_NUM ?? ''}` === focusedFireKey;
-      });
-      if (!f?.geometry) return;
+  const selectedKey = selectedFire ? keyFor(selectedFire) : null;
 
-      // Centroid: average of every coordinate in the polygon/multipolygon.
-      let lat = 0, lng = 0, n = 0;
-      const walk = (c: any) => {
-        if (!Array.isArray(c)) return;
-        if (typeof c[0] === 'number' && typeof c[1] === 'number') {
-          lng += c[0]; lat += c[1]; n += 1;
-        } else {
-          for (const sub of c) walk(sub);
-        }
-      };
-      walk(f.geometry.coordinates);
-      if (n === 0) return;
-      lat /= n; lng /= n;
-
-      // Pick a zoom that scales with acreage so tiny fires get a tight frame
-      // without triggering a max-zoom tile storm.
-      const acres = Number(f.properties?.GIS_ACRES) || 0;
-      const zoom = acres >= 10000 ? 9
-        : acres >= 1000 ? 11
-        : acres >= 100 ? 13
-        : 14;
-      map.panTo({ lat, lng });
-      map.setZoom(zoom);
-      setSelectedFire(f.properties);
-    });
-    return () => window.cancelAnimationFrame(raf);
-  }, [map, focusedFireKey, fireData]);
-
-  // Rebuild layers when data OR selection changes. Layer data uses the
-  // parent's stable fireData ref, so switching map type doesn't re-hydrate.
+  // Rebuild layer when data changes OR when the selection key changes. Because
+  // `data: fireData` is a stable reference, deck.gl reuses its tessellation
+  // cache — only the color accessors re-run via updateTriggers.
   useEffect(() => {
     const overlay = overlayRef.current;
     if (!overlay) return;
@@ -111,6 +75,7 @@ function HistoricalFirePerimetersOverlay({ fireData, focusedFireKey }: { fireDat
       if (acres >= 100) return [249, 115, 22, 240];
       return [234, 179, 8, 240];
     };
+    const CYAN: [number, number, number, number] = [0, 229, 255, 255];
     overlay.setProps({
       layers: [
         new GeoJsonLayer({
@@ -120,86 +85,30 @@ function HistoricalFirePerimetersOverlay({ fireData, focusedFireKey }: { fireDat
           stroked: true,
           filled: true,
           lineWidthMinPixels: 3,
-          getLineWidth: 3,
-          getLineColor: (f: any) => colorForAcres(f.properties.GIS_ACRES || 0),
+          getLineWidth: (f: any) => (selectedKeyRef.current && keyFor(f.properties) === selectedKeyRef.current ? 6 : 3),
+          getLineColor: (f: any) => (selectedKeyRef.current && keyFor(f.properties) === selectedKeyRef.current ? CYAN : colorForAcres(f.properties.GIS_ACRES || 0)),
           getFillColor: (f: any) => colorForAcres(f.properties.GIS_ACRES || 0),
-          onClick: (info: any) => { if (info.object) setSelectedFire(info.object.properties); },
+          onClick: (info: any) => { if (info.object) onSelectRef.current(info.object.properties); },
           updateTriggers: {
             getFillColor: [fireData],
-            getLineColor: [fireData],
+            getLineColor: [fireData, selectedKey],
+            getLineWidth: [fireData, selectedKey],
           },
         }),
       ],
     });
-  }, [fireData]); // Deliberately NOT [fireData, selectedFire] — selection must
-                   // never rebuild the layer or we re-tessellate the GeoJSON and
-                   // block the main thread for hundreds of polygons.
-
-  /* -----------------------------------------------------------------------
-     Legacy props-based setter, kept commented so nothing else references it.
-     Replaced with the single-effect pattern above that mirrors research-page.
-  ----------------------------------------------------------------------- */
-  if (false) {
-    // @ts-ignore
-    (overlayRef.current as any)?.setProps({
-      layers: [],
-    });
-  }
+  }, [fireData, selectedKey]);
 
   // Render tooltips
   return (
     <>
-      {/* Hover tooltip - small tooltip on hover */}
-      {false && (
-        <div
-          style={{
-            position: 'absolute',
-            top: '10px',
-            left: '10px',
-            backgroundColor: 'rgba(0, 0, 0, 0.8)',
-            color: 'white',
-            padding: '8px 12px',
-            borderRadius: '4px',
-            fontSize: '14px',
-            zIndex: 1000,
-            pointerEvents: 'none',
-            maxWidth: '250px'
-          }}
-        >
-          <div className="font-bold">{hoveredFire.FIRE_NAME || 'Unknown Fire'}</div>
-          <div className="text-xs mt-1">
-            {hoveredFire.GIS_ACRES ? `${hoveredFire.GIS_ACRES.toLocaleString()} acres` : 'Size unknown'}
-            {hoveredFire.YEAR_ && ` • ${hoveredFire.YEAR_}`}
-          </div>
-        </div>
-      )}
-
-      {/* Centered-top selection popup — matches the Dashboard fire perimeter popup */}
+      {/* Selected-fire info card — mirrors the research map's fire perimeter
+          popup: top-left card, flame icon, dismiss button, live info. */}
       {selectedFire && (
-        <div
-          style={{
-            position: 'absolute',
-            top: 12,
-            left: '50%',
-            transform: 'translateX(-50%)',
-            backgroundColor: 'white',
-            padding: '12px 16px',
-            borderRadius: '8px',
-            border: '1px solid #e5e7eb',
-            boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
-            maxWidth: 320,
-            zIndex: 1000,
-            pointerEvents: 'auto'
-          }}
-        >
-          <div className="flex justify-between items-start mb-2">
-            <h3 className="font-bold text-lg">{selectedFire.FIRE_NAME}</h3>
-            <button
-              onClick={() => setSelectedFire(null)}
-              className="text-gray-500 hover:text-gray-700 text-xl"
-            >
-              ×
-            </button>
+        <div className="absolute top-3 left-3 z-10 max-w-[280px] bg-white/95 backdrop-blur-sm rounded-xl p-4 shadow-lg text-sm border border-red-200 pointer-events-auto">
+          <div className="flex items-center gap-2 mb-2">
+            <Flame className="h-4 w-4 text-red-500" />
+            <span className="font-bold">{selectedFire.FIRE_NAME || 'Unknown Fire'}</span>
           </div>
           <div className="space-y-1 text-sm">
             <div><strong>Year:</strong> {selectedFire.YEAR_}</div>
@@ -217,6 +126,12 @@ function HistoricalFirePerimetersOverlay({ fireData, focusedFireKey }: { fireDat
               <div><strong>Cause:</strong> {selectedFire.CAUSE}</div>
             )}
           </div>
+          <button
+            onClick={() => onSelect(null)}
+            className="mt-2 text-xs text-red-500 hover:text-red-700 font-medium"
+          >
+            Dismiss
+          </button>
         </div>
       )}
     </>
@@ -431,6 +346,7 @@ export function History() {
   const mapTypeId: 'roadmap' = 'roadmap';
   const [searchQuery, setSearchQuery] = useState("");
   const [focusedFireKey, setFocusedFireKey] = useState<string | null>(null);
+  const [selectedFire, setSelectedFire] = useState<any>(null);
 
   // Display controls removed — perimeters are always shown at full opacity,
   // structure damage (DINS) is intentionally not rendered on the history map.
@@ -650,7 +566,17 @@ export function History() {
                     <select
                       id="history-fire"
                       value={focusedFireKey || ""}
-                      onChange={(e) => setFocusedFireKey(e.target.value || null)}
+                      onChange={(e) => {
+                        const key = e.target.value || null;
+                        setFocusedFireKey(key);
+                        if (!key) { setSelectedFire(null); return; }
+                        const feats: any[] = fireData?.features || [];
+                        const f = feats.find((ft: any) => {
+                          const p = ft.properties || {};
+                          return `${p.OBJECTID ?? ''}-${p.FIRE_NAME ?? ''}-${p.YEAR_ ?? ''}-${p.INC_NUM ?? ''}` === key;
+                        });
+                        setSelectedFire(f ? f.properties : null);
+                      }}
                       size={1}
                       className="text-sm border rounded px-2 py-1.5 bg-background w-56"
                     >
@@ -697,7 +623,14 @@ export function History() {
                   disableDefaultUI={true}
                 >
                   {/* Fire Perimeters Layer — rendered last so it sits on top of the map tiles */}
-                  <HistoricalFirePerimetersOverlay fireData={fireData} focusedFireKey={focusedFireKey} />
+                  <HistoricalFirePerimetersOverlay
+                    fireData={fireData}
+                    selectedFire={selectedFire}
+                    onSelect={(props) => {
+                      setSelectedFire(props);
+                      setFocusedFireKey(props ? `${props.OBJECTID ?? ''}-${props.FIRE_NAME ?? ''}-${props.YEAR_ ?? ''}-${props.INC_NUM ?? ''}` : null);
+                    }}
+                  />
                 </GoogleMap>
               </div>
 
