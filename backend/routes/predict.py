@@ -161,12 +161,17 @@ def predict_batch():
         coords.append((i, lat, lon))
 
     # Run predictions in parallel — each location fetches weather/EVI/elevation concurrently
+    BATCH_TIMEOUT = 60  # seconds max for the entire batch
     results = [None] * len(coords)
     with ThreadPoolExecutor(max_workers=BATCH_WORKERS) as executor:
         futures = {executor.submit(_run, lat, lon): i for i, lat, lon in coords}
-        for future in as_completed(futures):
+        for future in as_completed(futures, timeout=BATCH_TIMEOUT):
             idx = futures[future]
-            results[idx] = future.result()
+            try:
+                results[idx] = future.result()
+            except Exception as e:
+                logger.warning("Batch item %s failed: %s", idx, e)
+                results[idx] = {'error': 'prediction failed for this location'}
 
     return jsonify({'results': results})
 

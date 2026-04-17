@@ -17,16 +17,14 @@ _METADATA_PATH = os.path.join(
 
 
 def _get_evi_data_year() -> int:
-    """
-    Return the spring EVI year that the model was trained on, read from
-    model_metadata.json. Falls back to 2020 if the file is missing so that
-    existing deployments without metadata still work correctly.
-    """
     try:
         with open(_METADATA_PATH) as f:
             return int(json.load(f)["data_year"])
     except (FileNotFoundError, KeyError, ValueError):
         return 2020
+
+# Cache at module load — avoids re-reading the JSON file on every prediction
+_EVI_DATA_YEAR: int = _get_evi_data_year()
 
 _ORNL_DAAC_URL = "https://modis.ornl.gov/rst/api/v1/MOD13Q1/subset"
 
@@ -51,10 +49,7 @@ def get_evi(lat: float, lon: float) -> float:
 
     Retries up to 3 times on network errors before raising.
     """
-    # Use the same spring year the model was trained on so the EVI values land
-    # in the same distribution as the scaler's fitted mean/variance.
-    spring_year   = _get_evi_data_year()
-    spring_target = datetime(spring_year, 5, 1)
+    spring_target = datetime(_EVI_DATA_YEAR, 5, 1)
 
     start_date = spring_target - timedelta(days=24)
     end_date   = spring_target + timedelta(days=24)
