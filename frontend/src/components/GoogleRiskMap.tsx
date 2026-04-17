@@ -10,9 +10,14 @@ import { NeighborhoodRiskOverlay } from './NeighborhoodRiskOverlay';
 
 interface SavedLocation { id: number; name: string; lat: number; lon: number; }
 
+// Up to 20 saved locations are rendered per map. If a user has more, only the
+// first 20 (most recently added) are drawn and the map is framed around those.
+export const MAX_SAVED_LOCATIONS = 20;
+
 export function SavedLocationsOverlay() {
   const map = useMap();
   const markersRef = useRef<google.maps.Marker[]>([]);
+  const didInitialFitRef = useRef(false);
   const [locations, setLocations] = useState<SavedLocation[]>([]);
 
   useEffect(() => {
@@ -20,9 +25,8 @@ export function SavedLocationsOverlay() {
       .then((r) => (r.ok ? r.json() : []))
       .then((data) => {
         if (Array.isArray(data)) {
-          setLocations(
-            data.filter((l: any) => typeof l?.lat === 'number' && typeof l?.lon === 'number')
-          );
+          const valid = data.filter((l: any) => typeof l?.lat === 'number' && typeof l?.lon === 'number');
+          setLocations(valid.slice(0, MAX_SAVED_LOCATIONS));
         }
       })
       .catch(() => {});
@@ -51,6 +55,21 @@ export function SavedLocationsOverlay() {
       })
     );
     markersRef.current = markers;
+
+    // Frame the map around the user's saved locations the first time they load
+    // so the user starts at the area they care about. Only fit once — subsequent
+    // re-renders (from other overlays / state changes) should not override pan/zoom.
+    if (!didInitialFitRef.current) {
+      didInitialFitRef.current = true;
+      if (locations.length === 1) {
+        map.setCenter({ lat: locations[0].lat, lng: locations[0].lon });
+        map.setZoom(11);
+      } else {
+        const bounds = new google.maps.LatLngBounds();
+        locations.forEach((l) => bounds.extend({ lat: l.lat, lng: l.lon }));
+        map.fitBounds(bounds, 80);
+      }
+    }
 
     return () => {
       markers.forEach((m) => m.setMap(null));
