@@ -419,69 +419,75 @@ export function History() {
   const [showPerimeters, setShowPerimeters] = useState(true);
   const [showDINS, setShowDINS] = useState(false); // DINS damage layer toggle
   const [dinsRadius, setDinsRadius] = useState(4); // DINS dot base radius
-  const [fireData, setFireData] = useState<any>(null); // Store full dataset
-  const [availableYears, setAvailableYears] = useState<number[]>([]); // All years in dataset
-  const [showYearDropdown, setShowYearDropdown] = useState(false); // Year filter dropdown visibility
+  const [fireData, setFireData] = useState<any>(null); // Merged features for selected years
+  const [availableYears, setAvailableYears] = useState<number[]>([]); // All years from backend (1878-current)
+  const [showYearDropdown, setShowYearDropdown] = useState(false);
+  const [loadingYears, setLoadingYears] = useState(false);
+  const yearCacheRef = useRef<Record<number, any[]>>({}); // in-memory per-year GeoJSON feature cache
 
-  // Calculate statistics from fire data
   const [stats, setStats] = useState({
     totalFires: 0,
     totalAcres: 0,
-    yearRange: '2020-2025',
-    averageSize: 0
+    yearRange: '',
+    averageSize: 0,
   });
 
+  // 1. Load the full available-year list once (min..max from ArcGIS stats)
   useEffect(() => {
-    // Load fire data to calculate stats
-    apiFetch('/history/perimeters?year_from=2000&min_acres=100')
-      .then(response => response.json())
-      .then(data => {
-        setFireData(data); // Store full dataset
-
-        // Extract all unique years and sort
-        const features = data.features;
-        const years = [...new Set(features.map((f: any) => f.properties.YEAR_).filter(Boolean))].sort((a, b) => b - a);
-        setAvailableYears(years as number[]);
-
-        // Calculate stats for initial year (2025)
-        const filteredFeatures = features.filter((f: any) => f.properties.YEAR_ === 2025);
-
-        const totalFires = filteredFeatures.length;
-        const totalAcres = filteredFeatures.reduce((sum: number, f: any) => sum + (f.properties.GIS_ACRES || 0), 0);
-        const minYear = Math.min(...(years as number[]));
-        const maxYear = Math.max(...(years as number[]));
-
-        setStats({
-          totalFires,
-          totalAcres,
-          yearRange: `${minYear}-${maxYear}`,
-          averageSize: totalFires > 0 ? Math.round(totalAcres / totalFires) : 0
-        });
+    apiFetch('/history/perimeters/years')
+      .then((r) => r.json())
+      .then((data) => {
+        if (Array.isArray(data?.years) && data.years.length) {
+          setAvailableYears(data.years);
+          setStats((s) => ({ ...s, yearRange: `${data.min}-${data.max}` }));
+        }
       })
-      .catch(error => {
-        console.error('Error loading fire statistics:', error);
-      });
+      .catch((e) => console.warn('Year list fetch failed:', e));
   }, []);
 
-  // Recalculate statistics when year filter changes
+  // 2. When the user's year selection changes, fetch each selected year
+  //    (cached) and merge into fireData. This is how the "largest-extent
+  //    per-year polygons" layer refreshes as years are toggled.
   useEffect(() => {
-    if (!fireData) return;
-
-    const features = fireData.features;
-    const filteredFeatures = selectedYears.length === 0 || selectedYears.length === availableYears.length
-      ? features  // All years selected or none selected = show all
-      : features.filter((f: any) => selectedYears.includes(f.properties.YEAR_));
-
-    const totalFires = filteredFeatures.length;
-    const totalAcres = filteredFeatures.reduce((sum: number, f: any) => sum + (f.properties.GIS_ACRES || 0), 0);
-
-    setStats(prev => ({
-      ...prev,
-      totalFires,
-      totalAcres,
-      averageSize: totalFires > 0 ? Math.round(totalAcres / totalFires) : 0
-    }));
-  }, [selectedYears, fireData, availableYears]);
+    let cancelled = false;
+    const load = async () => {
+      if (selectedYears.length === 0) {
+        setFireData({ type: 'FeatureCollection', features: [] });
+        return;
+      }
+      setLoadingYears(true);
+      const results = await Promise.all(
+        selectedYears.map(async (y) => {
+          if (yearCacheRef.current[y]) return yearCacheRef.current[y];
+          try {
+            const r = await apiFetch(`/history/perimeters?year=${y}&min_acres=100`);
+            if (!r.ok) throw new Error(`HTTP ${r.status}`);
+            const data = await r.json();
+            const feats = Array.isArray(data?.features) ? data.features : [];
+            yearCacheRef.current[y] = feats;
+            return feats;
+          } catch (e) {
+            console.warn(`history year ${y} fetch failed:`, e);
+            return [];
+          }
+        })
+      );
+      if (cancelled) return;
+      const features = results.flat();
+      setFireData({ type: 'FeatureCollection', features });
+      const totalFires = features.length;
+      const totalAcres = features.reduce((sum: number, f: any) => sum + (f.properties?.GIS_ACRES || 0), 0);
+      setStats((s) => ({
+        ...s,
+        totalFires,
+        totalAcres,
+        averageSize: totalFires > 0 ? Math.round(totalAcres / totalFires) : 0,
+      }));
+      setLoadingYears(false);
+    };
+    load();
+    return () => { cancelled = true; };
+  }, [selectedYears]);
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -618,11 +624,12 @@ export function History() {
                       onClick={() => setShowYearDropdown(!showYearDropdown)}
                     >
                       <span className="text-sm">
-                        {selectedYears.length === 0 || selectedYears.length === availableYears.length
-                          ? 'All Years'
+                        {selectedYears.length === 0
+                          ? 'No years selected'
                           : selectedYears.length === 1
                           ? selectedYears[0]
                           : `${selectedYears.length} years selected`}
+                        {loadingYears && ' (loading…)'}
                       </span>
                       <ChevronDown className="h-4 w-4 ml-2 opacity-50" />
                     </Button>
@@ -630,27 +637,25 @@ export function History() {
                     {showYearDropdown && (
                       <Card className="absolute top-full mt-1 w-56 p-3 z-50 shadow-lg">
                         <div className="space-y-2">
-                          <div className="font-medium text-sm mb-2">Filter by Year</div>
+                          <div className="font-medium text-sm mb-1">Filter by Year</div>
+                          <p className="text-[11px] text-muted-foreground mb-2">
+                            CAL FIRE historic perimeters {availableYears.length > 0 ? `(${availableYears[availableYears.length - 1]}–${availableYears[0]})` : ''}. Each year is fetched on-demand.
+                          </p>
 
-                          {/* Select/Deselect All */}
-                          <div className="flex items-center space-x-2 pb-2 border-b">
-                            <Checkbox
-                              id="all-years"
-                              checked={selectedYears.length === availableYears.length}
-                              onCheckedChange={(checked) => {
-                                if (checked) {
-                                  setSelectedYears([...availableYears]);
-                                } else {
-                                  setSelectedYears([]);
-                                }
-                              }}
-                            />
-                            <label
-                              htmlFor="all-years"
-                              className="text-sm font-medium leading-none cursor-pointer"
-                            >
-                              All Years
-                            </label>
+                          {/* Quick-select helpers */}
+                          <div className="flex gap-2 pb-2 border-b flex-wrap">
+                            <button
+                              className="text-[11px] px-2 py-0.5 rounded border hover:bg-muted"
+                              onClick={() => setSelectedYears(availableYears.slice(0, 5))}
+                            >Last 5 yrs</button>
+                            <button
+                              className="text-[11px] px-2 py-0.5 rounded border hover:bg-muted"
+                              onClick={() => setSelectedYears(availableYears.slice(0, 20))}
+                            >Last 20 yrs</button>
+                            <button
+                              className="text-[11px] px-2 py-0.5 rounded border hover:bg-muted"
+                              onClick={() => setSelectedYears([])}
+                            >Clear</button>
                           </div>
 
                           {/* Individual years */}
@@ -867,22 +872,43 @@ export function History() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-3 text-sm">
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Largest Fire:</span>
-                <span className="font-medium">August Complex (2020)</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Most Active Year:</span>
-                <span className="font-medium">2020</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Peak Season:</span>
-                <span className="font-medium">July - October</span>
-              </div>
-              <div className="flex justify-between">
-                <span className="text-muted-foreground">Total Counties:</span>
-                <span className="font-medium">58</span>
-              </div>
+              {(() => {
+                const feats: any[] = fireData?.features || [];
+                if (feats.length === 0) {
+                  return <p className="text-muted-foreground text-xs">Select a year to see stats.</p>;
+                }
+                let largest = feats[0];
+                const countByYear: Record<number, number> = {};
+                for (const f of feats) {
+                  const p = f.properties || {};
+                  if ((p.GIS_ACRES || 0) > (largest.properties?.GIS_ACRES || 0)) largest = f;
+                  if (p.YEAR_) countByYear[p.YEAR_] = (countByYear[p.YEAR_] || 0) + 1;
+                }
+                const mostActive = Object.entries(countByYear).sort((a, b) => b[1] - a[1])[0];
+                return (
+                  <>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Largest Fire:</span>
+                      <span className="font-medium text-right">
+                        {largest.properties?.FIRE_NAME || 'Unknown'} ({largest.properties?.YEAR_})
+                        <span className="block text-[10px] text-muted-foreground">{Math.round(largest.properties?.GIS_ACRES || 0).toLocaleString()} ac</span>
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Most Active Year:</span>
+                      <span className="font-medium">{mostActive?.[0]} ({mostActive?.[1]} fires)</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Peak Season:</span>
+                      <span className="font-medium">July – October</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-muted-foreground">Counties in CA:</span>
+                      <span className="font-medium">58</span>
+                    </div>
+                  </>
+                );
+              })()}
             </CardContent>
           </Card>
 

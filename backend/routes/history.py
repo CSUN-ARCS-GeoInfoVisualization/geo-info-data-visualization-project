@@ -61,23 +61,69 @@ def _cached_fetch(cache_key: str, url: str, params: dict):
     return data
 
 
+@history_bp.route('/perimeters/years', methods=['GET'])
+def history_perimeter_years():
+    """Distinct years present in CAL FIRE's historic perimeter dataset (1878-present).
+
+    Uses outStatistics (min/max) so we only hit ArcGIS once, then fill the range.
+    """
+    cache_key = "perimeters-years"
+    now = time.time()
+    hit = _cache.get(cache_key)
+    if hit and (now - hit[0]) < 24 * 3600:
+        return jsonify(hit[1])
+    params = {
+        'where': '1=1',
+        'outStatistics': (
+            '[{"statisticType":"min","onStatisticField":"YEAR_","outStatisticFieldName":"minY"},'
+            '{"statisticType":"max","onStatisticField":"YEAR_","outStatisticFieldName":"maxY"}]'
+        ),
+        'f': 'json',
+    }
+    try:
+        r = http_requests.get(PERIMETERS_URL, params=params, timeout=20)
+        r.raise_for_status()
+        stats = r.json().get('features', [{}])[0].get('attributes', {})
+        min_y = int(stats.get('minY') or 1900)
+        max_y = int(stats.get('maxY') or time.gmtime().tm_year)
+    except Exception as e:
+        logger.warning('history years stat failed: %s', e)
+        min_y, max_y = 1950, time.gmtime().tm_year
+    years = list(range(max_y, min_y - 1, -1))  # newest first
+    payload = {'min': min_y, 'max': max_y, 'years': years}
+    _cache[cache_key] = (now, payload)
+    return jsonify(payload)
+
+
 @history_bp.route('/perimeters', methods=['GET'])
 def history_perimeters():
-    """Return California historic fire perimeters filtered by year range.
+    """Return California historic fire perimeters.
 
-    Query params:
-      year_from (int, default 2015) — inclusive.
-      year_to   (int, default current year) — inclusive.
-      min_acres (int, default 100)          — drop tiny polygons for performance.
+    Query params (choose one):
+      year (int)                 — single year.
+      year_from/year_to (ints)   — inclusive range.
+      If neither is given, defaults to the last 5 years so the page loads fast.
+
+      min_acres (int, default 100) — drop sub-100-acre polygons for performance.
+                                     Each year has up to several thousand records
+                                     below this threshold that slow rendering.
     """
-    try:
-        year_from = int(request.args.get('year_from') or 2015)
-    except Exception:
-        year_from = 2015
-    try:
-        year_to = int(request.args.get('year_to') or time.gmtime().tm_year)
-    except Exception:
-        year_to = time.gmtime().tm_year
+    y = request.args.get('year')
+    if y:
+        try:
+            y = int(y)
+            year_from, year_to = y, y
+        except Exception:
+            year_from, year_to = None, None
+    else:
+        try:
+            year_from = int(request.args.get('year_from') or (time.gmtime().tm_year - 4))
+        except Exception:
+            year_from = time.gmtime().tm_year - 4
+        try:
+            year_to = int(request.args.get('year_to') or time.gmtime().tm_year)
+        except Exception:
+            year_to = time.gmtime().tm_year
     try:
         min_acres = int(request.args.get('min_acres') or 100)
     except Exception:
@@ -89,6 +135,7 @@ def history_perimeters():
         'outFields': 'YEAR_,FIRE_NAME,INC_NUM,ALARM_DATE,CONT_DATE,CAUSE,AGENCY,UNIT_ID,GIS_ACRES,COMPLEX_NAME,IRWINID',
         'f': 'geojson',
         'resultRecordCount': 4000,
+        'orderByFields': 'GIS_ACRES DESC',
     }
     cache_key = f"perimeters::{year_from}::{year_to}::{min_acres}"
     data = _cached_fetch(cache_key, PERIMETERS_URL, params)
