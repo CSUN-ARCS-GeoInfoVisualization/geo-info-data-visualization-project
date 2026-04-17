@@ -35,25 +35,40 @@ function HistoricalFirePerimetersOverlay({ fireData }: { fireData: any }) {
   const [selectedFire, setSelectedFire] = useState<any>(null);
   const [hoveredFire, setHoveredFire] = useState<any>(null);
 
+  // Create the overlay ONCE per map, destroy only on unmount. Switching map
+  // types (roadmap/terrain/satellite/hybrid) mustn't rebuild this — otherwise
+  // the deck.gl canvas is torn down and recreated on every related re-render,
+  // causing the polygons to disappear and flash back.
   useEffect(() => {
     if (!map) return;
+    const deckOverlay = new GoogleMapsOverlay({ layers: [] });
+    deckOverlay.setMap(map);
+    overlayRef.current = deckOverlay;
+    return () => {
+      deckOverlay.setMap(null);
+      deckOverlay.finalize();
+      overlayRef.current = null;
+    };
+  }, [map]);
 
-    if (overlayRef.current) {
-      overlayRef.current.setMap(null);
-      overlayRef.current.finalize();
-    }
-
-    const layers: any[] = [];
+  // Update layers via setProps — reuses the same WebGL context. Runs whenever
+  // data changes or hover flips, without teardown.
+  useEffect(() => {
+    const overlay = overlayRef.current;
+    if (!overlay) return;
     const features = Array.isArray(fireData?.features) ? fireData.features : [];
-
-    if (features.length > 0) {
-      const colorForAcres = (acres: number): [number, number, number, number] => {
-        if (acres >= 10000) return [139, 0, 0, 240];
-        if (acres >= 1000) return [220, 38, 38, 240];
-        if (acres >= 100) return [249, 115, 22, 240];
-        return [234, 179, 8, 240];
-      };
-      layers.push(
+    if (features.length === 0) {
+      overlay.setProps({ layers: [] });
+      return;
+    }
+    const colorForAcres = (acres: number): [number, number, number, number] => {
+      if (acres >= 10000) return [139, 0, 0, 240];
+      if (acres >= 1000) return [220, 38, 38, 240];
+      if (acres >= 100) return [249, 115, 22, 240];
+      return [234, 179, 8, 240];
+    };
+    overlay.setProps({
+      layers: [
         new GeoJsonLayer({
           id: 'historical-fire-perimeters',
           data: { type: 'FeatureCollection', features },
@@ -76,19 +91,9 @@ function HistoricalFirePerimetersOverlay({ fireData }: { fireData: any }) {
             getLineColor: [features.length, hoveredFire?.OBJECTID],
           },
         }),
-      );
-    }
-
-    const deckOverlay = new GoogleMapsOverlay({ layers });
-    deckOverlay.setMap(map);
-    overlayRef.current = deckOverlay;
-
-    return () => {
-      deckOverlay.setMap(null);
-      deckOverlay.finalize();
-      overlayRef.current = null;
-    };
-  }, [map, fireData, hoveredFire]);
+      ],
+    });
+  }, [fireData, hoveredFire]);
 
   /* -----------------------------------------------------------------------
      Legacy props-based setter, kept commented so nothing else references it.
