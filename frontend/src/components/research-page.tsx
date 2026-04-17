@@ -4,7 +4,7 @@ import {
 } from "lucide-react";
 import { Map, useMap } from "@vis.gl/react-google-maps";
 import { GoogleMapsOverlay } from "@deck.gl/google-maps";
-import { GeoJsonLayer } from "@deck.gl/layers";
+import { GeoJsonLayer, ScatterplotLayer } from "@deck.gl/layers";
 import { firmsPointsToPolygonCollection } from "../utils/firmsPolygons";
 import { HeatmapLayer } from "@deck.gl/aggregation-layers";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
@@ -243,6 +243,26 @@ function UnifiedResearchOverlay({ features, showHeatmap, zoneGeoJson, zoneRiskDa
 
     // 4. NIFC fire perimeters — rendered LAST so they sit on top of everything
     if (showPerimeters && nifcPerimeters?.features?.length) {
+      const colorForPct = (raw: any): [number, number, number, number] => {
+        const pct = raw == null ? 0 : Number(raw);
+        if (pct >= 100) return [255, 255, 255, 220];
+        if (pct >= 50) return [250, 204, 21, 230];
+        if (pct >= 25) return [249, 115, 22, 230];
+        return [220, 38, 38, 230];
+      };
+      const centroids = nifcPerimeters.features
+        .map((f: any) => {
+          const g = f.geometry;
+          if (!g) return null;
+          let pts: number[][] = [];
+          if (g.type === "Polygon") pts = g.coordinates[0] || [];
+          else if (g.type === "MultiPolygon") pts = (g.coordinates[0] && g.coordinates[0][0]) || [];
+          if (!pts.length) return null;
+          let lon = 0, lat = 0;
+          for (const [x, y] of pts) { lon += x; lat += y; }
+          return { lon: lon / pts.length, lat: lat / pts.length, properties: f.properties };
+        })
+        .filter(Boolean);
       layers.push(
         new GeoJsonLayer({
           id: "nifc-perimeters",
@@ -251,22 +271,32 @@ function UnifiedResearchOverlay({ features, showHeatmap, zoneGeoJson, zoneRiskDa
           stroked: true,
           filled: true,
           lineWidthMinPixels: 2,
-          getLineColor: [255, 255, 255, 180],
-          getFillColor: (f: any) => {
-            const raw = f.properties?.attr_PercentContained;
-            const pct = raw == null ? 0 : Number(raw);
-            if (pct >= 100) return [255, 255, 255, 200];
-            if (pct >= 50) return [250, 204, 21, 210];
-            if (pct >= 25) return [249, 115, 22, 210];
-            return [220, 38, 38, 210];
-          },
+          getLineColor: [255, 255, 255, 220],
+          getFillColor: (f: any) => colorForPct(f.properties?.attr_PercentContained),
           getLineWidth: 2,
           onClick: (info: any) => {
-            if (info.object && onPerimeterClick) {
-              onPerimeterClick(info.object.properties);
-            }
+            if (info.object && onPerimeterClick) onPerimeterClick(info.object.properties);
           },
           updateTriggers: { getFillColor: [nifcPerimeters.features.length] },
+        })
+      );
+      layers.push(
+        new ScatterplotLayer({
+          id: "nifc-markers",
+          data: centroids,
+          pickable: true,
+          stroked: true,
+          filled: true,
+          radiusMinPixels: 7,
+          radiusMaxPixels: 14,
+          lineWidthMinPixels: 2,
+          getPosition: (d: any) => [d.lon, d.lat],
+          getRadius: 8,
+          getFillColor: (d: any) => colorForPct(d.properties?.attr_PercentContained),
+          getLineColor: [255, 255, 255, 255],
+          onClick: (info: any) => {
+            if (info?.object?.properties && onPerimeterClick) onPerimeterClick(info.object.properties);
+          },
         })
       );
     }
@@ -326,18 +356,13 @@ function ResearchMapView() {
           const r = await apiFetch("/fire-perimeters");
           if (!r.ok) throw new Error(`HTTP ${r.status}`);
           const data = await r.json();
-          if (!cancelled && data?.features?.length) {
-            console.info(`[research] NIFC perimeters loaded: ${data.features.length}`);
-            setNifcPerimeters(data);
-            return;
-          }
-          if (!cancelled && data?.features?.length === 0) {
-            console.info("[research] NIFC perimeters: 0 features (backend warm, empty state)");
+          if (!cancelled && data?.features) {
+            console.log(`[research] NIFC perimeters loaded: ${data.features.length}`);
             setNifcPerimeters(data);
             return;
           }
         } catch (e) {
-          console.warn(`[research] NIFC perimeters attempt ${attempt} failed:`, e);
+          console.error(`[research] NIFC perimeters attempt ${attempt} failed:`, e);
         }
         await new Promise((res) => setTimeout(res, 3000 * attempt));
       }

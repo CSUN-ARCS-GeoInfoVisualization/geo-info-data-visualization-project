@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { Map, useMap } from '@vis.gl/react-google-maps';
 import { GoogleMapsOverlay } from '@deck.gl/google-maps';
-import { GeoJsonLayer } from '@deck.gl/layers';
+import { GeoJsonLayer, ScatterplotLayer } from '@deck.gl/layers';
 import { apiFetch } from '../services/api';
 import { CountyRiskOverlay } from './CountyRiskOverlay';
 import { ZipCodeRiskOverlay } from './ZipCodeRiskOverlay';
@@ -85,11 +85,11 @@ export function FirePerimetersOverlay() {
                 return raw == null || Number(raw) < 100;
               })
             : [];
-          console.info(`[dashboard] NIFC perimeters loaded: ${features.length} active CA fires`);
+          console.log(`[dashboard] NIFC perimeters loaded: ${features.length} active CA fires`);
           setNifcPerimeters({ type: 'FeatureCollection', ...data, features });
           return;
         } catch (e) {
-          console.warn(`[dashboard] NIFC perimeters attempt ${attempt} failed:`, e);
+          console.error(`[dashboard] NIFC perimeters attempt ${attempt} failed:`, e);
         }
         await new Promise((res) => setTimeout(res, 3000 * attempt));
       }
@@ -106,6 +106,29 @@ export function FirePerimetersOverlay() {
       overlayRef.current.finalize();
     }
 
+    const colorForPct = (raw: any): [number, number, number, number] => {
+      const pct = raw == null ? 0 : Number(raw);
+      if (pct >= 100) return [255, 255, 255, 220];
+      if (pct >= 50) return [250, 204, 21, 230];
+      if (pct >= 25) return [249, 115, 22, 230];
+      return [220, 38, 38, 230];
+    };
+
+    // Compute centroids for a pixel-sized marker so tiny sub-pixel perimeters are still visible
+    const centroids = nifcPerimeters.features
+      .map((f: any) => {
+        const g = f.geometry;
+        if (!g) return null;
+        let pts: number[][] = [];
+        if (g.type === 'Polygon') pts = g.coordinates[0] || [];
+        else if (g.type === 'MultiPolygon') pts = (g.coordinates[0] && g.coordinates[0][0]) || [];
+        if (!pts.length) return null;
+        let lon = 0, lat = 0;
+        for (const [x, y] of pts) { lon += x; lat += y; }
+        return { lon: lon / pts.length, lat: lat / pts.length, properties: f.properties };
+      })
+      .filter(Boolean);
+
     const overlay = new GoogleMapsOverlay({
       layers: [
         new GeoJsonLayer({
@@ -115,15 +138,8 @@ export function FirePerimetersOverlay() {
           stroked: true,
           filled: true,
           lineWidthMinPixels: 2,
-          getLineColor: [255, 255, 255, 180],
-          getFillColor: (f: any) => {
-            const raw = f.properties?.attr_PercentContained;
-            const pct = raw == null ? 0 : Number(raw);
-            if (pct >= 100) return [255, 255, 255, 200]; // 100% white (shouldn't reach, filtered)
-            if (pct >= 50) return [250, 204, 21, 210];   // 50-99% yellow
-            if (pct >= 25) return [249, 115, 22, 210];   // 25-49% orange
-            return [220, 38, 38, 210];                    // 0-24% red
-          },
+          getLineColor: [255, 255, 255, 220],
+          getFillColor: (f: any) => colorForPct(f.properties?.attr_PercentContained),
           getLineWidth: 2,
           onClick: (info: any) => {
             if (info.object) {
@@ -133,6 +149,28 @@ export function FirePerimetersOverlay() {
             return false;
           },
           updateTriggers: { getFillColor: [nifcPerimeters.features.length] },
+        }),
+        // Pixel-sized centroid markers so tiny fires stay visible at CA-wide zoom
+        new ScatterplotLayer({
+          id: 'nifc-markers',
+          data: centroids,
+          pickable: true,
+          stroked: true,
+          filled: true,
+          radiusMinPixels: 7,
+          radiusMaxPixels: 14,
+          lineWidthMinPixels: 2,
+          getPosition: (d: any) => [d.lon, d.lat],
+          getRadius: 8,
+          getFillColor: (d: any) => colorForPct(d.properties?.attr_PercentContained),
+          getLineColor: [255, 255, 255, 255],
+          onClick: (info: any) => {
+            if (info?.object?.properties) {
+              setSelectedPerimeter({ ...info.object.properties, x: info.x, y: info.y });
+              return true;
+            }
+            return false;
+          },
         }),
       ],
     });
