@@ -17,10 +17,10 @@ import { Badge } from "./ui/badge";
 import { Alert, AlertDescription } from "./ui/alert";
 import { Map, Marker, useMap } from '@vis.gl/react-google-maps';
 import { GoogleMapsOverlay } from '@deck.gl/google-maps';
-import { IconLayer } from '@deck.gl/layers';
+import { IconLayer, GeoJsonLayer } from '@deck.gl/layers';
 import Supercluster from 'supercluster';
 import { apiFetch } from '../services/api';
-import { FirePerimetersOverlay, SavedLocationsOverlay } from './GoogleRiskMap';
+import { SavedLocationsOverlay } from './GoogleRiskMap';
 
 const evacuationZones = [
   {
@@ -124,7 +124,20 @@ function FireFacilitiesOverlay({ smallDots = false }: { smallDots?: boolean }) {
   const [hoveredShelter, setHoveredShelter] = useState<any>(null);
   const [facilitiesData, setFacilitiesData] = useState<any[]>([]);
   const [clusteredData, setClusteredData] = useState<any[]>([]);
+  const [firePerimeters, setFirePerimeters] = useState<any>(null);
   const [zoom, setZoom] = useState(8);
+
+  // NIFC fire perimeters — so the evac map renders the same "avoid these areas"
+  // polygons as the dashboard / risk map. Kept in the same GoogleMapsOverlay as
+  // shelter icons so only ONE deck.gl canvas exists on this map.
+  useEffect(() => {
+    apiFetch('/fire-perimeters')
+      .then((r) => (r.ok ? r.json() : { features: [] }))
+      .then((data) => {
+        if (data?.features) setFirePerimeters(data);
+      })
+      .catch((e) => console.warn('NIFC perimeters fetch failed (evac):', e));
+  }, []);
 
   // Shelter facility type icons and colors based on usage code
   const getFacilityStyle = (usageCode: string, facilityType: string) => {
@@ -245,7 +258,8 @@ function FireFacilitiesOverlay({ smallDots = false }: { smallDots?: boolean }) {
   }, [map, facilitiesData, smallDots]);
 
   useEffect(() => {
-    if (!map || clusteredData.length === 0) return;
+    if (!map) return;
+    if (clusteredData.length === 0 && !firePerimeters?.features?.length) return;
 
     // Clean up old overlay first
     if (overlay) {
@@ -253,9 +267,36 @@ function FireFacilitiesOverlay({ smallDots = false }: { smallDots?: boolean }) {
       overlay.finalize();
     }
 
+    const colorForPct = (raw: any): [number, number, number, number] => {
+      const pct = raw == null ? 0 : Number(raw);
+      if (pct >= 100) return [255, 255, 255, 230];
+      if (pct >= 50) return [250, 204, 21, 240];
+      if (pct >= 25) return [249, 115, 22, 240];
+      return [220, 38, 38, 240];
+    };
+
+    const fireLayer = firePerimeters?.features?.length
+      ? new GeoJsonLayer({
+          id: 'evac-nifc-perimeters',
+          data: firePerimeters,
+          pickable: false,
+          stroked: true,
+          filled: true,
+          lineWidthMinPixels: 3,
+          getLineColor: (f: any) => colorForPct(f.properties?.attr_PercentContained),
+          getFillColor: (f: any) => colorForPct(f.properties?.attr_PercentContained),
+          getLineWidth: 3,
+          updateTriggers: {
+            getFillColor: [firePerimeters.features.length],
+            getLineColor: [firePerimeters.features.length],
+          },
+        })
+      : null;
+
     // Create new deck.gl overlay
     const deckOverlay = new GoogleMapsOverlay({
       layers: [
+        ...(fireLayer ? [fireLayer] : []),
         new IconLayer({
           id: 'fire-facilities-clustered',
           data: clusteredData,
@@ -382,7 +423,7 @@ function FireFacilitiesOverlay({ smallDots = false }: { smallDots?: boolean }) {
         deckOverlay.finalize();
       }
     };
-  }, [map, clusteredData]);
+  }, [map, clusteredData, firePerimeters]);
 
   return (
     <>
@@ -811,7 +852,6 @@ export function EvacuationRoutes() {
               gestureHandling="greedy"
               disableDefaultUI={false}
             >
-              <FirePerimetersOverlay />
               <FireFacilitiesOverlay smallDots={smallDots} />
               <SavedLocationsOverlay />
             </Map>
