@@ -33,6 +33,35 @@ import { GeoJsonLayer, ScatterplotLayer } from '@deck.gl/layers';
 // composite of name/year/incident).
 const keyFor = (p: any) => `${p?.OBJECTID ?? ''}-${p?.FIRE_NAME ?? ''}-${p?.YEAR_ ?? ''}-${p?.INC_NUM ?? ''}`;
 
+// CAL FIRE CAUSE codes (FRAP perimeters schema).
+const CAUSE_LABELS: Record<number, string> = {
+  1: 'Lightning',
+  2: 'Equipment Use',
+  3: 'Smoking',
+  4: 'Campfire',
+  5: 'Debris Burning',
+  6: 'Railroad',
+  7: 'Arson',
+  8: 'Playing with Fire',
+  9: 'Miscellaneous',
+  10: 'Vehicle',
+  11: 'Powerline',
+  12: 'Firefighter Training',
+  13: 'Non-Firefighter Training',
+  14: 'Unknown / Unidentified',
+  15: 'Structure',
+  16: 'Aircraft',
+  17: 'Volcanic',
+  18: 'Escaped Prescribed Burn',
+  19: 'Illegal Alien Campfire',
+};
+const causeLabel = (v: any): string => {
+  if (v == null || v === '') return '—';
+  const n = Number(v);
+  if (Number.isFinite(n) && CAUSE_LABELS[n]) return `${CAUSE_LABELS[n]} (${n})`;
+  return String(v);
+};
+
 const HistoricalFirePerimetersOverlay = memo(function HistoricalFirePerimetersOverlay({ fireData, selectedFire, onSelect }: { fireData: any; selectedFire: any; onSelect: (props: any | null) => void }) {
   const map = useMap();
   const overlayRef = useRef<GoogleMapsOverlay | null>(null);
@@ -163,7 +192,7 @@ const HistoricalFirePerimetersOverlay = memo(function HistoricalFirePerimetersOv
                 {selectedFire.CONT_DATE && (
                   <div><strong>Contained:</strong> {new Date(selectedFire.CONT_DATE).toLocaleDateString()}</div>
                 )}
-                {selectedFire.CAUSE && <div><strong>Cause:</strong> {selectedFire.CAUSE}</div>}
+                {selectedFire.CAUSE != null && selectedFire.CAUSE !== '' && <div><strong>Cause:</strong> {causeLabel(selectedFire.CAUSE)}</div>}
                 {selectedFire.COMPLEX_NAME && <div><strong>Complex:</strong> {selectedFire.COMPLEX_NAME}</div>}
               </div>
               <button
@@ -193,7 +222,7 @@ const HistoricalFirePerimetersOverlay = memo(function HistoricalFirePerimetersOv
                       <div className="font-medium">{aggregate.largest?.properties?.FIRE_NAME || 'Unnamed'}</div>
                       <div className="text-[11px] text-muted-foreground">
                         {Math.round(Number(aggregate.largest?.properties?.GIS_ACRES) || 0).toLocaleString()} ac
-                        {aggregate.largest?.properties?.CAUSE ? ` · ${aggregate.largest.properties.CAUSE}` : ''}
+                        {aggregate.largest?.properties?.CAUSE != null && aggregate.largest?.properties?.CAUSE !== '' ? ` · ${causeLabel(aggregate.largest.properties.CAUSE)}` : ''}
                       </div>
                     </div>
                   </div>
