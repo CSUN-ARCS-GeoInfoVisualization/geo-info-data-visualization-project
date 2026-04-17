@@ -36,6 +36,8 @@ const keyFor = (p: any) => `${p?.OBJECTID ?? ''}-${p?.FIRE_NAME ?? ''}-${p?.YEAR
 const HistoricalFirePerimetersOverlay = memo(function HistoricalFirePerimetersOverlay({ fireData, selectedFire, onSelect }: { fireData: any; selectedFire: any; onSelect: (props: any | null) => void }) {
   const map = useMap();
   const overlayRef = useRef<GoogleMapsOverlay | null>(null);
+  const onSelectRef = useRef(onSelect);
+  useEffect(() => { onSelectRef.current = onSelect; }, [onSelect]);
   // Keep the latest onSelect / selectedFire in refs so the deck.gl layer's
   // click handler and line-color accessor can read them without the layer
   // being rebuilt on every parent re-render.
@@ -81,13 +83,16 @@ const HistoricalFirePerimetersOverlay = memo(function HistoricalFirePerimetersOv
           // report has been on clicking a polygon. Selection is done via the
           // header dropdown, which is identical behaviour-wise to the research
           // map's navbar pick flow.
-          pickable: false,
+          pickable: true,
           stroked: true,
           filled: true,
           lineWidthMinPixels: 3,
           getLineWidth: 3,
           getLineColor: (f: any) => colorForAcres(f.properties.GIS_ACRES || 0),
           getFillColor: (f: any) => colorForAcres(f.properties.GIS_ACRES || 0),
+          onClick: (info: any) => {
+            if (info?.object?.properties) onSelectRef.current(info.object.properties);
+          },
           updateTriggers: {
             getFillColor: [fireData.features.length],
             getLineColor: [fireData.features.length],
@@ -432,7 +437,7 @@ export function History() {
     feats.sort((a: any, b: any) => (b.properties?.GIS_ACRES || 0) - (a.properties?.GIS_ACRES || 0));
     return feats.map((f: any) => {
       const p = f.properties || {};
-      const key = `${p.OBJECTID ?? ''}-${p.FIRE_NAME ?? ''}-${p.INC_NUM ?? ''}`;
+      const key = keyFor(p);
       const name = p.FIRE_NAME || 'Unnamed';
       const acres = p.GIS_ACRES ? Math.round(p.GIS_ACRES).toLocaleString() : '?';
       return { key, label: `${name} · ${acres} ac` };
@@ -666,10 +671,7 @@ export function History() {
                         setFocusedFireKey(key);
                         if (!key) { setSelectedFire(null); return; }
                         const feats: any[] = fireData?.features || [];
-                        const f = feats.find((ft: any) => {
-                          const p = ft.properties || {};
-                          return `${p.OBJECTID ?? ''}-${p.FIRE_NAME ?? ''}-${p.YEAR_ ?? ''}-${p.INC_NUM ?? ''}` === key;
-                        });
+                        const f = feats.find((ft: any) => keyFor(ft.properties || {}) === key);
                         setSelectedFire(f ? f.properties : null);
                       }}
                       size={1}
