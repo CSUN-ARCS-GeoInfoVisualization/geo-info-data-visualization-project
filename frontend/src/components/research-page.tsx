@@ -296,7 +296,7 @@ function ResearchMapView() {
   const [frpMin, setFrpMin] = useState(0);
   const [features, setFeatures] = useState<any[]>([]);
   const [loading, setLoading] = useState(false);
-  const [activeLayer, setActiveLayer] = useState<"fires" | "zones" | "mixed">("zones");
+  const [activeLayer, setActiveLayer] = useState<"fires" | "zones" | "mixed">("mixed");
   const showHeatmap = activeLayer !== "zones";
   const showZones = activeLayer !== "fires";
   const [zoneLevel, setZoneLevel] = useState<"counties" | "zip-codes" | "census-tracts" | "neighborhoods">("counties");
@@ -304,7 +304,8 @@ function ResearchMapView() {
   const [selectedZoneRisk, setSelectedZoneRisk] = useState<{ risk_score: number; label: string } | null>(null);
   const [zoneGeoJson, setZoneGeoJson] = useState<any>(countyGeoJson);
   const [zoneRiskData, setZoneRiskData] = useState<Record<string, { risk_score: number; label: string }>>({});
-  const showPerimeters = activeLayer !== "zones";
+  // Fire perimeters are informational and should be visible in every view — don't hide them in Risk zone view
+  const showPerimeters = true;
   const [nifcPerimeters, setNifcPerimeters] = useState<any>(null);
   const [selectedPerimeter, setSelectedPerimeter] = useState<any>(null);
   const [useOverrides, setUseOverrides] = useState(false);
