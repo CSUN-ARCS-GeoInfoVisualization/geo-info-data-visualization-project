@@ -157,11 +157,16 @@ export function FirePerimetersOverlay() {
           pickable: true,
           stroked: true,
           filled: true,
-          radiusMinPixels: 7,
-          radiusMaxPixels: 14,
+          radiusMinPixels: 6,
+          radiusMaxPixels: 60,
           lineWidthMinPixels: 2,
           getPosition: (d: any) => [d.lon, d.lat],
-          getRadius: 8,
+          // Scale by acres burned (sqrt so a 10,000-acre fire isn't 1000x bigger than a 10-acre one)
+          // Meters per unit of radius so the dot also grows geographically at close zooms.
+          getRadius: (d: any) => {
+            const acres = Number(d.properties?.poly_GISAcres) || 0.1;
+            return Math.max(500, Math.sqrt(acres) * 400);
+          },
           getFillColor: (d: any) => colorForPct(d.properties?.attr_PercentContained),
           getLineColor: [255, 255, 255, 255],
           onClick: (info: any) => {

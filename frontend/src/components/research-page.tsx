@@ -287,11 +287,14 @@ function UnifiedResearchOverlay({ features, showHeatmap, zoneGeoJson, zoneRiskDa
           pickable: true,
           stroked: true,
           filled: true,
-          radiusMinPixels: 7,
-          radiusMaxPixels: 14,
+          radiusMinPixels: 6,
+          radiusMaxPixels: 60,
           lineWidthMinPixels: 2,
           getPosition: (d: any) => [d.lon, d.lat],
-          getRadius: 8,
+          getRadius: (d: any) => {
+            const acres = Number(d.properties?.poly_GISAcres) || 0.1;
+            return Math.max(500, Math.sqrt(acres) * 400);
+          },
           getFillColor: (d: any) => colorForPct(d.properties?.attr_PercentContained),
           getLineColor: [255, 255, 255, 255],
           onClick: (info: any) => {
