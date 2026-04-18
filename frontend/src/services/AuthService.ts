@@ -23,6 +23,8 @@ const API_BASE = rawApiUrl.endsWith("/api")
   ? rawApiUrl
   : `${rawApiUrl.replace(/\/$/, "")}/api`;
 
+const COLD_START_DELAYS_MS = [500, 2000, 5000, 10000];
+
 async function apiRequest<T>(path: string, options: RequestOptions = {}, token?: string): Promise<T> {
   const headers: Record<string, string> = {
     "Content-Type": "application/json",
@@ -33,21 +35,46 @@ async function apiRequest<T>(path: string, options: RequestOptions = {}, token?:
     headers.Authorization = `Bearer ${token}`;
   }
 
-  const response = await fetch(`${API_BASE}${path}`, {
+  const url = `${API_BASE}${path}`;
+  const init: RequestInit = {
     method: options.method || "GET",
     headers,
     body: options.body,
-  });
+  };
 
-  const text = await response.text();
-  const payload = text ? JSON.parse(text) : null;
+  // Retry on Render cold-start: first request after idle returns 502/503/504
+  // (or a "Failed to fetch" TypeError) with no CORS headers, which the browser
+  // reports as a CORS error. Back off and try again once gunicorn is up.
+  let lastError: unknown = null;
+  for (let attempt = 0; attempt <= COLD_START_DELAYS_MS.length; attempt++) {
+    try {
+      const response = await fetch(url, init);
+      const text = await response.text();
+      const payload = text ? JSON.parse(text) : null;
 
-  if (!response.ok) {
-    const message = payload?.error || `Request failed (${response.status})`;
-    throw new Error(message);
+      if (!response.ok) {
+        const transient = response.status === 502 || response.status === 503 || response.status === 504;
+        if (transient && attempt < COLD_START_DELAYS_MS.length) {
+          await new Promise((r) => setTimeout(r, COLD_START_DELAYS_MS[attempt]));
+          continue;
+        }
+        const message = payload?.error || `Request failed (${response.status})`;
+        throw new Error(message);
+      }
+
+      return payload as T;
+    } catch (err) {
+      lastError = err;
+      const transientNetwork =
+        err instanceof TypeError ||
+        (err instanceof Error && /Failed to fetch|NetworkError/i.test(err.message));
+      if (!transientNetwork || attempt >= COLD_START_DELAYS_MS.length) {
+        throw err;
+      }
+      await new Promise((r) => setTimeout(r, COLD_START_DELAYS_MS[attempt]));
+    }
   }
-
-  return payload as T;
+  throw lastError instanceof Error ? lastError : new Error("Network request failed");
 }
 
 export async function login(email: string, password: string): Promise<{ token: string }> {
