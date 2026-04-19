@@ -129,14 +129,15 @@ def _warm_zone_cache(zone_type: str) -> None:
 
 
 def _cache_refresh_loop() -> None:
-    """Background thread: warm all zone caches on startup, then refresh every 15 minutes."""
-    import threading
-    for zone_type in _VALID_BOUNDARIES:
-        threading.Thread(target=_warm_zone_cache, args=(zone_type,), daemon=True).start()
+    """Background thread: warm zone caches sequentially on startup, then refresh every 15 minutes."""
+    for zone_type in sorted(_VALID_BOUNDARIES):
+        _warm_zone_cache(zone_type)
+        time.sleep(5)
     while True:
         time.sleep(_GRID_CACHE_TTL)
-        for zone_type in _VALID_BOUNDARIES:
-            threading.Thread(target=_warm_zone_cache, args=(zone_type,), daemon=True).start()
+        for zone_type in sorted(_VALID_BOUNDARIES):
+            _warm_zone_cache(zone_type)
+            time.sleep(5)
 
 
 @research_bp.route('/risk-by-zone/<zone_type>', methods=['GET'])
