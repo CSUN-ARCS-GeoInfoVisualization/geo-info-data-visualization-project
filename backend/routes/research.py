@@ -3,7 +3,7 @@
 import logging
 import os
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError, as_completed
 from datetime import datetime, timedelta, timezone
 
 import requests
@@ -59,6 +59,86 @@ def _get_centroid(coords):
 _zone_risk_cache: dict = {}
 
 
+def _warm_zone_cache(zone_type: str) -> None:
+    """Compute and cache risk data for a zone type — runs in background on startup."""
+    try:
+        filepath = os.path.join(_BOUNDARIES_DIR, f'{zone_type}.json')
+        if not os.path.exists(filepath):
+            return
+        import json as json_mod
+        with open(filepath) as f:
+            geo = json_mod.load(f)
+        name_key = 'zip' if zone_type == 'zip-codes' else 'name' if zone_type == 'neighborhoods' else 'tract'
+        features_list = geo.get('features', [])
+        step = max(1, len(features_list) // 200)
+        sampled = []
+        for i in range(0, len(features_list), step):
+            f = features_list[i]
+            name = f.get('properties', {}).get(name_key, str(i))
+            coords = f.get('geometry', {}).get('coordinates')
+            if not coords:
+                continue
+            centroid = _get_centroid(coords)
+            if not centroid:
+                continue
+            sampled.append((name, centroid[0], centroid[1]))
+        live_weather: dict[str, dict | None] = {}
+        with ThreadPoolExecutor(max_workers=_WEATHER_WORKERS) as executor:
+            futures = {executor.submit(_fetch_live_weather, lat, lon): name for name, lat, lon in sampled}
+            try:
+                for future in as_completed(futures, timeout=60):
+                    live_weather[futures[future]] = future.result()
+            except FuturesTimeoutError:
+                logger.warning("Weather fetch timed out for %s cache warm — using interpolated fallback for remaining zones", zone_type)
+        sampled_names = []
+        sampled_inputs = []
+        for name, lat, lon in sampled:
+            evi  = _interpolate_feature(lat, lon, "evi")
+            elev = _interpolate_feature(lat, lon, "elevation")
+            wx   = live_weather.get(name)
+            if wx:
+                air_temp_encoded = wx["air_temp_encoded"]
+                wind             = wx["wind"]
+                humidity         = wx["humidity"]
+            else:
+                air_temp_encoded = _interpolate_feature(lat, lon, "air_temp_encoded")
+                wind             = _interpolate_feature(lat, lon, "wind")
+                humidity         = _interpolate_feature(lat, lon, "humidity")
+            sampled_names.append(name)
+            sampled_inputs.append((evi, air_temp_encoded, wind, humidity, elev))
+        try:
+            batch_results = predict_batch_features(sampled_inputs)
+        except Exception as e:
+            logger.warning("Batch prediction failed during cache warm for %s: %s", zone_type, e)
+            return
+        sampled_risk = {
+            name: {**risk, "features": {"evi": evi, "air_temp_encoded": air_temp_encoded, "wind": wind, "humidity": humidity, "elevation": elev}}
+            for name, risk, (evi, air_temp_encoded, wind, humidity, elev) in zip(sampled_names, batch_results, sampled_inputs)
+        }
+        results = {}
+        for i, f in enumerate(features_list):
+            name = f.get('properties', {}).get(name_key, str(i))
+            sampled_idx = (i // step) * step
+            sampled_name = features_list[sampled_idx].get('properties', {}).get(name_key, str(sampled_idx)) if sampled_idx < len(features_list) else ""
+            results[name] = sampled_risk.get(sampled_name, {"risk_score": 0, "label": "Low"})
+        data = {"zones": results, "zone_type": zone_type, "total": len(results)}
+        _zone_risk_cache[zone_type] = {'data': data, 'expires': time.time() + _GRID_CACHE_TTL}
+        logger.info("Cache warmed for %s (%d zones)", zone_type, len(results))
+    except Exception as e:
+        logger.warning("Cache warm failed for %s: %s", zone_type, e)
+
+
+def _cache_refresh_loop() -> None:
+    """Background thread: warm all zone caches on startup, then refresh every 15 minutes."""
+    import threading
+    for zone_type in _VALID_BOUNDARIES:
+        threading.Thread(target=_warm_zone_cache, args=(zone_type,), daemon=True).start()
+    while True:
+        time.sleep(_GRID_CACHE_TTL)
+        for zone_type in _VALID_BOUNDARIES:
+            threading.Thread(target=_warm_zone_cache, args=(zone_type,), daemon=True).start()
+
+
 @research_bp.route('/risk-by-zone/<zone_type>', methods=['GET'])
 def risk_by_zone(zone_type):
     """Compute ML risk per zone — single request replaces 35+ batch calls."""
@@ -83,7 +163,7 @@ def risk_by_zone(zone_type):
     name_key = 'zip' if zone_type == 'zip-codes' else 'name' if zone_type == 'neighborhoods' else 'tract'
 
     features_list = geo.get('features', [])
-    step = max(1, len(features_list) // 500)  # Max ~500 predictions
+    step = max(1, len(features_list) // 200)  # Max ~200 predictions (keeps weather fetches under 30s)
 
     # Collect sampled centroids
     sampled = []  # (name, lat, lon)
@@ -102,8 +182,11 @@ def risk_by_zone(zone_type):
     live_weather: dict[str, dict | None] = {}
     with ThreadPoolExecutor(max_workers=_WEATHER_WORKERS) as executor:
         futures = {executor.submit(_fetch_live_weather, lat, lon): name for name, lat, lon in sampled}
-        for future in as_completed(futures, timeout=30):
-            live_weather[futures[future]] = future.result()
+        try:
+            for future in as_completed(futures, timeout=25):
+                live_weather[futures[future]] = future.result()
+        except FuturesTimeoutError:
+            logger.warning("Weather fetch timed out for %s — using interpolated fallback for remaining zones", zone_type)
 
     # Build feature vectors — live weather where available, interpolated fallback
     sampled_names = []
