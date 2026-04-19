@@ -142,15 +142,19 @@ def _cache_refresh_loop() -> None:
 
 @research_bp.route('/risk-by-zone/<zone_type>', methods=['GET'])
 def risk_by_zone(zone_type):
-    """Compute ML risk per zone — single request replaces 35+ batch calls."""
+    """Return ML risk per zone. Always serves from cache; triggers background warm if cold."""
     if zone_type not in _VALID_BOUNDARIES:
         return jsonify({'error': 'Invalid zone type'}), 404
 
     now = time.time()
-    cache_key = zone_type
-    cached = _zone_risk_cache.get(cache_key)
+    cached = _zone_risk_cache.get(zone_type)
     if cached and cached['expires'] > now:
         return jsonify(cached['data'])
+
+    # Cache cold — return interpolated-only data instantly so the browser isn't blocked,
+    # then kick off a background warm so the next request hits the cache.
+    import threading as _threading
+    _threading.Thread(target=_warm_zone_cache, args=(zone_type,), daemon=True).start()
 
     filepath = os.path.join(_BOUNDARIES_DIR, f'{zone_type}.json')
     if not os.path.exists(filepath):
@@ -160,14 +164,12 @@ def risk_by_zone(zone_type):
     with open(filepath) as f:
         geo = json_mod.load(f)
 
-    # Determine zone name field
     name_key = 'zip' if zone_type == 'zip-codes' else 'name' if zone_type == 'neighborhoods' else 'tract'
-
     features_list = geo.get('features', [])
-    step = max(1, len(features_list) // 200)  # Max ~200 predictions (keeps weather fetches under 30s)
+    step = max(1, len(features_list) // 200)
 
-    # Collect sampled centroids
-    sampled = []  # (name, lat, lon)
+    sampled_names = []
+    sampled_inputs = []
     for i in range(0, len(features_list), step):
         f = features_list[i]
         name = f.get('properties', {}).get(name_key, str(i))
@@ -177,49 +179,25 @@ def risk_by_zone(zone_type):
         centroid = _get_centroid(coords)
         if not centroid:
             continue
-        sampled.append((name, centroid[0], centroid[1]))
-
-    # Fetch live weather for all centroids in parallel
-    live_weather: dict[str, dict | None] = {}
-    with ThreadPoolExecutor(max_workers=_WEATHER_WORKERS) as executor:
-        futures = {executor.submit(_fetch_live_weather, lat, lon): name for name, lat, lon in sampled}
-        try:
-            for future in as_completed(futures, timeout=25):
-                live_weather[futures[future]] = future.result()
-        except FuturesTimeoutError:
-            logger.warning("Weather fetch timed out for %s — using interpolated fallback for remaining zones", zone_type)
-
-    # Build feature vectors — live weather where available, interpolated fallback
-    sampled_names = []
-    sampled_inputs = []  # (evi, air_temp_encoded, wind, humidity, elevation) tuples
-    for name, lat, lon in sampled:
+        lat, lon = centroid
         evi  = _interpolate_feature(lat, lon, "evi")
         elev = _interpolate_feature(lat, lon, "elevation")
-        wx   = live_weather.get(name)
-        if wx:
-            air_temp_encoded = wx["air_temp_encoded"]
-            wind             = wx["wind"]
-            humidity         = wx["humidity"]
-        else:
-            air_temp_encoded = _interpolate_feature(lat, lon, "air_temp_encoded")
-            wind             = _interpolate_feature(lat, lon, "wind")
-            humidity         = _interpolate_feature(lat, lon, "humidity")
         sampled_names.append(name)
-        sampled_inputs.append((evi, air_temp_encoded, wind, humidity, elev))
+        sampled_inputs.append((evi, _interpolate_feature(lat, lon, "air_temp_encoded"),
+                                _interpolate_feature(lat, lon, "wind"),
+                                _interpolate_feature(lat, lon, "humidity"), elev))
 
-    # Single batch prediction call (loads model once, predicts all at once via numpy)
     try:
         batch_results = predict_batch_features(sampled_inputs)
     except Exception as e:
-        logger.warning("Batch prediction failed: %s", e)
+        logger.warning("Batch prediction failed (cold path): %s", e)
         batch_results = [{"risk_score": 0, "label": "Low"}] * len(sampled_inputs)
 
     sampled_risk = {
-        name: {**risk, "features": {"evi": evi, "air_temp_encoded": air_temp_encoded, "wind": wind, "humidity": humidity, "elevation": elev}}
-        for name, risk, (evi, air_temp_encoded, wind, humidity, elev) in zip(sampled_names, batch_results, sampled_inputs)
+        name: {**risk, "features": {"evi": evi, "air_temp_encoded": at, "wind": wind, "humidity": hum, "elevation": elev}}
+        for name, risk, (evi, at, wind, hum, elev) in zip(sampled_names, batch_results, sampled_inputs)
     }
 
-    # Propagate to all zones
     results = {}
     for i, f in enumerate(features_list):
         name = f.get('properties', {}).get(name_key, str(i))
@@ -228,7 +206,6 @@ def risk_by_zone(zone_type):
         results[name] = sampled_risk.get(sampled_name, {"risk_score": 0, "label": "Low"})
 
     data = {"zones": results, "zone_type": zone_type, "total": len(results)}
-    _zone_risk_cache[cache_key] = {'data': data, 'expires': now + _GRID_CACHE_TTL}
     return jsonify(data)
 
 
