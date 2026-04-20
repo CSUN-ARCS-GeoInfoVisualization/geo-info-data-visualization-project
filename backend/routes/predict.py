@@ -217,6 +217,10 @@ def _norm_fire_name(s: str) -> str:
     return ''.join(c for c in (s or '').lower() if c.isalnum())
 
 
+_containment_cache: dict = {"expires": 0.0, "data": {}}
+_CONTAINMENT_TTL = 1800  # 30 min
+
+
 def _fetch_containment_by_name() -> dict:
     """Build a name->PercentContained lookup from CAL FIRE + WFIGS Incident Locations.
 
@@ -224,6 +228,10 @@ def _fetch_containment_by_name() -> dict:
     carry a real value, so we enrich the perimeter features with whichever
     number is available.
     """
+    import time as _time
+    now = _time.time()
+    if _containment_cache["expires"] > now and _containment_cache["data"]:
+        return _containment_cache["data"]
     lookup: dict = {}
 
     # CAL FIRE
@@ -271,6 +279,9 @@ def _fetch_containment_by_name() -> dict:
     except Exception as e:
         logger.warning('WFIGS locations containment lookup failed: %s', e)
 
+    if lookup:
+        _containment_cache["data"] = lookup
+        _containment_cache["expires"] = now + _CONTAINMENT_TTL
     return lookup
 
 
@@ -317,4 +328,6 @@ def nifc_fire_perimeters():
     except Exception as e:
         logger.warning('Containment enrichment failed: %s', e)
 
-    return jsonify(data)
+    resp = jsonify(data)
+    resp.headers['Cache-Control'] = 'public, max-age=300'
+    return resp

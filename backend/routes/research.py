@@ -39,7 +39,9 @@ def get_boundaries(name):
     import json as json_mod
     with open(filepath) as f:
         data = json_mod.load(f)
-    return jsonify(data)
+    resp = jsonify(data)
+    resp.headers['Cache-Control'] = 'public, max-age=86400'
+    return resp
 
 
 def _get_centroid(coords):
@@ -149,7 +151,9 @@ def risk_by_zone(zone_type):
     now = time.time()
     cached = _zone_risk_cache.get(zone_type)
     if cached and cached['expires'] > now:
-        return jsonify(cached['data'])
+        resp = jsonify(cached['data'])
+        resp.headers['Cache-Control'] = 'public, max-age=900'
+        return resp
 
     # Cache cold — return interpolated-only data instantly so the browser isn't blocked,
     # then kick off a background warm so the next request hits the cache.
