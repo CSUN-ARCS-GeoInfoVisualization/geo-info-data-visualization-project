@@ -1,0 +1,35 @@
+name: Sync domain-deployment to main
+
+# Netlify's production branch is `domain-deployment`. This workflow keeps it
+# in lockstep with `main` so every merge/push to main automatically triggers
+# a Netlify production deploy — no manual merge required.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: sync-domain-deployment
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Fast-forward domain-deployment to main
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          # Safe fast-forward: only succeeds if domain-deployment is a strict
+          # ancestor of main. If it has diverged, the push fails and a human
+          # resolves it — we never force-push production.
+          git push origin "${GITHUB_SHA}:refs/heads/domain-deployment"
