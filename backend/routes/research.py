@@ -3,7 +3,7 @@
 import logging
 import os
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError, as_completed
 from datetime import datetime, timedelta, timezone
 
 import requests
@@ -330,8 +330,14 @@ def risk_by_county():
     if need_live:
         with ThreadPoolExecutor(max_workers=_WEATHER_WORKERS) as executor:
             futures = {executor.submit(_fetch_live_weather, lat, lon): name for name, lat, lon in CA_COUNTY_CENTROIDS}
-            for future in as_completed(futures, timeout=30):
-                live_weather[futures[future]] = future.result()
+            try:
+                for future in as_completed(futures, timeout=30):
+                    try:
+                        live_weather[futures[future]] = future.result()
+                    except Exception:
+                        live_weather[futures[future]] = None
+            except FuturesTimeoutError:
+                logger.warning("Live weather fetch timed out for counties — falling back to interpolated data for remaining counties")
 
     names = []
     inputs = []

@@ -61,11 +61,6 @@ def create_app(config_class=Config):
     def health():
         return jsonify({'status': 'ok'})
 
-    import threading
-    from routes.research import _cache_refresh_loop
-    t = threading.Thread(target=_cache_refresh_loop, daemon=True)
-    t.start()
-
     return app
 
 if __name__ == '__main__':
