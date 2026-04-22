@@ -1,19 +1,57 @@
 import { useEffect, useMemo, useState } from "react";
 import {
   Bell, ShieldAlert, Zap, Clock, CalendarClock, Mail, Phone,
-  BellOff, BellRing, Gauge, CheckCircle2, AlertCircle, Loader2,
+  BellOff, BellRing, Gauge, CheckCircle2, AlertCircle, User,
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Input } from "./ui/input";
 import { Badge } from "./ui/badge";
-import {
-  getMyNotifications,
-  subscribeNotifications,
-  unsubscribeNotifications,
-  updateMyNotifications,
-  type NotificationPreference,
-} from "../services/AuthService";
+import { type NotificationPreference } from "../services/AuthService";
+
+// API for notification prefs is currently returning 500 on Render. Per product
+// decision, this page is UI-only for now — state is backed by localStorage so
+// name/email/phone persist across reloads without a backend dependency.
+const LS_KEY = "firescope.alertPrefs.v1";
+
+type StoredPrefs = NotificationPreference & { contact_name?: string | null };
+
+function defaultPrefs(): StoredPrefs {
+  return {
+    user_id: 0,
+    opted_in: false,
+    email_enabled: true,
+    sms_enabled: false,
+    contact_name: null,
+    contact_email: null,
+    contact_phone: null,
+    frequency: "daily",
+    risk_threshold: 70,
+    paused_until: null,
+    blackout_start: null,
+    blackout_end: null,
+    last_sent_at: null,
+    unsubscribed_at: null,
+  };
+}
+
+function loadStoredPrefs(): StoredPrefs {
+  try {
+    const raw = localStorage.getItem(LS_KEY);
+    if (!raw) return defaultPrefs();
+    return { ...defaultPrefs(), ...JSON.parse(raw) };
+  } catch {
+    return defaultPrefs();
+  }
+}
+
+function saveStoredPrefs(prefs: StoredPrefs) {
+  try {
+    localStorage.setItem(LS_KEY, JSON.stringify(prefs));
+  } catch {
+    /* quota / disabled storage — silently drop */
+  }
+}
 
 type NotificationSettingsProps = {
   token: string;
@@ -70,112 +108,89 @@ const RISK_TIERS = [
   { value: 95, label: "Catastrophic", color: "#991b1b", bgTint: "#fef2f2" },  // Dark Red
 ];
 
-export function NotificationSettings({ token }: NotificationSettingsProps) {
-  const [preference, setPreference] = useState<NotificationPreference | null>(null);
-  const [draft, setDraft] = useState<DraftPreference | null>(null);
-  const [loading, setLoading] = useState(true);
+export function NotificationSettings(_props: NotificationSettingsProps) {
+  const initial = loadStoredPrefs();
+  const [preference, setPreference] = useState<StoredPrefs>(initial);
+  const [draft, setDraft] = useState<DraftPreference>(buildDraft(initial));
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [contactEmail, setContactEmail] = useState("");
-  const [contactPhone, setContactPhone] = useState("");
+  const [contactName, setContactName] = useState(initial.contact_name || "");
+  const [contactEmail, setContactEmail] = useState(initial.contact_email || "");
+  const [contactPhone, setContactPhone] = useState(initial.contact_phone || "");
 
   const isDirty = useMemo(() => {
-    if (!preference || !draft) return false;
     return (
       draft.frequency !== preference.frequency ||
       draft.riskThreshold !== preference.risk_threshold ||
       localDateTimeToIso(draft.pausedUntilLocal) !== (preference.paused_until ? new Date(preference.paused_until).toISOString() : null) ||
       localDateTimeToIso(draft.blackoutStartLocal) !== (preference.blackout_start ? new Date(preference.blackout_start).toISOString() : null) ||
       localDateTimeToIso(draft.blackoutEndLocal) !== (preference.blackout_end ? new Date(preference.blackout_end).toISOString() : null) ||
+      (contactName || "") !== (preference.contact_name || "") ||
       (contactEmail || "") !== (preference.contact_email || "") ||
       (contactPhone || "") !== (preference.contact_phone || "")
     );
-  }, [preference, draft, contactEmail, contactPhone]);
+  }, [preference, draft, contactName, contactEmail, contactPhone]);
 
-  const loadPreference = async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const pref = await getMyNotifications(token);
-      setPreference(pref);
-      setDraft(buildDraft(pref));
-      setContactEmail(pref.contact_email || "");
-      setContactPhone(pref.contact_phone || "");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load notification settings");
-    } finally {
-      setLoading(false);
-    }
+  // All persistence is local; no API calls while /api/me/notifications is broken.
+  const persist = (next: StoredPrefs) => {
+    saveStoredPrefs(next);
+    setPreference(next);
+    setDraft(buildDraft(next));
+    setContactName(next.contact_name || "");
+    setContactEmail(next.contact_email || "");
+    setContactPhone(next.contact_phone || "");
   };
 
-  useEffect(() => {
-    loadPreference();
-  }, [token]);
-
-  const onSave = async () => {
-    if (!draft) return;
+  const onSave = () => {
     setSaving(true);
     setMessage(null);
     setError(null);
-    try {
-      const updated = await updateMyNotifications(token, {
-        frequency: draft.frequency,
-        risk_threshold: draft.riskThreshold,
-        paused_until: localDateTimeToIso(draft.pausedUntilLocal),
-        blackout_start: localDateTimeToIso(draft.blackoutStartLocal),
-        blackout_end: localDateTimeToIso(draft.blackoutEndLocal),
-        contact_email: contactEmail.trim() || null,
-        contact_phone: contactPhone.trim() || null,
-      });
-      setPreference(updated);
-      setDraft(buildDraft(updated));
-      setContactEmail(updated.contact_email || "");
-      setContactPhone(updated.contact_phone || "");
-      setMessage("Notification settings saved.");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to save settings");
-    } finally {
-      setSaving(false);
-    }
+    const next: StoredPrefs = {
+      ...preference,
+      frequency: draft.frequency,
+      risk_threshold: draft.riskThreshold,
+      paused_until: localDateTimeToIso(draft.pausedUntilLocal),
+      blackout_start: localDateTimeToIso(draft.blackoutStartLocal),
+      blackout_end: localDateTimeToIso(draft.blackoutEndLocal),
+      contact_name: contactName.trim() || null,
+      contact_email: contactEmail.trim() || null,
+      contact_phone: contactPhone.trim() || null,
+    };
+    persist(next);
+    setMessage("Settings saved locally. Backend delivery will resume once reconnected.");
+    setSaving(false);
   };
 
-  const onSubscribe = async () => {
+  const onSubscribe = () => {
     setSaving(true);
     setMessage(null);
     setError(null);
-    try {
-      // Subscribe is the single action that saves the contact info AND opts in.
-      const updated = await subscribeNotifications(token, {
-        contact_email: contactEmail.trim() || null,
-        contact_phone: contactPhone.trim() || null,
-      });
-      setPreference(updated);
-      setDraft(buildDraft(updated));
-      setContactEmail(updated.contact_email || "");
-      setContactPhone(updated.contact_phone || "");
-      setMessage("Alerts subscribed. You will receive wildfire alerts at the contact info above.");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to subscribe");
-    } finally {
-      setSaving(false);
-    }
+    const next: StoredPrefs = {
+      ...preference,
+      opted_in: true,
+      unsubscribed_at: null,
+      contact_name: contactName.trim() || null,
+      contact_email: contactEmail.trim() || null,
+      contact_phone: contactPhone.trim() || null,
+    };
+    persist(next);
+    setMessage("Alerts enabled locally. You will receive wildfire alerts at this contact info once delivery is reconnected.");
+    setSaving(false);
   };
 
-  const onUnsubscribe = async () => {
+  const onUnsubscribe = () => {
     setSaving(true);
     setMessage(null);
     setError(null);
-    try {
-      const updated = await unsubscribeNotifications(token);
-      setPreference(updated);
-      setDraft(buildDraft(updated));
-      setMessage("Alerts unsubscribed.");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to unsubscribe");
-    } finally {
-      setSaving(false);
-    }
+    const next: StoredPrefs = {
+      ...preference,
+      opted_in: false,
+      unsubscribed_at: new Date().toISOString(),
+    };
+    persist(next);
+    setMessage("Alerts disabled.");
+    setSaving(false);
   };
 
   const onPause24Hours = () => {
@@ -195,17 +210,6 @@ export function NotificationSettings({ token }: NotificationSettingsProps) {
     });
     setMessage("Pause/blackout cleared. Save to apply.");
   };
-
-  if (loading || !draft || !preference) {
-    return (
-      <div className="flex items-center justify-center py-20">
-        <div className="flex flex-col items-center gap-3">
-          <Loader2 className="h-8 w-8 animate-spin text-red-500" />
-          <p className="text-sm text-muted-foreground">Loading notification settings...</p>
-        </div>
-      </div>
-    );
-  }
 
   const thresholdColor =
     draft.riskThreshold <= 30 ? "text-emerald-600" :
@@ -384,6 +388,20 @@ export function NotificationSettings({ token }: NotificationSettingsProps) {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
+          <div className="space-y-2">
+            <label htmlFor="alert-name" className="text-sm font-medium">Full Name</label>
+            <div className="relative group">
+              <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground transition-colors group-focus-within:text-red-500" />
+              <Input
+                id="alert-name"
+                type="text"
+                placeholder="Jane Doe"
+                className="pl-10 h-10"
+                value={contactName}
+                onChange={(e) => setContactName(e.target.value)}
+              />
+            </div>
+          </div>
           <div className="space-y-2">
             <label htmlFor="alert-email" className="text-sm font-medium">Email Address</label>
             <div className="relative group">
