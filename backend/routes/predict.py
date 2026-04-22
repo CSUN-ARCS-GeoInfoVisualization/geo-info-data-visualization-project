@@ -217,6 +217,108 @@ def _norm_fire_name(s: str) -> str:
     return ''.join(c for c in (s or '').lower() if c.isalnum())
 
 
+def _circle_polygon(lat: float, lon: float, radius_m: float, n: int = 36) -> list:
+    """Return a GeoJSON-style polygon ring (list of [lon, lat]) approximating a
+    circle of `radius_m` centered at (lat, lon). Equirectangular offsets — fine
+    for the few-km scale of fire incidents."""
+    lat_per_m = 1.0 / 110574.0
+    lon_per_m = 1.0 / (111320.0 * max(math.cos(math.radians(lat)), 1e-6))
+    ring = []
+    for i in range(n):
+        theta = 2 * math.pi * i / n
+        dlat = radius_m * math.sin(theta) * lat_per_m
+        dlon = radius_m * math.cos(theta) * lon_per_m
+        ring.append([lon + dlon, lat + dlat])
+    ring.append(ring[0])
+    return ring
+
+
+def _acres_to_radius_m(acres) -> float:
+    """Convert acres to the radius of an equal-area circle, in meters.
+    Floors to 400 m so tiny/new incidents remain visible."""
+    try:
+        a = float(acres)
+    except (TypeError, ValueError):
+        a = 0.0
+    sq_m = max(a, 0.0) * 4046.86
+    r = math.sqrt(sq_m / math.pi) if sq_m > 0 else 0.0
+    return max(r, 400.0)
+
+
+def _fetch_news_incident_features(existing_names: set) -> list:
+    """Fetch CAL FIRE active incidents with lat/lon and synthesize circle-polygon
+    features for any incident not already represented by a WFIGS perimeter.
+
+    These are the fires users see discussed in alerts/news but which may not yet
+    have a WFIGS perimeter polygon (new, small, or not ingested yet). Returned
+    features match the WFIGS property schema so existing styling and tooltips
+    work unchanged."""
+    features = []
+    try:
+        r = http_requests.get(
+            'https://incidents.fire.ca.gov/umbraco/api/IncidentApi/List',
+            params={'inactive': 'false'},
+            timeout=12,
+            headers={'User-Agent': 'FireScopeProxy/1.0'},
+        )
+        r.raise_for_status()
+        incidents = r.json() or []
+    except Exception as e:
+        logger.warning('CAL FIRE incidents fetch (news layer) failed: %s', e)
+        return features
+
+    for inc in incidents:
+        if not isinstance(inc, dict):
+            continue
+        name = inc.get('Name')
+        nm = _norm_fire_name(name)
+        if not nm or nm in existing_names:
+            continue
+        try:
+            lat = float(inc.get('Latitude'))
+            lon = float(inc.get('Longitude'))
+        except (TypeError, ValueError):
+            continue
+        if not (-90 <= lat <= 90) or not (-180 <= lon <= 180):
+            continue
+        # California bounding box sanity check (loose)
+        if not (32.0 <= lat <= 42.5 and -125.0 <= lon <= -113.5):
+            continue
+
+        acres = inc.get('AcresBurned')
+        radius_m = _acres_to_radius_m(acres)
+        ring = _circle_polygon(lat, lon, radius_m)
+
+        pct_raw = inc.get('PercentContained')
+        try:
+            pct = float(pct_raw) if pct_raw is not None else None
+        except (TypeError, ValueError):
+            pct = None
+        if pct is not None and pct >= 100:
+            continue
+
+        try:
+            acres_val = float(acres) if acres is not None else None
+        except (TypeError, ValueError):
+            acres_val = None
+
+        features.append({
+            'type': 'Feature',
+            'geometry': {'type': 'Polygon', 'coordinates': [ring]},
+            'properties': {
+                'poly_IncidentName': name,
+                'poly_GISAcres': acres_val,
+                'poly_FeatureCategory': 'CAL FIRE Incident (news)',
+                'attr_PercentContained': pct,
+                'attr_FireDiscoveryDateTime': inc.get('Started'),
+                'incident_url': inc.get('Url'),
+                'news_source': 'cal_fire',
+            },
+        })
+        existing_names.add(nm)
+    return features
+
+
 def _fetch_containment_by_name() -> dict:
     """Build a name->PercentContained lookup from CAL FIRE + WFIGS Incident Locations.
 
@@ -301,6 +403,7 @@ def nifc_fire_perimeters():
     try:
         lookup = _fetch_containment_by_name()
         kept = []
+        existing_names: set = set()
         for feat in (data or {}).get('features', []) or []:
             props = feat.get('properties') or {}
             if props.get('attr_PercentContained') is None:
@@ -313,8 +416,24 @@ def nifc_fire_perimeters():
             if pct is not None and float(pct) >= 100:
                 continue
             kept.append(feat)
+            nm = _norm_fire_name(props.get('poly_IncidentName'))
+            if nm:
+                existing_names.add(nm)
         data['features'] = kept
     except Exception as e:
         logger.warning('Containment enrichment failed: %s', e)
+        existing_names = set()
+
+    # Merge in CAL FIRE incidents from the alerts/news feed that aren't already
+    # represented as WFIGS perimeters. These surface as circle polygons so every
+    # map consuming /fire-perimeters (dashboard, risk map, evac routes, research)
+    # shows the same incidents users read about in the news tab.
+    try:
+        news_feats = _fetch_news_incident_features(existing_names)
+        if news_feats:
+            data.setdefault('features', []).extend(news_feats)
+            logger.info('fire-perimeters: appended %d news-sourced incident circles', len(news_feats))
+    except Exception as e:
+        logger.warning('News-incident merge failed: %s', e)
 
     return jsonify(data)
