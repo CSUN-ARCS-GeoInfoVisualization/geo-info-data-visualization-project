@@ -190,9 +190,26 @@ function WeatherStationMarker({ station, selected, onClick }: { station: Weather
   return null;
 }
 
+interface SelectedZone {
+  name: string;
+  risk_score: number;
+  label: string;
+  features?: { evi: number; lst: number; wind: number; elevation: number };
+  level: string;
+}
+
+function zoneLabelColor(label: string) {
+  const l = (label || "").toLowerCase();
+  if (l.includes("extreme")) return "#7f1d1d";
+  if (l.includes("high")) return "#dc2626";
+  if (l.includes("moderate") || l.includes("medium")) return "#ca8a04";
+  return "#16a34a";
+}
+
 export function RiskMap() {
   const [selectedIncident, setSelectedIncident] = useState<string | null>(null);
   const [selectedStation, setSelectedStation] = useState<string | null>(null);
+  const [selectedZone, setSelectedZone] = useState<SelectedZone | null>(null);
   const [mapTypeId, setMapTypeId] = useState<'roadmap' | 'satellite' | 'hybrid' | 'terrain'>('satellite');
   const [timeframe, setTimeframe] = useState<"current" | "forecast-6h" | "forecast-24h">("current");
   const [searchQuery, setSearchQuery] = useState("");
@@ -327,17 +344,99 @@ export function RiskMap() {
                     gestureHandling="greedy"
                     disableDefaultUI={false}
                   >
-                    {/* Risk Zone Overlay */}
-                    {zoneLevel === "counties" && <CountyRiskOverlay />}
-                    {zoneLevel === "zip-codes" && <ZipCodeRiskOverlay />}
-                    {zoneLevel === "census-tracts" && <CensusTractRiskOverlay />}
-                    {zoneLevel === "neighborhoods" && <NeighborhoodRiskOverlay />}
+                    {/* Risk Zone Overlay (rendered BEFORE fires so fires paint on top) */}
+                    {zoneLevel === "counties" && (
+                      <CountyRiskOverlay
+                        onCountyClick={(name, risk) =>
+                          setSelectedZone({ name, risk_score: risk.risk_score, label: risk.label, features: risk.features, level: "County" })
+                        }
+                      />
+                    )}
+                    {zoneLevel === "zip-codes" && (
+                      <ZipCodeRiskOverlay
+                        onZoneClick={(name, risk) =>
+                          setSelectedZone({ name, risk_score: risk.risk_score, label: risk.label, features: risk.features, level: "ZIP Code" })
+                        }
+                      />
+                    )}
+                    {zoneLevel === "census-tracts" && (
+                      <CensusTractRiskOverlay
+                        onZoneClick={(name, risk) =>
+                          setSelectedZone({ name, risk_score: risk.risk_score, label: risk.label, features: risk.features, level: "Census Tract" })
+                        }
+                      />
+                    )}
+                    {zoneLevel === "neighborhoods" && (
+                      <NeighborhoodRiskOverlay
+                        onZoneClick={(name, risk) =>
+                          setSelectedZone({ name, risk_score: risk.risk_score, label: risk.label, features: risk.features, level: "Neighborhood" })
+                        }
+                      />
+                    )}
 
-                    {/* Live Active Fires — NIFC perimeter polygons (<100% contained) */}
+                    {/* Live Active Fires — rendered AFTER zones so the fire canvas
+                        is on top and fire polygons are easier to click. Zone clicks
+                        on empty fire areas still pass through to the zone overlay. */}
                     <FirePerimetersOverlay />
-
-                    {/* Weather Stations - awaiting real data source */}
                   </GoogleMap>
+                  {/* Zone popup — independent of the fire popup (which lives inside
+                      FirePerimetersOverlay). Both can be open at once. */}
+                  {selectedZone && (
+                    <div
+                      style={{
+                        position: 'absolute',
+                        left: 12,
+                        top: 12,
+                        zIndex: 1000,
+                        background: 'white',
+                        border: '1px solid #e5e7eb',
+                        borderRadius: 8,
+                        padding: 14,
+                        minWidth: 240,
+                        maxWidth: 320,
+                        boxShadow: '0 10px 15px -3px rgba(0,0,0,0.1), 0 4px 6px -4px rgba(0,0,0,0.05)',
+                        fontSize: 12,
+                        lineHeight: 1.55,
+                      }}
+                    >
+                      <button
+                        onClick={() => setSelectedZone(null)}
+                        aria-label="Close"
+                        style={{ position: 'absolute', top: 6, right: 10, background: 'none', border: 'none', cursor: 'pointer', fontSize: 18, color: '#6b7280' }}
+                      >×</button>
+                      <div style={{ fontSize: 10, textTransform: 'uppercase', letterSpacing: 0.5, color: '#6b7280', marginBottom: 4 }}>{selectedZone.level}</div>
+                      <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 8, paddingRight: 20 }}>{selectedZone.name}</div>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 10 }}>
+                        <span style={{ background: zoneLabelColor(selectedZone.label), color: 'white', padding: '2px 8px', borderRadius: 999, fontSize: 11, fontWeight: 600 }}>
+                          {selectedZone.label}
+                        </span>
+                        <span style={{ color: '#374151', fontWeight: 600 }}>{(selectedZone.risk_score * 100).toFixed(0)}% risk</span>
+                      </div>
+                      {selectedZone.features ? (
+                        <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: 6 }}>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                            <span><strong>🌿 EVI:</strong></span>
+                            <span style={{ fontVariantNumeric: 'tabular-nums' }}>{selectedZone.features.evi?.toFixed(3)}</span>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                            <span><strong>🌡️ LST:</strong></span>
+                            <span style={{ fontVariantNumeric: 'tabular-nums' }}>{((selectedZone.features.lst * 0.02) - 273.15).toFixed(1)}°C</span>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                            <span><strong>💨 Wind:</strong></span>
+                            <span style={{ fontVariantNumeric: 'tabular-nums' }}>{selectedZone.features.wind?.toFixed(1)} m/s</span>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                            <span><strong>⛰️ Elevation:</strong></span>
+                            <span style={{ fontVariantNumeric: 'tabular-nums' }}>{Math.round(selectedZone.features.elevation ?? 0)} m</span>
+                          </div>
+                        </div>
+                      ) : (
+                        <div style={{ fontSize: 11, color: '#6b7280' }}>Parameter breakdown loading…</div>
+                      )}
+                    </div>
+                  )}
+
                 </div>
 
                 {/* Map Legend */}
