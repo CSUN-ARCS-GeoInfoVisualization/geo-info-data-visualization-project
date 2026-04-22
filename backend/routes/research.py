@@ -3,7 +3,6 @@
 import logging
 import os
 import time
-from concurrent.futures import ThreadPoolExecutor, TimeoutError as FuturesTimeoutError, as_completed
 from datetime import datetime, timedelta, timezone
 
 import requests
@@ -12,7 +11,6 @@ from flask_jwt_extended import jwt_required, get_jwt
 
 from ml.inference import predict_from_features, predict_batch_features
 from data.sample_locations import SAMPLE_LOCATIONS
-from data.live_weather import get_weather
 
 research_bp = Blueprint('research', __name__)
 logger = logging.getLogger(__name__)
@@ -203,20 +201,7 @@ def fire_data():
     })
 
 
-_WEATHER_WORKERS = 16
 
-
-def _fetch_live_weather(lat: float, lon: float) -> dict | None:
-    """Fetch live wind, humidity, and air_temp_encoded from Open-Meteo. Returns None on failure."""
-    try:
-        w = get_weather(lat, lon)
-        return {
-            "wind":             w["wind_speed"],
-            "humidity":         w["humidity"],
-            "air_temp_encoded": (w["temperature_celsius"] + 273.15) / 0.02,
-        }
-    except Exception:
-        return None
 
 
 def _interpolate_feature(lat: float, lon: float, feature_key: str) -> float:
@@ -324,30 +309,14 @@ def risk_by_county():
             and _county_cache["params"] == params_key):
         return jsonify(_county_cache["data"])
 
-    # Fetch live weather in parallel for all counties (skip if all weather fields are overridden)
-    need_live = air_temp_encoded_ov is None or wind_ov is None or humidity_ov is None
-    live_weather: dict[str, dict | None] = {}
-    if need_live:
-        with ThreadPoolExecutor(max_workers=_WEATHER_WORKERS) as executor:
-            futures = {executor.submit(_fetch_live_weather, lat, lon): name for name, lat, lon in CA_COUNTY_CENTROIDS}
-            try:
-                for future in as_completed(futures, timeout=30):
-                    try:
-                        live_weather[futures[future]] = future.result()
-                    except Exception:
-                        live_weather[futures[future]] = None
-            except FuturesTimeoutError:
-                logger.warning("Live weather fetch timed out for counties — falling back to interpolated data for remaining counties")
-
     names = []
     inputs = []
     for name, lat, lon in CA_COUNTY_CENTROIDS:
-        evi  = evi_ov if evi_ov is not None else _interpolate_feature(lat, lon, "evi")
-        elev = elev_ov if elev_ov is not None else _interpolate_feature(lat, lon, "elevation")
-        wx   = live_weather.get(name)
-        air_temp_encoded = air_temp_encoded_ov if air_temp_encoded_ov is not None else (wx["air_temp_encoded"] if wx else _interpolate_feature(lat, lon, "air_temp_encoded"))
-        wind             = wind_ov             if wind_ov             is not None else (wx["wind"]             if wx else _interpolate_feature(lat, lon, "wind"))
-        humidity         = humidity_ov         if humidity_ov         is not None else (wx["humidity"]         if wx else _interpolate_feature(lat, lon, "humidity"))
+        evi              = evi_ov              if evi_ov              is not None else _interpolate_feature(lat, lon, "evi")
+        air_temp_encoded = air_temp_encoded_ov if air_temp_encoded_ov is not None else _interpolate_feature(lat, lon, "air_temp_encoded")
+        wind             = wind_ov             if wind_ov             is not None else _interpolate_feature(lat, lon, "wind")
+        humidity         = humidity_ov         if humidity_ov         is not None else _interpolate_feature(lat, lon, "humidity")
+        elev             = elev_ov             if elev_ov             is not None else _interpolate_feature(lat, lon, "elevation")
         names.append(name)
         inputs.append((evi, air_temp_encoded, wind, humidity, elev))
     try:
