@@ -227,7 +227,7 @@ export function SettingsPage({ defaultTab = "profile" }: SettingsPageProps) {
                 <div className="divide-y">
                   <AboutItem
                     name="CAL FIRE Incidents API"
-                    description="California Department of Forestry and Fire Protection active incident data — fire name, county, acres, percent contained. Used on the Active Fires map and as the containment-enrichment source when NIFC perimeters have null containment."
+                    description="California Department of Forestry and Fire Protection active incident data — fire name, county, acres, percent contained, latitude/longitude. Powers three things: (1) the Active Fires list, (2) containment-enrichment when NIFC perimeters report null containment, and (3) circle-polygon fallbacks on every fire map (dashboard, risk map, evacuation routes, research) for incidents from the alerts/news feed that don't yet have a WFIGS perimeter — radius is computed from AcresBurned (equal-area circle, 400 m floor)."
                     badge="State agency"
                     badgeColor="bg-orange-100 text-orange-700"
                   />
