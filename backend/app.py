@@ -2,7 +2,6 @@ import os
 
 from flask import Flask, jsonify
 from flask_cors import CORS
-from flask_compress import Compress
 from flask_jwt_extended import JWTManager
 from models import db, migrate
 from config import Config
@@ -27,15 +26,7 @@ def create_app(config_class=Config):
     migrations_dir = os.path.join(repo_root, 'migrations')
     migrate.init_app(app, db, directory=migrations_dir)
     CORS(app)
-    Compress(app)
     JWTManager(app)
-
-    # Preload ML model so the first /predict request doesn't pay the joblib load cost.
-    try:
-        from ml.inference import _load, _DEFAULT_MODEL, _DEFAULT_SCALER
-        _load(_DEFAULT_MODEL, _DEFAULT_SCALER)
-    except Exception as e:
-        app.logger.warning(f"ML model preload failed: {e}")
 
     # Register blueprints
     app.register_blueprint(auth_bp, url_prefix='/api')

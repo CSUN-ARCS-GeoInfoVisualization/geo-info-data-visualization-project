@@ -3,6 +3,7 @@
 import logging
 import os
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 
 import requests
@@ -11,6 +12,7 @@ from flask_jwt_extended import jwt_required, get_jwt
 
 from ml.inference import predict_from_features, predict_batch_features
 from data.sample_locations import SAMPLE_LOCATIONS
+from data.live_weather import get_weather
 
 research_bp = Blueprint('research', __name__)
 logger = logging.getLogger(__name__)
@@ -37,9 +39,7 @@ def get_boundaries(name):
     import json as json_mod
     with open(filepath) as f:
         data = json_mod.load(f)
-    resp = jsonify(data)
-    resp.headers['Cache-Control'] = 'public, max-age=86400'
-    return resp
+    return jsonify(data)
 
 
 def _get_centroid(coords):
@@ -69,9 +69,7 @@ def risk_by_zone(zone_type):
     cache_key = zone_type
     cached = _zone_risk_cache.get(cache_key)
     if cached and cached['expires'] > now:
-        resp = jsonify(cached['data'])
-        resp.headers['Cache-Control'] = 'public, max-age=900'
-        return resp
+        return jsonify(cached['data'])
 
     filepath = os.path.join(_BOUNDARIES_DIR, f'{zone_type}.json')
     if not os.path.exists(filepath):
@@ -81,12 +79,14 @@ def risk_by_zone(zone_type):
     with open(filepath) as f:
         geo = json_mod.load(f)
 
+    # Determine zone name field
     name_key = 'zip' if zone_type == 'zip-codes' else 'name' if zone_type == 'neighborhoods' else 'tract'
+
     features_list = geo.get('features', [])
     step = max(1, len(features_list) // 500)  # Max ~500 predictions
 
-    sampled_names = []
-    sampled_inputs = []  # (evi, air_temp_encoded, wind, humidity, elevation) tuples
+    # Collect sampled centroids
+    sampled = []  # (name, lat, lon)
     for i in range(0, len(features_list), step):
         f = features_list[i]
         name = f.get('properties', {}).get(name_key, str(i))
@@ -96,15 +96,34 @@ def risk_by_zone(zone_type):
         centroid = _get_centroid(coords)
         if not centroid:
             continue
-        lat, lon = centroid
-        evi              = _interpolate_feature(lat, lon, "evi")
-        air_temp_encoded = _interpolate_feature(lat, lon, "air_temp_encoded")
-        wind             = _interpolate_feature(lat, lon, "wind")
-        humidity         = _interpolate_feature(lat, lon, "humidity")
-        elev             = _interpolate_feature(lat, lon, "elevation")
+        sampled.append((name, centroid[0], centroid[1]))
+
+    # Fetch live weather for all centroids in parallel
+    live_weather: dict[str, dict | None] = {}
+    with ThreadPoolExecutor(max_workers=_WEATHER_WORKERS) as executor:
+        futures = {executor.submit(_fetch_live_weather, lat, lon): name for name, lat, lon in sampled}
+        for future in as_completed(futures, timeout=30):
+            live_weather[futures[future]] = future.result()
+
+    # Build feature vectors — live weather where available, interpolated fallback
+    sampled_names = []
+    sampled_inputs = []  # (evi, air_temp_encoded, wind, humidity, elevation) tuples
+    for name, lat, lon in sampled:
+        evi  = _interpolate_feature(lat, lon, "evi")
+        elev = _interpolate_feature(lat, lon, "elevation")
+        wx   = live_weather.get(name)
+        if wx:
+            air_temp_encoded = wx["air_temp_encoded"]
+            wind             = wx["wind"]
+            humidity         = wx["humidity"]
+        else:
+            air_temp_encoded = _interpolate_feature(lat, lon, "air_temp_encoded")
+            wind             = _interpolate_feature(lat, lon, "wind")
+            humidity         = _interpolate_feature(lat, lon, "humidity")
         sampled_names.append(name)
         sampled_inputs.append((evi, air_temp_encoded, wind, humidity, elev))
 
+    # Single batch prediction call (loads model once, predicts all at once via numpy)
     try:
         batch_results = predict_batch_features(sampled_inputs)
     except Exception as e:
@@ -116,6 +135,7 @@ def risk_by_zone(zone_type):
         for name, risk, (evi, air_temp_encoded, wind, humidity, elev) in zip(sampled_names, batch_results, sampled_inputs)
     }
 
+    # Propagate to all zones
     results = {}
     for i, f in enumerate(features_list):
         name = f.get('properties', {}).get(name_key, str(i))
@@ -201,7 +221,20 @@ def fire_data():
     })
 
 
+_WEATHER_WORKERS = 16
 
+
+def _fetch_live_weather(lat: float, lon: float) -> dict | None:
+    """Fetch live wind, humidity, and air_temp_encoded from Open-Meteo. Returns None on failure."""
+    try:
+        w = get_weather(lat, lon)
+        return {
+            "wind":             w["wind_speed"],
+            "humidity":         w["humidity"],
+            "air_temp_encoded": (w["temperature_celsius"] + 273.15) / 0.02,
+        }
+    except Exception:
+        return None
 
 
 def _interpolate_feature(lat: float, lon: float, feature_key: str) -> float:
@@ -309,14 +342,24 @@ def risk_by_county():
             and _county_cache["params"] == params_key):
         return jsonify(_county_cache["data"])
 
+    # Fetch live weather in parallel for all counties (skip if all weather fields are overridden)
+    need_live = air_temp_encoded_ov is None or wind_ov is None or humidity_ov is None
+    live_weather: dict[str, dict | None] = {}
+    if need_live:
+        with ThreadPoolExecutor(max_workers=_WEATHER_WORKERS) as executor:
+            futures = {executor.submit(_fetch_live_weather, lat, lon): name for name, lat, lon in CA_COUNTY_CENTROIDS}
+            for future in as_completed(futures, timeout=30):
+                live_weather[futures[future]] = future.result()
+
     names = []
     inputs = []
     for name, lat, lon in CA_COUNTY_CENTROIDS:
-        evi              = evi_ov              if evi_ov              is not None else _interpolate_feature(lat, lon, "evi")
-        air_temp_encoded = air_temp_encoded_ov if air_temp_encoded_ov is not None else _interpolate_feature(lat, lon, "air_temp_encoded")
-        wind             = wind_ov             if wind_ov             is not None else _interpolate_feature(lat, lon, "wind")
-        humidity         = humidity_ov         if humidity_ov         is not None else _interpolate_feature(lat, lon, "humidity")
-        elev             = elev_ov             if elev_ov             is not None else _interpolate_feature(lat, lon, "elevation")
+        evi  = evi_ov if evi_ov is not None else _interpolate_feature(lat, lon, "evi")
+        elev = elev_ov if elev_ov is not None else _interpolate_feature(lat, lon, "elevation")
+        wx   = live_weather.get(name)
+        air_temp_encoded = air_temp_encoded_ov if air_temp_encoded_ov is not None else (wx["air_temp_encoded"] if wx else _interpolate_feature(lat, lon, "air_temp_encoded"))
+        wind             = wind_ov             if wind_ov             is not None else (wx["wind"]             if wx else _interpolate_feature(lat, lon, "wind"))
+        humidity         = humidity_ov         if humidity_ov         is not None else (wx["humidity"]         if wx else _interpolate_feature(lat, lon, "humidity"))
         names.append(name)
         inputs.append((evi, air_temp_encoded, wind, humidity, elev))
     try:
