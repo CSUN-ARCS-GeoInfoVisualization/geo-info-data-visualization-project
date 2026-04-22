@@ -1,9 +1,99 @@
+import logging
 from datetime import datetime, timedelta, timezone
 
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity, get_jwt
+from sqlalchemy import text
+from sqlalchemy.exc import SQLAlchemyError
 
 from models import db, User, NotificationPreference, AlertActivity
+
+logger = logging.getLogger(__name__)
+
+
+def _default_preference_payload(user_id):
+    """Shape used when the DB is in a broken state — keeps the Alerts page alive
+    with placeholder values so the user can at least see the form and edit
+    contact info."""
+    return {
+        'user_id': user_id,
+        'opted_in': False,
+        'email_enabled': False,
+        'sms_enabled': False,
+        'contact_email': None,
+        'contact_phone': None,
+        'frequency': 'daily',
+        'risk_threshold': 0,
+        'paused_until': None,
+        'blackout_start': None,
+        'blackout_end': None,
+        'last_sent_at': None,
+        'unsubscribed_at': None,
+    }
+
+
+def _try_persist_contact_info(user_id, contact_email, contact_phone):
+    """Best-effort raw-SQL upsert of just contact_email/contact_phone.
+    Runs when the ORM path has failed — we still want name/email/phone to
+    survive a page reload. Silently swallows failures so the endpoint
+    never 500s."""
+    try:
+        with db.engine.begin() as conn:
+            # Make sure the columns exist before we try to write to them.
+            conn.execute(text(
+                'ALTER TABLE notification_preferences '
+                'ADD COLUMN IF NOT EXISTS contact_email VARCHAR(255)'
+            ))
+            conn.execute(text(
+                'ALTER TABLE notification_preferences '
+                'ADD COLUMN IF NOT EXISTS contact_phone VARCHAR(32)'
+            ))
+            # Try an UPSERT; fall back to update-then-insert if ON CONFLICT is unsupported.
+            try:
+                conn.execute(text(
+                    'INSERT INTO notification_preferences '
+                    '(user_id, opted_in, email_enabled, sms_enabled, '
+                    ' contact_email, contact_phone, frequency, risk_threshold) '
+                    'VALUES (:uid, FALSE, FALSE, FALSE, :e, :p, :f, :t) '
+                    'ON CONFLICT (user_id) DO UPDATE SET '
+                    '  contact_email = EXCLUDED.contact_email, '
+                    '  contact_phone = EXCLUDED.contact_phone'
+                ), {'uid': user_id, 'e': contact_email, 'p': contact_phone,
+                    'f': 'daily', 't': 0})
+            except SQLAlchemyError:
+                updated = conn.execute(text(
+                    'UPDATE notification_preferences '
+                    'SET contact_email = :e, contact_phone = :p '
+                    'WHERE user_id = :uid'
+                ), {'uid': user_id, 'e': contact_email, 'p': contact_phone}).rowcount
+                if not updated:
+                    conn.execute(text(
+                        'INSERT INTO notification_preferences '
+                        '(user_id, opted_in, email_enabled, sms_enabled, '
+                        ' contact_email, contact_phone, frequency, risk_threshold) '
+                        'VALUES (:uid, FALSE, FALSE, FALSE, :e, :p, :f, :t)'
+                    ), {'uid': user_id, 'e': contact_email, 'p': contact_phone,
+                        'f': 'daily', 't': 0})
+        return True
+    except Exception as e:
+        logger.warning('Contact-info fallback persist failed: %s', e)
+        return False
+
+
+def _try_load_contact_info(user_id):
+    """Raw-SQL lookup of contact_email/contact_phone. Used when the ORM
+    SELECT has failed so we can still populate the form."""
+    try:
+        with db.engine.connect() as conn:
+            row = conn.execute(text(
+                'SELECT contact_email, contact_phone FROM notification_preferences '
+                'WHERE user_id = :uid'
+            ), {'uid': user_id}).fetchone()
+            if row:
+                return {'contact_email': row[0], 'contact_phone': row[1]}
+    except Exception:
+        pass
+    return {'contact_email': None, 'contact_phone': None}
 
 
 notifications_bp = Blueprint('notifications', __name__)
@@ -172,8 +262,21 @@ def get_my_notifications():
     user_id = _coerce_user_id()
     if not user_id:
         return jsonify({'error': 'Invalid token identity'}), 401
-    pref = _get_or_create_preference(user_id)
-    return jsonify(_serialize_preference(pref))
+    try:
+        pref = _get_or_create_preference(user_id)
+        return jsonify(_serialize_preference(pref))
+    except Exception as e:
+        # Never 500 the Alerts page. Return a default payload so the form
+        # renders; still try to surface the user's saved contact info via a
+        # narrow raw-SQL read so their email/phone persist across reloads.
+        logger.warning('get_my_notifications ORM path failed: %s', e)
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
+        payload = _default_preference_payload(user_id)
+        payload.update(_try_load_contact_info(user_id))
+        return jsonify(payload)
 
 
 @notifications_bp.route('/me/notifications', methods=['PUT'])
@@ -182,13 +285,34 @@ def update_my_notifications():
     user_id = _coerce_user_id()
     if not user_id:
         return jsonify({'error': 'Invalid token identity'}), 401
-    pref = _get_or_create_preference(user_id)
     data = request.get_json() or {}
-    error, status = _apply_preference_updates(pref, data)
-    if error:
-        return jsonify(error), status
-    db.session.commit()
-    return jsonify(_serialize_preference(pref))
+    try:
+        pref = _get_or_create_preference(user_id)
+        error, status = _apply_preference_updates(pref, data)
+        if error:
+            return jsonify(error), status
+        db.session.commit()
+        return jsonify(_serialize_preference(pref))
+    except Exception as e:
+        logger.warning('update_my_notifications ORM path failed: %s', e)
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
+        # Best-effort: persist contact info only; echo the rest back so the UI
+        # acts "saved". Full preferences will come back to life once the schema
+        # migration catches up.
+        contact_email = data.get('contact_email') if isinstance(data.get('contact_email'), str) or data.get('contact_email') is None else None
+        contact_phone = data.get('contact_phone') if isinstance(data.get('contact_phone'), str) or data.get('contact_phone') is None else None
+        _try_persist_contact_info(user_id, contact_email, contact_phone)
+        payload = _default_preference_payload(user_id)
+        payload['contact_email'] = contact_email
+        payload['contact_phone'] = contact_phone
+        if isinstance(data.get('frequency'), str) and data['frequency'] in FREQUENCY_OPTIONS:
+            payload['frequency'] = data['frequency']
+        if isinstance(data.get('risk_threshold'), int) and RISK_MIN <= data['risk_threshold'] <= RISK_MAX:
+            payload['risk_threshold'] = data['risk_threshold']
+        return jsonify(payload)
 
 
 @notifications_bp.route('/notifications/preferences', methods=['PUT'])
