@@ -42,13 +42,16 @@ from sklearn.metrics import (
 )
 
 _DIR        = os.path.dirname(os.path.abspath(__file__))
-_DATA_PATH  = os.path.join(_DIR, "training_data", "california_2020.csv")
+# Prefer the KBDI-enriched dataset when present; fall back to the original.
+_DATA_PATH_KBDI = os.path.join(_DIR, "training_data", "california_2020_kbdi.csv")
+_DATA_PATH_BASE = os.path.join(_DIR, "training_data", "california_2020.csv")
+_DATA_PATH = _DATA_PATH_KBDI if os.path.exists(_DATA_PATH_KBDI) else _DATA_PATH_BASE
 _MODELS_DIR = os.path.join(_DIR, "models")
 _CHARTS_DIR = os.path.join(_DIR, "charts")
 _MODEL_OUT  = os.path.join(_MODELS_DIR, "wildfire_model_predictive.pkl")
 _SCALER_OUT = os.path.join(_MODELS_DIR, "wildfire_scaler_predictive.pkl")
 
-FEATURE_COLS = ["evi", "air_temp_encoded", "wind", "humidity", "elevation"]
+FEATURE_COLS = ["evi", "air_temp_encoded", "wind", "humidity", "elevation", "kbdi"]
 LABEL_COL    = "fire"
 
 RF_PARAMS = dict(
@@ -284,6 +287,7 @@ def _generate_summary(acc, prec, rec, f1, auc, cm, importances, n_samples, n_fir
         "evi":              "Spring EVI (May 1 composite) — vegetation density as pre-season fuel load",
         "wind":             "Wind speed in m/s — drives fire spread rate and direction",
         "elevation":        "Terrain elevation in meters — affects vegetation type and wind exposure",
+        "kbdi":             "Keetch-Byram Drought Index (0–800) — cumulative deep-soil moisture deficit over the prior 30 days; the operational drought index used by US fire weather offices",
     }
     for name, imp in sorted(zip(FEATURE_COLS, importances), key=lambda x: -x[1]):
         bar = "#" * int(imp * 20)
