@@ -44,7 +44,7 @@ function HistoricalFirePerimetersOverlay({
 
   // Load fire perimeter GeoJSON — runs once
   useEffect(() => {
-    fetch('/Data/California_Fire_Perimeters.geojson')
+    fetch('/Data/California_Fire_Perimeters_trimmed.geojson')
       .then(response => response.json())
       .then(data => {
         console.log('Loaded fire perimeters:', data.features.length);
@@ -239,7 +239,7 @@ function DINSDamageOverlay({
 
   // Load DINS data — runs once
   useEffect(() => {
-    fetch('/Data/POSTFIRE_MASTER_DATA.geojson')
+    fetch('/Data/POSTFIRE_MASTER_DATA_trimmed.geojson')
       .then(response => response.json())
       .then(data => {
         console.log('Loaded DINS structures:', data.features?.length || 0);
@@ -432,7 +432,7 @@ export function History() {
 
   useEffect(() => {
     // Load fire data to calculate stats
-    fetch('/Data/California_Fire_Perimeters.geojson')
+    fetch('/Data/California_Fire_Perimeters_trimmed.geojson')
       .then(response => response.json())
       .then(data => {
         setFireData(data); // Store full dataset
