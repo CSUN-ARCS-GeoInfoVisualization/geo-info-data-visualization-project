@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from "react";
+import { useState, useEffect } from "react";
 import {
   Map,
   Layers,
@@ -7,39 +7,24 @@ import {
   Droplets,
   Flame,
   AlertTriangle,
-  MapPin,
-  ZoomIn,
-  ZoomOut,
-  Locate,
-  Filter,
-  Info,
-  Eye,
-  EyeOff,
   Calendar,
   Clock,
   Search,
-  Pencil,
-  Hand,
-  MousePointer,
-  Circle,
-  Square,
-  Navigation,
-  Play,
-  Pause,
-  RotateCcw
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
-import { Badge } from "./ui/badge";
 import { Switch } from "./ui/switch";
 import { Slider } from "./ui/slider";
 import { Input } from "./ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
+import { TooltipProvider } from "./ui/tooltip";
 import { Alert, AlertDescription } from "./ui/alert";
-import { Map as GoogleMap, useMap } from '@vis.gl/react-google-maps';
-import { GoogleMapsOverlay } from '@deck.gl/google-maps';
-import { GeoJsonLayer } from '@deck.gl/layers';
+import { Map as GoogleMap } from '@vis.gl/react-google-maps';
+import DeckGL from '@deck.gl/react';
+import { LineLayer } from '@deck.gl/layers';
+import type { MapViewState, PickingInfo } from '@deck.gl/core';
+
+// ─── Types ────────────────────────────────────────────────────────────────────
 
 interface MapLayer {
   id: string;
@@ -50,166 +35,170 @@ interface MapLayer {
   color: string;
 }
 
-interface FireIncident {
-  id: string;
-  name: string;
-  status: "active" | "contained" | "controlled" | "out";
-  acres: number;
-  containment: number;
-  coordinates: { lat: number; lng: number };
-  startDate: string;
-  threatLevel: "low" | "moderate" | "high" | "extreme";
+interface WindPoint {
+  position: [number, number];
+  u: number;
+  v: number;
+  speed: number;
 }
 
-interface WeatherStation {
-  id: string;
-  name: string;
-  coordinates: { lat: number; lng: number };
-  temperature: number;
-  humidity: number;
-  windSpeed: number;
-  windDirection: number;
-  lastReading: string;
+interface WindArrow {
+  sourcePosition: [number, number, number];
+  targetPosition: [number, number, number];
+  color: [number, number, number, number];
+  label?: string;
 }
 
-// No mock data - will load from real sources
+// ─── Constants ────────────────────────────────────────────────────────────────
 
-// No mock data - will load from real sources
+const INITIAL_VIEW_STATE: MapViewState = {
+  latitude: 36.7,
+  longitude: -119.8,
+  zoom: 6,
+  maxZoom: 16,
+  pitch: 0,
+  bearing: 0,
+};
 
-// Fire Perimeters component removed - use History tab for perimeter data
-
-// Fire incident marker component
-function FireIncidentMarker({ incident, selected, onClick }: { incident: FireIncident; selected: boolean; onClick: () => void }) {
-  const map = useMap();
-  const [marker, setMarker] = useState<google.maps.Marker | null>(null);
-
-  useEffect(() => {
-    if (!map) return;
-
-    const getIncidentColor = () => {
-      if (incident.status === 'active') return '#dc2626';
-      if (incident.status === 'contained') return '#f97316';
-      return '#eab308';
-    };
-
-    const marker = new google.maps.Marker({
-      position: incident.coordinates,
-      map,
-      icon: {
-        path: google.maps.SymbolPath.CIRCLE,
-        scale: selected ? 12 : 10,
-        fillColor: getIncidentColor(),
-        fillOpacity: 1,
-        strokeColor: '#ffffff',
-        strokeWeight: 2
-      },
-      title: incident.name
-    });
-
-    marker.addListener('click', onClick);
-    setMarker(marker);
-
-    return () => {
-      marker.setMap(null);
-    };
-  }, [map, incident, selected, onClick]);
-
-  return null;
+function generateGrid(
+  latMin: number, latMax: number,
+  lngMin: number, lngMax: number,
+  step: number
+): [number, number][] {
+  const pts: [number, number][] = [];
+  for (let lat = latMin; lat <= latMax; lat += step)
+    for (let lng = lngMin; lng <= lngMax; lng += step)
+      pts.push([lng, lat]);
+  return pts;
 }
 
-// Weather station marker component
-function WeatherStationMarker({ station, selected, onClick }: { station: WeatherStation; selected: boolean; onClick: () => void }) {
-  const map = useMap();
-  const [marker, setMarker] = useState<google.maps.Marker | null>(null);
+const CA_GRID = generateGrid(32.5, 42, -124.5, -114, 0.75);
 
-  useEffect(() => {
-    if (!map) return;
+// ─── Wind helpers ─────────────────────────────────────────────────────────────
 
-    const marker = new google.maps.Marker({
-      position: station.coordinates,
-      map,
-      icon: {
-        path: google.maps.SymbolPath.CIRCLE,
-        scale: selected ? 8 : 6,
-        fillColor: '#3b82f6',
-        fillOpacity: 1,
-        strokeColor: '#ffffff',
-        strokeWeight: 2
-      },
-      title: station.name
-    });
-
-    marker.addListener('click', onClick);
-    setMarker(marker);
-
-    return () => {
-      marker.setMap(null);
-    };
-  }, [map, station, selected, onClick]);
-
-  return null;
+function speedToColor(speed: number, alpha: number): [number, number, number, number] {
+  const t = Math.min(speed / 15, 1);
+  return [
+    Math.round(255 * Math.min(t * 2, 1)),
+    Math.round(255 * (1 - Math.abs(t * 2 - 1))),
+    Math.round(255 * Math.max(1 - t * 2, 0)),
+    alpha,
+  ];
 }
+
+function buildWindArrows(windData: WindPoint[], alpha: number): WindArrow[] {
+  const scale = 0.18;
+  const arrows: WindArrow[] = [];
+  for (const p of windData) {
+    const [lng, lat] = p.position;
+    const dx = p.u * scale;
+    const dy = p.v * scale;
+    const color = speedToColor(p.speed, alpha);
+    const tipLng = lng + dx;
+    const tipLat = lat + dy;
+    arrows.push({ sourcePosition: [lng, lat, 0], targetPosition: [tipLng, tipLat, 0], color, label: `${p.speed.toFixed(1)} m/s` });
+    const headLen = Math.max(Math.sqrt(dx * dx + dy * dy) * 0.35, 0.04);
+    const backAngle = Math.atan2(dy, dx) + Math.PI;
+    for (const spread of [-0.45, 0.45]) {
+      arrows.push({
+        sourcePosition: [tipLng, tipLat, 0],
+        targetPosition: [tipLng + Math.cos(backAngle + spread) * headLen, tipLat + Math.sin(backAngle + spread) * headLen, 0],
+        color,
+      });
+    }
+  }
+  return arrows;
+}
+
+function getTooltip({ object }: PickingInfo) {
+  const arrow = object as WindArrow | null;
+  return arrow?.label ? `Wind: ${arrow.label}` : null;
+}
+
+// ─── RiskMap ──────────────────────────────────────────────────────────────────
 
 export function RiskMap() {
-  const [selectedIncident, setSelectedIncident] = useState<string | null>(null);
-  const [selectedStation, setSelectedStation] = useState<string | null>(null);
   const [mapTypeId, setMapTypeId] = useState<'roadmap' | 'satellite' | 'hybrid' | 'terrain'>('satellite');
-  const [timeframe, setTimeframe] = useState<"current" | "forecast-6h" | "forecast-24h">("current");
-  const [searchQuery, setSearchQuery] = useState("");
+  const [timeframe, setTimeframe] = useState<'current' | 'forecast-6h' | 'forecast-24h'>('current');
+  const [searchQuery, setSearchQuery] = useState('');
+  const [windData, setWindData] = useState<WindPoint[]>([]);
 
   const [layers, setLayers] = useState<MapLayer[]>([
-    { id: "fire-incidents", name: "Fire Incidents", icon: Flame, enabled: true, opacity: 100, color: "red" },
-    { id: "weather-stations", name: "Weather Stations", icon: Thermometer, enabled: true, opacity: 100, color: "blue" },
-    { id: "temperature", name: "Temperature", icon: Thermometer, enabled: false, opacity: 50, color: "orange" },
-    { id: "humidity", name: "Humidity", icon: Droplets, enabled: false, opacity: 50, color: "blue" },
-    { id: "wind", name: "Wind Patterns", icon: Wind, enabled: false, opacity: 50, color: "purple" },
+    { id: 'wind', name: 'Wind Arrows', icon: Wind, enabled: true, opacity: 80, color: 'purple' },
+    { id: 'weather-stations', name: 'Weather Stations', icon: Thermometer, enabled: false, opacity: 100, color: 'blue' },
+    { id: 'temperature', name: 'Temperature', icon: Thermometer, enabled: false, opacity: 50, color: 'orange' },
+    { id: 'humidity', name: 'Humidity', icon: Droplets, enabled: false, opacity: 50, color: 'blue' },
   ]);
 
-  const toggleLayer = (layerId: string) => {
-    setLayers(layers.map(layer =>
-      layer.id === layerId ? { ...layer, enabled: !layer.enabled } : layer
-    ));
-  };
+  const toggleLayer = (id: string) =>
+    setLayers(ls => ls.map(l => l.id === id ? { ...l, enabled: !l.enabled } : l));
 
-  const updateLayerOpacity = (layerId: string, opacity: number) => {
-    setLayers(layers.map(layer =>
-      layer.id === layerId ? { ...layer, opacity } : layer
-    ));
-  };
+  const updateOpacity = (id: string, opacity: number) =>
+    setLayers(ls => ls.map(l => l.id === id ? { ...l, opacity } : l));
 
-  const selectedIncidentData = null; // Will be populated with real data
-  const selectedStationData = null; // Will be populated with real data
+  const windLayer = layers.find(l => l.id === 'wind')!;
+  const windAlpha = Math.round((windLayer.opacity / 100) * 255);
+
+  useEffect(() => {
+    if (!windLayer.enabled) { setWindData([]); return; }
+    const lats = CA_GRID.map(p => p[1]).join(',');
+    const lngs = CA_GRID.map(p => p[0]).join(',');
+    fetch(
+      `https://api.open-meteo.com/v1/forecast?latitude=${lats}&longitude=${lngs}` +
+      `&current=wind_speed_10m,wind_direction_10m&wind_speed_unit=ms&timeformat=unixtime`
+    )
+      .then(r => r.json())
+      .then((res: any) => {
+        const arr: any[] = Array.isArray(res) ? res : [res];
+        setWindData(
+          arr.map((d, i) => {
+            const speed = d?.current?.wind_speed_10m ?? 0;
+            const rad = ((d?.current?.wind_direction_10m ?? 0) * Math.PI) / 180;
+            return { position: CA_GRID[i], u: -speed * Math.sin(rad), v: -speed * Math.cos(rad), speed };
+          }).filter(p => p.speed > 0)
+        );
+      })
+      .catch(console.error);
+  }, [windLayer.enabled]);
+
+  // Exactly like app.tsx — build layers array, pass to DeckGL
+  const deckLayers = [
+    ...(windLayer.enabled && windData.length > 0
+      ? [new LineLayer<WindArrow>({
+          id: 'wind-arrows',
+          data: buildWindArrows(windData, windAlpha),
+          opacity: 0.9,
+          getSourcePosition: d => d.sourcePosition,
+          getTargetPosition: d => d.targetPosition,
+          getColor: d => d.color,
+          getWidth: 2,
+          widthUnits: 'pixels',
+          pickable: true,
+        })]
+      : []),
+  ];
 
   return (
     <TooltipProvider>
       <div className="space-y-6">
+
         {/* Header */}
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
           <div>
             <h1 className="text-3xl font-bold mb-2">Risk Assessment Map</h1>
-            <p className="text-muted-foreground">
-              Real-time wildfire risk zones and active incident monitoring
-            </p>
+            <p className="text-muted-foreground">Real-time wildfire risk zones and active incident monitoring</p>
           </div>
           <div className="flex gap-2">
-            <Select value={timeframe} onValueChange={(value) => setTimeframe(value as any)}>
-              <SelectTrigger className="w-40">
-                <SelectValue />
-              </SelectTrigger>
+            <Select value={timeframe} onValueChange={v => setTimeframe(v as any)}>
+              <SelectTrigger className="w-40"><SelectValue /></SelectTrigger>
               <SelectContent>
                 <SelectItem value="current">Current</SelectItem>
                 <SelectItem value="forecast-6h">6-Hour Forecast</SelectItem>
                 <SelectItem value="forecast-24h">24-Hour Forecast</SelectItem>
               </SelectContent>
             </Select>
-            <Button variant="outline">
-              <Calendar className="h-4 w-4 mr-2" />
-              Historical
-            </Button>
-            <Button>
-              <AlertTriangle className="h-4 w-4 mr-2" />
-              Alerts
-            </Button>
+            <Button variant="outline"><Calendar className="h-4 w-4 mr-2" />Historical</Button>
+            <Button><AlertTriangle className="h-4 w-4 mr-2" />Alerts</Button>
           </div>
         </div>
 
@@ -224,32 +213,27 @@ export function RiskMap() {
 
         {/* Main Content */}
         <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
-          {/* Map Container */}
+
+          {/* Map */}
           <div className="lg:col-span-3">
             <Card>
               <CardHeader>
                 <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
                   <CardTitle className="flex items-center gap-2">
-                    <Map className="h-5 w-5" />
-                    Interactive Risk Map
+                    <Map className="h-5 w-5" />Interactive Risk Map
                   </CardTitle>
                   <div className="flex flex-wrap items-center gap-2">
-                    {/* Search */}
                     <div className="relative">
                       <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
                       <Input
                         placeholder="Search location..."
                         value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
+                        onChange={e => setSearchQuery(e.target.value)}
                         className="w-48 pl-8"
                       />
                     </div>
-
-                    {/* Map Type Selector */}
-                    <Select value={mapTypeId} onValueChange={(value) => setMapTypeId(value as any)}>
-                      <SelectTrigger className="w-32">
-                        <SelectValue />
-                      </SelectTrigger>
+                    <Select value={mapTypeId} onValueChange={v => setMapTypeId(v as any)}>
+                      <SelectTrigger className="w-32"><SelectValue /></SelectTrigger>
                       <SelectContent>
                         <SelectItem value="satellite">Satellite</SelectItem>
                         <SelectItem value="terrain">Terrain</SelectItem>
@@ -261,41 +245,55 @@ export function RiskMap() {
                 </div>
               </CardHeader>
               <CardContent>
-                {/* Google Map */}
-                <div className="w-full h-96 rounded-lg overflow-hidden border relative">
-                  <GoogleMap
-                    style={{ width: '100%', height: '100%' }}
-                    defaultCenter={{ lat: 36.7, lng: -119.8 }}
-                    defaultZoom={7}
-                    mapTypeId={mapTypeId}
-                    gestureHandling="greedy"
-                    disableDefaultUI={false}
+
+                {/* DeckGL — same structure as app.tsx */}
+                <div className="w-full h-96 rounded-lg overflow-hidden border">
+                  <DeckGL
+                    initialViewState={INITIAL_VIEW_STATE}
+                    controller={true}
+                    layers={deckLayers}
+                    pickingRadius={5}
+                    getTooltip={getTooltip}
+                    parameters={{
+                      blendColorOperation: 'add',
+                      blendColorSrcFactor: 'src-alpha',
+                      blendColorDstFactor: 'one',
+                      blendAlphaOperation: 'add',
+                      blendAlphaSrcFactor: 'one-minus-dst-alpha',
+                      blendAlphaDstFactor: 'one',
+                    }}
+                    style={{ position: 'relative', width: '100%', height: '100%' }}
                   >
-                    {/* Fire Perimeters removed - use History tab for perimeter data */}
-
-                    {/* Fire Incidents - removed mock data */}
-                    {/* Add real fire incident data source here */}
-
-                    {/* Weather Stations - removed mock data */}
-                    {/* Add real weather station data source here */}
-                  </GoogleMap>
+                    <GoogleMap
+                      style={{ width: '100%', height: '100%' }}
+                      defaultCenter={{ lat: INITIAL_VIEW_STATE.latitude, lng: INITIAL_VIEW_STATE.longitude }}
+                      defaultZoom={INITIAL_VIEW_STATE.zoom}
+                      mapTypeId={mapTypeId}
+                      gestureHandling="none"
+                      disableDefaultUI={true}
+                    />
+                  </DeckGL>
                 </div>
 
-                {/* Map Legend */}
+                {/* Legend */}
                 <div className="mt-4 bg-gray-50 rounded-lg p-4">
-                  <h4 className="font-semibold text-sm mb-3">Map Legend</h4>
-                  <div className="grid grid-cols-2 md:grid-cols-3 gap-3 text-sm">
+                  <h4 className="font-semibold text-sm mb-3">Wind Speed Legend</h4>
+                  <div className="grid grid-cols-3 gap-3 text-sm">
                     <div className="flex items-center gap-2">
-                      <div className="w-4 h-4 bg-red-600 rounded-full border-2 border-white"></div>
-                      <span>Active Fire</span>
+                      <div className="h-0.5 w-8 rounded" style={{ backgroundColor: 'rgb(0,128,255)' }} />
+                      <span>Calm (&lt;3 m/s)</span>
                     </div>
                     <div className="flex items-center gap-2">
-                      <div className="w-3 h-3 bg-blue-500 border-2 border-white rounded-full"></div>
-                      <span>Weather Station</span>
+                      <div className="h-0.5 w-8 rounded" style={{ backgroundColor: 'rgb(255,255,0)' }} />
+                      <span>Moderate (~7 m/s)</span>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <div className="h-0.5 w-8 rounded" style={{ backgroundColor: 'rgb(255,0,0)' }} />
+                      <span>Strong (15+ m/s)</span>
                     </div>
                   </div>
-                  <p className="text-xs text-muted-foreground mt-3">
-                    💡 Real-time risk assessment data. View historical fire perimeters in the History tab.
+                  <p className="text-xs text-muted-foreground mt-2">
+                    💡 Arrows show wind direction and speed. Hover for m/s value. Data: Open-Meteo (live).
                   </p>
                 </div>
               </CardContent>
@@ -304,16 +302,14 @@ export function RiskMap() {
 
           {/* Sidebar */}
           <div className="space-y-4">
-            {/* Map Layers */}
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center gap-2">
-                  <Layers className="h-5 w-5" />
-                  Map Layers
+                  <Layers className="h-5 w-5" />Map Layers
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
-                {layers.map((layer) => {
+                {layers.map(layer => {
                   const Icon = layer.icon;
                   return (
                     <div key={layer.id} className="space-y-2">
@@ -322,10 +318,7 @@ export function RiskMap() {
                           <Icon className="h-4 w-4" />
                           <span className="text-sm">{layer.name}</span>
                         </div>
-                        <Switch
-                          checked={layer.enabled}
-                          onCheckedChange={() => toggleLayer(layer.id)}
-                        />
+                        <Switch checked={layer.enabled} onCheckedChange={() => toggleLayer(layer.id)} />
                       </div>
                       {layer.enabled && (
                         <div className="ml-6">
@@ -333,10 +326,8 @@ export function RiskMap() {
                             <span>Opacity</span>
                             <Slider
                               value={[layer.opacity]}
-                              onValueChange={(value) => updateLayerOpacity(layer.id, value[0])}
-                              max={100}
-                              step={10}
-                              className="flex-1"
+                              onValueChange={v => updateOpacity(layer.id, v[0])}
+                              max={100} step={10} className="flex-1"
                             />
                             <span>{layer.opacity}%</span>
                           </div>
@@ -347,57 +338,6 @@ export function RiskMap() {
                 })}
               </CardContent>
             </Card>
-
-            {/* Selected Item Details */}
-            {(selectedIncidentData || selectedStationData) && (
-              <Card>
-                <CardHeader>
-                  <CardTitle className="flex items-center gap-2">
-                    <Info className="h-5 w-5" />
-                    Details
-                  </CardTitle>
-                </CardHeader>
-                <CardContent>
-                  {selectedIncidentData && (
-                    <div className="space-y-2">
-                      <h3 className="font-medium">{selectedIncidentData.name}</h3>
-                      <Badge variant={selectedIncidentData.status === "active" ? "destructive" : "secondary"}>
-                        {selectedIncidentData.status}
-                      </Badge>
-                      <div className="text-sm space-y-1">
-                        <div>Size: {selectedIncidentData.acres.toLocaleString()} acres</div>
-                        <div>Containment: {selectedIncidentData.containment}%</div>
-                        <div>Started: {selectedIncidentData.startDate}</div>
-                        <div>Threat: {selectedIncidentData.threatLevel}</div>
-                      </div>
-                    </div>
-                  )}
-
-                  {selectedStationData && (
-                    <div className="space-y-2">
-                      <h3 className="font-medium">{selectedStationData.name}</h3>
-                      <div className="grid grid-cols-2 gap-2 text-sm">
-                        <div className="flex items-center gap-1">
-                          <Thermometer className="h-3 w-3" />
-                          {selectedStationData.temperature}°F
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <Droplets className="h-3 w-3" />
-                          {selectedStationData.humidity}%
-                        </div>
-                        <div className="flex items-center gap-1">
-                          <Wind className="h-3 w-3" />
-                          {selectedStationData.windSpeed} mph
-                        </div>
-                        <div className="text-xs">
-                          Dir: {selectedStationData.windDirection}°
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            )}
           </div>
         </div>
 
@@ -409,12 +349,11 @@ export function RiskMap() {
                 <AlertTriangle className="h-5 w-5 text-red-500" />
                 <div>
                   <div className="text-2xl font-bold">-</div>
-                  <div className="text-sm text-muted-foreground">Active Fires (Load Data)</div>
+                  <div className="text-sm text-muted-foreground">Active Fires</div>
                 </div>
               </div>
             </CardContent>
           </Card>
-
           <Card>
             <CardContent className="pt-6">
               <div className="flex items-center gap-2">
@@ -426,19 +365,17 @@ export function RiskMap() {
               </div>
             </CardContent>
           </Card>
-
           <Card>
             <CardContent className="pt-6">
               <div className="flex items-center gap-2">
                 <Thermometer className="h-5 w-5 text-blue-500" />
                 <div>
-                  <div className="text-2xl font-bold">-</div>
-                  <div className="text-sm text-muted-foreground">Weather Stations</div>
+                  <div className="text-2xl font-bold">{windData.length > 0 ? windData.length : '-'}</div>
+                  <div className="text-sm text-muted-foreground">Wind Points</div>
                 </div>
               </div>
             </CardContent>
           </Card>
-
           <Card>
             <CardContent className="pt-6">
               <div className="flex items-center gap-2">
@@ -451,6 +388,7 @@ export function RiskMap() {
             </CardContent>
           </Card>
         </div>
+
       </div>
     </TooltipProvider>
   );
