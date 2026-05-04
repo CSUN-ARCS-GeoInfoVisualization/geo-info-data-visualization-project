@@ -107,6 +107,30 @@ export default function App() {
     if (isAuthenticated) fetchUserRole();
   }, [isAuthenticated, fetchUserRole]);
 
+  // Prefetch the other lazy page chunks during browser idle time so navigating
+  // from Dashboard to Risk Map / History / Research is instant — the chunks
+  // are already in the browser cache by the time the user clicks a nav link.
+  // Non-blocking: dashboard's own initial render is unaffected.
+  useEffect(() => {
+    if (!isAuthenticated) return;
+    const idle: any =
+      (window as any).requestIdleCallback ||
+      ((cb: () => void) => setTimeout(cb, 1500));
+    const handle = idle(() => {
+      import("./components/risk-map");
+      import("./components/history");
+      import("./components/research-page");
+      import("./components/fire-news");
+      import("./components/evacuation-routes");
+      import("./components/notification-settings");
+      import("./components/settings-page");
+    });
+    return () => {
+      const cancel = (window as any).cancelIdleCallback;
+      if (cancel && handle) cancel(handle);
+    };
+  }, [isAuthenticated]);
+
   const extraNavLinks = useMemo(() => {
     const links: { page: Page; label: string }[] = [
       { page: "research", label: "Research" },
