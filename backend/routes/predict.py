@@ -1,5 +1,6 @@
 import logging
 import math
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 import requests as http_requests
 from flask import Blueprint, request, jsonify
@@ -43,35 +44,56 @@ def _validate_coords(lat: float, lon: float):
         raise ValueError(f"lon {lon} out of range [-180, 180]")
 
 
+# Per-coordinate prediction cache. Keyed on rounded lat/lon (~110m granularity)
+# so a researcher's saved location and an idle dashboard polling identical
+# coords share the same expensive 3× live-fetch + ML call. 5-min TTL keeps
+# weather fresh enough for risk decisions.
+_PREDICT_CACHE: dict = {}
+_PREDICT_TTL = 300
+
+
 def _run(lat: float, lon: float) -> dict:
+    cache_key = (round(lat, 3), round(lon, 3))
+    now = time.time()
+    cached = _PREDICT_CACHE.get(cache_key)
+    if cached and cached["expires"] > now:
+        return cached["data"]
+
     loc = _nearest_location(lat, lon)
 
-    try:
-        weather = get_weather(lat, lon)
-        wind             = weather["wind_speed"]
-        humidity         = weather["humidity"]
-        # air_temp_encoded: air temperature as (°C + 273.15) / 0.02 — NOT MODIS LST.
-        air_temp_encoded = (weather["temperature_celsius"] + 273.15) / 0.02
-        weather_source   = "live"
-    except Exception:
-        wind             = loc["wind"]
-        humidity         = loc["humidity"]
-        air_temp_encoded = loc["air_temp_encoded"]
-        weather_source   = "fallback"
+    # Fire weather + elevation + EVI in PARALLEL instead of sequential.
+    # Was: 3 sequential HTTP calls = ~1.5-4s. Now: bounded by the slowest = ~1s.
+    with ThreadPoolExecutor(max_workers=3) as ex:
+        f_weather = ex.submit(get_weather, lat, lon)
+        f_elev    = ex.submit(get_elevation, lat, lon)
+        f_evi     = ex.submit(get_evi, lat, lon)
 
-    try:
-        elevation = get_elevation(lat, lon)
-        elevation_source = "live"
-    except Exception:
-        elevation = loc["elevation"]
-        elevation_source = "fallback"
+        try:
+            weather          = f_weather.result(timeout=8)
+            wind             = weather["wind_speed"]
+            humidity         = weather["humidity"]
+            # air_temp_encoded: air temperature as (°C + 273.15) / 0.02 — NOT MODIS LST.
+            air_temp_encoded = (weather["temperature_celsius"] + 273.15) / 0.02
+            weather_source   = "live"
+        except Exception:
+            wind             = loc["wind"]
+            humidity         = loc["humidity"]
+            air_temp_encoded = loc["air_temp_encoded"]
+            weather_source   = "fallback"
 
-    try:
-        evi = get_evi(lat, lon)
-        evi_source = "live"
-    except Exception:
-        evi = loc["evi"]
-        evi_source = "fallback"
+        try:
+            elevation = f_elev.result(timeout=8)
+            elevation_source = "live"
+        except Exception:
+            elevation = loc["elevation"]
+            elevation_source = "fallback"
+
+        try:
+            evi = f_evi.result(timeout=8)
+            evi_source = "live"
+        except Exception:
+            evi = loc["evi"]
+            evi_source = "fallback"
 
     result = predict_from_features(
         evi=evi,
@@ -80,7 +102,7 @@ def _run(lat: float, lon: float) -> dict:
         humidity=humidity,
         elevation=elevation,
     )
-    return {
+    payload = {
         "prediction": {
             "risk_level": result["label"],
             "risk_probability": result["risk_score"],
@@ -108,6 +130,8 @@ def _run(lat: float, lon: float) -> dict:
             "elevation_source": elevation_source,
         },
     }
+    _PREDICT_CACHE[cache_key] = {"data": payload, "expires": now + _PREDICT_TTL}
+    return payload
 
 
 @predict_bp.route('/predict', methods=['POST'])
