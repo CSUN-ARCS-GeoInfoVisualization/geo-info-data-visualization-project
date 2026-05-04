@@ -52,6 +52,17 @@
     build: {
       target: 'esnext',
       outDir: 'build',
+      // Split heavy third-party libs into their own long-cacheable chunks so a
+      // page change only re-downloads app code, not React + map + chart libs.
+      rollupOptions: {
+        output: {
+          manualChunks: {
+            'react-vendor': ['react', 'react-dom'],
+            'maps-vendor': ['@vis.gl/react-google-maps', '@deck.gl/google-maps', '@deck.gl/core', '@deck.gl/layers', '@deck.gl/aggregation-layers'],
+            'charts-vendor': ['recharts'],
+          },
+        },
+      },
     },
     server: {
       port: 3000,

@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from "react";
+import { useState, useEffect, useMemo, useCallback, lazy, Suspense } from "react";
 import { Bell, Menu, Settings, Search, LogOut } from "lucide-react";
 import { GooeyNav } from "./components/GooeyNav";
 import { FireScopeBrandMark } from "./components/firescope-brand";
@@ -13,18 +13,25 @@ import {
   DropdownMenuTrigger,
 } from "./components/ui/dropdown-menu";
 import { Dashboard } from "./components/dashboard";
-import { EvacuationRoutes } from "./components/evacuation-routes";
-import { FireNews } from "./components/fire-news";
-import { RiskMap } from "./components/risk-map";
 import { APIProvider } from '@vis.gl/react-google-maps';
 import { AuthPage } from "./components/auth-page";
-import { NotificationSettings } from "./components/notification-settings";
-import { SettingsPage } from "./components/settings-page";
-import { History } from "./components/history";
-import { AdminPage } from "./components/admin-page";
-import { ResearchPage } from "./components/research-page";
 import { Toaster } from "sonner";
 import { apiFetch } from "./services/api";
+
+// Lazy-load every non-default page so the initial bundle ships only the Dashboard.
+// Each chunk is downloaded on first navigation and then cached by the browser.
+const EvacuationRoutes = lazy(() => import("./components/evacuation-routes").then(m => ({ default: m.EvacuationRoutes })));
+const FireNews = lazy(() => import("./components/fire-news").then(m => ({ default: m.FireNews })));
+const RiskMap = lazy(() => import("./components/risk-map").then(m => ({ default: m.RiskMap })));
+const NotificationSettings = lazy(() => import("./components/notification-settings").then(m => ({ default: m.NotificationSettings })));
+const SettingsPage = lazy(() => import("./components/settings-page").then(m => ({ default: m.SettingsPage })));
+const History = lazy(() => import("./components/history").then(m => ({ default: m.History })));
+const AdminPage = lazy(() => import("./components/admin-page").then(m => ({ default: m.AdminPage })));
+const ResearchPage = lazy(() => import("./components/research-page").then(m => ({ default: m.ResearchPage })));
+
+const PageFallback = () => (
+  <div className="flex items-center justify-center py-24 text-sm text-muted-foreground">Loading…</div>
+);
 
 type Page =
   | "dashboard"
@@ -242,17 +249,19 @@ export default function App() {
 
         {/* Main Content */}
         <main className="container mx-auto px-4 sm:px-6 lg:px-8 py-8">
-          {currentPage === "dashboard" && <Dashboard onAddLocation={() => goToSettings("locations")} />}
-          {currentPage === "evacuation-routes" && <EvacuationRoutes />}
-          {currentPage === "news" && <FireNews />}
-          {currentPage === "risk-map" && <RiskMap />}
-          {currentPage === "alerts" && (
-            <NotificationSettings token={authToken as string} />
-          )}
-          {currentPage === "history" && <History />}
-          {currentPage === "research" && <ResearchPage userRole={userRole} />}
-          {currentPage === "admin" && userRole === "Admin" && <AdminPage />}
-          {currentPage === "settings" && <SettingsPage key={settingsTab} defaultTab={settingsTab} />}
+          <Suspense fallback={<PageFallback />}>
+            {currentPage === "dashboard" && <Dashboard onAddLocation={() => goToSettings("locations")} />}
+            {currentPage === "evacuation-routes" && <EvacuationRoutes />}
+            {currentPage === "news" && <FireNews />}
+            {currentPage === "risk-map" && <RiskMap />}
+            {currentPage === "alerts" && (
+              <NotificationSettings token={authToken as string} />
+            )}
+            {currentPage === "history" && <History />}
+            {currentPage === "research" && <ResearchPage userRole={userRole} />}
+            {currentPage === "admin" && userRole === "Admin" && <AdminPage />}
+            {currentPage === "settings" && <SettingsPage key={settingsTab} defaultTab={settingsTab} />}
+          </Suspense>
         </main>
 
         {/* Footer */}

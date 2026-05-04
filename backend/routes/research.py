@@ -33,7 +33,12 @@ FIRMS_BASE = 'https://firms.modaps.eosdis.nasa.gov/api/area/csv'
 
 @research_bp.route('/boundaries/<name>', methods=['GET'])
 def get_boundaries(name):
-    """Serve simplified GeoJSON boundary files (public, no auth)."""
+    """Serve simplified GeoJSON boundary files (public, no auth).
+
+    Boundary files only change on redeploy, so we send a 24h browser cache.
+    Cuts a 1-3MB re-download to a 304/from-cache hit when users navigate
+    between pages or toggle overlays.
+    """
     if name not in _VALID_BOUNDARIES:
         return jsonify({'error': 'Invalid boundary type'}), 404
     filepath = os.path.join(_BOUNDARIES_DIR, f'{name}.json')
@@ -42,7 +47,9 @@ def get_boundaries(name):
     import json as json_mod
     with open(filepath) as f:
         data = json_mod.load(f)
-    return jsonify(data)
+    resp = jsonify(data)
+    resp.headers['Cache-Control'] = 'public, max-age=86400, stale-while-revalidate=604800'
+    return resp
 
 
 def _get_centroid(coords):

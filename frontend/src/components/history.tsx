@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useMemo, useCallback, memo } from "react";
+import { loadGeoJson } from "../lib/geojsonCache";
 import {
   Calendar,
   Filter,
@@ -267,9 +268,8 @@ function DINSDamageOverlay({
 
   // Load DINS data — runs once. Static GeoJSON served by Netlify CDN.
   useEffect(() => {
-    fetch('/Data/POSTFIRE_MASTER_DATA_trimmed.geojson')
-      .then(response => response.json())
-      .then(data => {
+    loadGeoJson('/Data/POSTFIRE_MASTER_DATA_trimmed.geojson')
+      .then((data: any) => {
         console.log('Loaded DINS structures:', data.features?.length || 0);
         setDinsData(data.features || []);
       })
@@ -506,9 +506,8 @@ export function History() {
   //    backend dependency, no API year-clamp guesswork.
   useEffect(() => {
     setLoadingYears(true);
-    fetch('/Data/California_Fire_Perimeters_trimmed.geojson')
-      .then((r) => r.json())
-      .then((data) => {
+    loadGeoJson('/Data/California_Fire_Perimeters_trimmed.geojson')
+      .then((data: any) => {
         const feats: any[] = Array.isArray(data?.features) ? data.features : [];
         setAllFeatures(feats);
         const years = Array.from(
