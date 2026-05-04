@@ -21,6 +21,11 @@ export async function apiFetch(path: string, options: RequestInit = {}): Promise
     if (pending) return pending.then((r) => r.clone());
   }
 
+  // Snapshot whether the user actually had a token at request-time. The 401
+  // auto-reload should ONLY fire on a real session expiry — without this,
+  // guests (no token) get reloaded on every auth-gated 401 = refresh loop.
+  const hadToken = !!localStorage.getItem("token");
+
   const exec = fetch(`${API_URL}${path}`, {
     ...options,
     headers: {
@@ -29,7 +34,7 @@ export async function apiFetch(path: string, options: RequestInit = {}): Promise
       ...(options.headers as Record<string, string> || {}),
     },
   }).then((res) => {
-    if (res.status === 401) {
+    if (res.status === 401 && hadToken) {
       localStorage.removeItem("token");
       window.location.reload();
     }

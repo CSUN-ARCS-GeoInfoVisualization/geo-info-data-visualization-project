@@ -84,14 +84,19 @@ const NAV_LINKS: { page: Page; label: string }[] = [
   { page: "history", label: "History" },
 ];
 
+const GUEST_FLAG_KEY = "firescope.guest";
+
 export default function App() {
   const [currentPage, setCurrentPage] = useState<Page>("dashboard");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [authToken, setAuthToken] = useState<string | null>(() => localStorage.getItem("token"));
+  const [isGuest, setIsGuest] = useState<boolean>(() => localStorage.getItem(GUEST_FLAG_KEY) === "1");
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("profile");
   const [userRole, setUserRole] = useState<string | null>(null);
   const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string;
   const isAuthenticated = Boolean(authToken);
+  // Either a real session or a guest pass-through unlocks the app.
+  const canAccessApp = isAuthenticated || isGuest;
 
   const fetchUserRole = useCallback(async () => {
     try {
@@ -104,6 +109,7 @@ export default function App() {
   }, []);
 
   useEffect(() => {
+    // Only authenticated users have a server-side role to fetch; guests skip this.
     if (isAuthenticated) fetchUserRole();
   }, [isAuthenticated, fetchUserRole]);
 
@@ -112,7 +118,7 @@ export default function App() {
   // are already in the browser cache by the time the user clicks a nav link.
   // Non-blocking: dashboard's own initial render is unaffected.
   useEffect(() => {
-    if (!isAuthenticated) return;
+    if (!canAccessApp) return;
     const idle: any =
       (window as any).requestIdleCallback ||
       ((cb: () => void) => setTimeout(cb, 1500));
@@ -122,14 +128,17 @@ export default function App() {
       import("./components/research-page");
       import("./components/fire-news");
       import("./components/evacuation-routes");
-      import("./components/notification-settings");
-      import("./components/settings-page");
+      // Auth-required pages — only worth prefetching for real accounts.
+      if (isAuthenticated) {
+        import("./components/notification-settings");
+        import("./components/settings-page");
+      }
     });
     return () => {
       const cancel = (window as any).cancelIdleCallback;
       if (cancel && handle) cancel(handle);
     };
-  }, [isAuthenticated]);
+  }, [canAccessApp, isAuthenticated]);
 
   const extraNavLinks = useMemo(() => {
     const links: { page: Page; label: string }[] = [
@@ -139,14 +148,33 @@ export default function App() {
     return links;
   }, [userRole]);
 
+  // Guests do not have a server account, so the alerts/settings pages would
+  // 401 on every save. Hide them from the nav rather than offer broken links.
+  const visibleNavLinks = useMemo(
+    () => isGuest ? NAV_LINKS.filter((l) => l.page !== "alerts") : NAV_LINKS,
+    [isGuest]
+  );
+
   const onAuthSuccess = () => {
-    setAuthToken(localStorage.getItem("token"));
-    fetchUserRole();
+    const token = localStorage.getItem("token");
+    if (token) {
+      // Real login: clear any stale guest pass-through, hydrate auth state.
+      localStorage.removeItem(GUEST_FLAG_KEY);
+      setIsGuest(false);
+      setAuthToken(token);
+      fetchUserRole();
+    } else {
+      // "Continue without login" — no token in localStorage. Flip guest mode on.
+      localStorage.setItem(GUEST_FLAG_KEY, "1");
+      setIsGuest(true);
+    }
   };
 
   const onSignOut = () => {
     localStorage.removeItem("token");
+    localStorage.removeItem(GUEST_FLAG_KEY);
     setAuthToken(null);
+    setIsGuest(false);
     setUserRole(null);
   };
 
@@ -160,8 +188,8 @@ export default function App() {
     setCurrentPage("settings");
   };
 
-  // Show auth page if not authenticated
-  if (!isAuthenticated) {
+  // Show auth page only if user has neither a real session nor opted into guest mode.
+  if (!canAccessApp) {
     return <AuthPage onAuthSuccess={onAuthSuccess} />;
   }
 
@@ -183,12 +211,12 @@ export default function App() {
 
                 <div className="ml-8 hidden md:flex items-center overflow-visible" aria-label="Main">
                   <GooeyNav
-                    items={NAV_LINKS.map(({ page, label }) => ({
+                    items={visibleNavLinks.map(({ page, label }) => ({
                       label,
                       onClick: () => setCurrentPage(page),
                     }))}
-                    activeIndex={NAV_LINKS.findIndex((l) => l.page === currentPage)}
-                    onItemClick={(i) => setCurrentPage(NAV_LINKS[i].page)}
+                    activeIndex={visibleNavLinks.findIndex((l) => l.page === currentPage)}
+                    onItemClick={(i) => setCurrentPage(visibleNavLinks[i].page)}
                     particleCount={8}
                     particleDistances={[40, 6]}
                     particleR={50}
@@ -219,20 +247,25 @@ export default function App() {
                   />
                 </div>
 
-                <Button variant="ghost" size="sm" onClick={() => goToSettings("notifications")} title="Alert preferences">
-                  <Bell className="h-4 w-4" />
-                </Button>
+                {/* Bell + Settings require a server account; hide for guests so we
+                    don't strand them on a 401 page. Sign-out doubles as "leave guest". */}
+                {!isGuest && (
+                  <>
+                    <Button variant="ghost" size="sm" onClick={() => goToSettings("notifications")} title="Alert preferences">
+                      <Bell className="h-4 w-4" />
+                    </Button>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => goToSettings("profile")}
+                      title="Settings"
+                    >
+                      <Settings className="h-4 w-4" />
+                    </Button>
+                  </>
+                )}
 
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => goToSettings("profile")}
-                  title="Settings"
-                >
-                  <Settings className="h-4 w-4" />
-                </Button>
-
-                <Button variant="outline" size="sm" onClick={onSignOut} title="Sign Out">
+                <Button variant="outline" size="sm" onClick={onSignOut} title={isGuest ? "Exit guest mode" : "Sign Out"}>
                   <LogOut className="h-4 w-4" />
                 </Button>
 
@@ -261,7 +294,7 @@ export default function App() {
                   >
                     <DropdownMenuLabel>Navigate</DropdownMenuLabel>
                     <DropdownMenuSeparator />
-                    {NAV_LINKS.map(({ page, label }) => (
+                    {visibleNavLinks.map(({ page, label }) => (
                       <DropdownMenuItem
                         key={page}
                         onSelect={() => goToPage(page)}
