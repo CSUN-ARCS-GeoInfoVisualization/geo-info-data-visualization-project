@@ -20,14 +20,43 @@ import { apiFetch } from "./services/api";
 
 // Lazy-load every non-default page so the initial bundle ships only the Dashboard.
 // Each chunk is downloaded on first navigation and then cached by the browser.
-const EvacuationRoutes = lazy(() => import("./components/evacuation-routes").then(m => ({ default: m.EvacuationRoutes })));
-const FireNews = lazy(() => import("./components/fire-news").then(m => ({ default: m.FireNews })));
-const RiskMap = lazy(() => import("./components/risk-map").then(m => ({ default: m.RiskMap })));
-const NotificationSettings = lazy(() => import("./components/notification-settings").then(m => ({ default: m.NotificationSettings })));
-const SettingsPage = lazy(() => import("./components/settings-page").then(m => ({ default: m.SettingsPage })));
-const History = lazy(() => import("./components/history").then(m => ({ default: m.History })));
-const AdminPage = lazy(() => import("./components/admin-page").then(m => ({ default: m.AdminPage })));
-const ResearchPage = lazy(() => import("./components/research-page").then(m => ({ default: m.ResearchPage })));
+//
+// Recovery contract: if a chunk 404s — typical scenario is a long-open tab across
+// a redeploy where index.html still references stale hashed filenames — we hard
+// reload the page once. The fresh index.html points at the new chunks, and a
+// session-storage flag prevents an infinite reload loop if the failure is real.
+function lazyWithRetry<T extends React.ComponentType<any>>(
+  importer: () => Promise<{ default: T }>
+) {
+  return lazy(async () => {
+    try {
+      return await importer();
+    } catch (err: any) {
+      const msg = String(err?.message || err);
+      const isChunkLoad =
+        msg.includes("Failed to fetch dynamically imported module") ||
+        msg.includes("Importing a module script failed") ||
+        msg.toLowerCase().includes("chunkloaderror");
+      const flag = "firescope.chunk-reload-once";
+      if (isChunkLoad && !sessionStorage.getItem(flag)) {
+        sessionStorage.setItem(flag, "1");
+        window.location.reload();
+        // Resolve with an empty component so React doesn't crash before reload kicks in.
+        return { default: (() => null) as unknown as T };
+      }
+      throw err;
+    }
+  });
+}
+
+const EvacuationRoutes = lazyWithRetry(() => import("./components/evacuation-routes").then(m => ({ default: m.EvacuationRoutes })));
+const FireNews = lazyWithRetry(() => import("./components/fire-news").then(m => ({ default: m.FireNews })));
+const RiskMap = lazyWithRetry(() => import("./components/risk-map").then(m => ({ default: m.RiskMap })));
+const NotificationSettings = lazyWithRetry(() => import("./components/notification-settings").then(m => ({ default: m.NotificationSettings })));
+const SettingsPage = lazyWithRetry(() => import("./components/settings-page").then(m => ({ default: m.SettingsPage })));
+const History = lazyWithRetry(() => import("./components/history").then(m => ({ default: m.History })));
+const AdminPage = lazyWithRetry(() => import("./components/admin-page").then(m => ({ default: m.AdminPage })));
+const ResearchPage = lazyWithRetry(() => import("./components/research-page").then(m => ({ default: m.ResearchPage })));
 
 const PageFallback = () => (
   <div className="flex items-center justify-center py-24 text-sm text-muted-foreground">Loading…</div>
