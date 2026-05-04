@@ -15,18 +15,26 @@ import countyGeoJson from "../Data/california-counties.json";
 
 interface ResearchPageProps {
   userRole: string | null;
+  isGuest?: boolean;
+  onLoginRequired?: () => void;
 }
 
 /* ------------------------------------------------------------------ */
 /*  Public / Resident view — info + request access                     */
 /* ------------------------------------------------------------------ */
-function RequestAccessView() {
+function RequestAccessView({ isGuest, onLoginRequired }: { isGuest?: boolean; onLoginRequired?: () => void }) {
   const [reason, setReason] = useState("");
   const [pending, setPending] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    // Guests don't have a server account, so skip the role-request lookup
+    // (would 401) and go straight to the showcase.
+    if (isGuest) {
+      setLoading(false);
+      return;
+    }
     apiFetch("/me/role-request")
       .then((r) => r.json())
       .then((data) => {
@@ -34,9 +42,15 @@ function RequestAccessView() {
       })
       .catch(() => {})
       .finally(() => setLoading(false));
-  }, []);
+  }, [isGuest]);
 
   const submit = async () => {
+    // Guests cannot create role requests until they have an account; bounce
+    // them through auth and the parent will route back here on success.
+    if (isGuest) {
+      onLoginRequired?.();
+      return;
+    }
     const r = await apiFetch("/me/role-request", {
       method: "POST",
       body: JSON.stringify({ role: "Researcher", reason }),
@@ -98,6 +112,22 @@ function RequestAccessView() {
           <CardContent className="pt-6 text-center">
             <h3 className="font-semibold text-lg text-green-700">Request Submitted!</h3>
             <p className="text-muted-foreground mt-1">An admin will review your request shortly.</p>
+          </CardContent>
+        </Card>
+      ) : isGuest ? (
+        <Card>
+          <CardHeader>
+            <CardTitle>Request Researcher Access</CardTitle>
+          </CardHeader>
+          <CardContent className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Researcher access is tied to your FireScope account so admins can review
+              requests and grant the right permissions. Sign in or create a free account
+              to submit a request — you'll come right back here once you're done.
+            </p>
+            <Button onClick={() => onLoginRequired?.()} className="w-full">
+              <Send className="h-4 w-4 mr-2" /> Sign in to request access
+            </Button>
           </CardContent>
         </Card>
       ) : (
@@ -726,9 +756,9 @@ function ResearchMapView() {
 /* ------------------------------------------------------------------ */
 /*  Main export — switches between views based on role                 */
 /* ------------------------------------------------------------------ */
-export function ResearchPage({ userRole }: ResearchPageProps) {
+export function ResearchPage({ userRole, isGuest, onLoginRequired }: ResearchPageProps) {
   if (userRole === "Researcher" || userRole === "Admin") {
     return <ResearchMapView />;
   }
-  return <RequestAccessView />;
+  return <RequestAccessView isGuest={isGuest} onLoginRequired={onLoginRequired} />;
 }

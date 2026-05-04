@@ -85,12 +85,17 @@ const NAV_LINKS: { page: Page; label: string }[] = [
 ];
 
 const GUEST_FLAG_KEY = "firescope.guest";
+const POST_LOGIN_PAGE_KEY = "firescope.postLoginPage";
 
 export default function App() {
   const [currentPage, setCurrentPage] = useState<Page>("dashboard");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [authToken, setAuthToken] = useState<string | null>(() => localStorage.getItem("token"));
   const [isGuest, setIsGuest] = useState<boolean>(() => localStorage.getItem(GUEST_FLAG_KEY) === "1");
+  // When set, the AuthPage takes over the screen even if the user is in guest
+  // mode — used to ferry guests through sign-up and back to whatever page they
+  // were trying to access (e.g. submitting a researcher request).
+  const [authOverlay, setAuthOverlay] = useState<boolean>(false);
   const [settingsTab, setSettingsTab] = useState<SettingsTab>("profile");
   const [userRole, setUserRole] = useState<string | null>(null);
   const apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY as string;
@@ -163,12 +168,27 @@ export default function App() {
       setIsGuest(false);
       setAuthToken(token);
       fetchUserRole();
+      setAuthOverlay(false);
+      // If the user was bounced through auth from a specific page, send them back.
+      const target = localStorage.getItem(POST_LOGIN_PAGE_KEY);
+      if (target) {
+        localStorage.removeItem(POST_LOGIN_PAGE_KEY);
+        setCurrentPage(target as Page);
+      }
     } else {
       // "Continue without login" — no token in localStorage. Flip guest mode on.
       localStorage.setItem(GUEST_FLAG_KEY, "1");
       setIsGuest(true);
+      setAuthOverlay(false);
     }
   };
+
+  // Called from any page that needs the user upgraded from guest to a real
+  // account. Records where to come back to, then renders the AuthPage.
+  const requireLogin = useCallback((returnToPage: Page) => {
+    localStorage.setItem(POST_LOGIN_PAGE_KEY, returnToPage);
+    setAuthOverlay(true);
+  }, []);
 
   const onSignOut = () => {
     localStorage.removeItem("token");
@@ -188,8 +208,9 @@ export default function App() {
     setCurrentPage("settings");
   };
 
-  // Show auth page only if user has neither a real session nor opted into guest mode.
-  if (!canAccessApp) {
+  // Show auth page if user has neither a real session nor opted into guest
+  // mode, OR if a guest action explicitly requested login (authOverlay).
+  if (!canAccessApp || authOverlay) {
     return <AuthPage onAuthSuccess={onAuthSuccess} />;
   }
 
@@ -344,7 +365,13 @@ export default function App() {
               <NotificationSettings token={authToken as string} />
             )}
             {currentPage === "history" && <History />}
-            {currentPage === "research" && <ResearchPage userRole={userRole} />}
+            {currentPage === "research" && (
+              <ResearchPage
+                userRole={userRole}
+                isGuest={isGuest}
+                onLoginRequired={() => requireLogin("research")}
+              />
+            )}
             {currentPage === "admin" && userRole === "Admin" && <AdminPage />}
             {currentPage === "settings" && <SettingsPage key={settingsTab} defaultTab={settingsTab} />}
           </Suspense>
