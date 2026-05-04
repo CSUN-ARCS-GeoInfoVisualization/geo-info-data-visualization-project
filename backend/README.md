@@ -112,6 +112,7 @@ The API will be available at `http://localhost:5000`.
 |---|---|---|---|
 | POST | `/api/predict` | — | `{ lat, lon, date? }` |
 | POST | `/api/predict/batch` | — | `{ items: [{ lat, lon, date? }, ...] }` |
+| POST | `/api/predict-custom` | — | `{ evi, air_temp_encoded, wind, humidity, elevation }` — used by the Research page slider overrides |
 
 **Single prediction response:**
 ```json
@@ -128,9 +129,52 @@ The API will be available at `http://localhost:5000`.
     "matched_lat": 34.5,
     "matched_lon": -118.5
   },
-  "features": { "evi": 0, "lst": 14196, "wind": 12.0, "elevation": 800.0 }
+  "features": {
+    "evi": 0.42,
+    "air_temp_encoded": 14196.0,
+    "wind": 12.0,
+    "humidity": 35.0,
+    "elevation": 800.0
+  },
+  "sources": {
+    "weather": "live",
+    "elevation": "live",
+    "evi": "fallback"
+  }
 }
 ```
+
+`risk_level` is one of `Low`, `Medium`, `High`, `Extreme` (thresholds at 0.25 / 0.50 / 0.75). `air_temp_encoded` is air temperature encoded as `(°C + 273.15) / 0.02` — kept as the feature name for backward compatibility with the original MODIS-LST training pipeline.
+
+### Research / map data (mounted under `/api/research`)
+
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/research/boundaries/<name>` | GeoJSON boundaries (county / zip / tract / neighborhood) |
+| GET | `/api/research/risk-by-zone/<zone_type>` | Per-zone risk scores for choropleth rendering |
+| GET | `/api/research/risk-by-county` | Faster county-level risk overlay (interpolated) |
+| GET | `/api/research/risk-grid` | Coarse-grid risk for the active-fire map background |
+| GET | `/api/research/fire-data` | NIFC + CAL FIRE active fire perimeters with containment enrichment |
+
+### History, shelters, news
+
+| Method | Endpoint | Description |
+|---|---|---|
+| GET | `/api/history/perimeters/years` | List of years available in the CAL FIRE FRAP dataset |
+| GET | `/api/history/perimeters?year=YYYY` | CAL FIRE FRAP historic perimeters (1950–present) |
+| GET | `/api/history/dins` | CAL FIRE DINS structure-damage points |
+| GET | `/api/shelters` | FEMA National Shelter System points across California |
+| GET | `/api/news` | GNews wildfire articles |
+
+### Saved locations
+
+| Method | Endpoint | Auth | Description |
+|---|---|---|---|
+| GET | `/api/me/locations` | JWT | List the current user's saved locations |
+| POST | `/api/me/locations` | JWT | Save a new location |
+| DELETE | `/api/me/locations/<id>` | JWT | Remove a saved location |
+
+> Alert endpoints under `routes/alerts.py` are not currently wired into `app.py` — alerts run in **UI-only mode** with preferences stored in `localStorage`. Re-enable by registering `alerts_bp` in `app.py` once the server-side flow is brought back online.
 
 ### Notifications
 
@@ -179,19 +223,42 @@ backend/
 ├── config.py               # Config from environment variables
 ├── models.py               # SQLAlchemy models (User, Role, NotificationPreference)
 ├── seed.py                 # Creates tables and seeds roles + initial admin
+├── entrypoint.sh           # Docker entrypoint — runs migrations then gunicorn
+├── Dockerfile              # Container image for Render deployment
 ├── requirements.txt        # Python dependencies
-├── .env.example            # Environment variable template
+├── requirements-dev.txt    # Test/dev-only dependencies
+├── pytest.ini              # pytest config
+├── SETUP_EMAIL.md          # Step-by-step Gmail SMTP / Resend setup notes
 ├── routes/
 │   ├── auth.py             # /api/register, /api/login
 │   ├── me.py               # /api/me
 │   ├── admin.py            # /api/admin/*
 │   ├── notifications.py    # /api/me/notifications, /api/notifications/*
-│   └── predict.py          # /api/predict, /api/predict/batch
+│   ├── predict.py          # /api/predict, /api/predict/batch, /api/predict-custom
+│   ├── research.py         # /api/research/boundaries, /risk-by-zone, /risk-by-county, /risk-grid, /fire-data
+│   ├── history.py          # /api/history/perimeters, /api/history/perimeters/years, /api/history/dins
+│   ├── shelters.py         # /api/shelters
+│   ├── news.py             # /api/news
+│   ├── alerts.py           # NOT registered — UI-only mode (kept around for future server-side alerts)
+│   └── locations.py        # /api/me/locations  (saved-location CRUD)
+├── services/
+│   ├── email/              # SMTP + Resend providers and message templates
+│   └── fire_news/          # GNews + CAL FIRE incidents adapters
 ├── ml/
 │   ├── inference.py        # predict_from_features() — model loading and scoring
+│   ├── build_dataset.py    # Training-data pipeline (FIRMS + AppEEARS + Open-Meteo)
+│   ├── retrain.py          # Training + evaluation
 │   └── models/
 │       ├── wildfire_model_predictive.pkl
-│       └── wildfire_scaler_predictive.pkl
-└── data/
-    └── sample_locations.py # Hardcoded CA locations with pre-extracted features
+│       ├── wildfire_scaler_predictive.pkl
+│       └── model_metadata.json
+├── data/
+│   ├── sample_locations.py # Fallback CA locations with pre-extracted features
+│   ├── live_weather.py     # Open-Meteo wind / temperature / humidity adapter
+│   ├── live_elevation.py   # Open-Elevation adapter
+│   ├── live_evi.py         # NASA AppEEARS EVI adapter (cached spring composite)
+│   ├── fire_news_feeds.py  # CAL FIRE Incidents API adapter
+│   └── boundaries/         # Cached TIGER/Line GeoJSON for counties / ZIP / tracts / neighborhoods
+├── migrations/             # Alembic migrations (Flask-Migrate)
+└── tests/                  # pytest suite
 ```

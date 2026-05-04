@@ -7,8 +7,10 @@ Wildfire risk model integrated into the prediction API. The model loads once on 
 `inference.py` exposes a single function:
 
 ```python
-predict_from_features(evi, lst, wind, humidity, elevation) -> dict
+predict_from_features(evi, air_temp_encoded, wind, humidity, elevation) -> dict
 ```
+
+`air_temp_encoded` is air temperature in the legacy MODIS-LST encoding `(°C + 273.15) / 0.02`. The parameter name keeps the original training schema so old models keep loading; only the source changed (Open-Meteo air temperature instead of MODIS LST).
 
 The prediction route (`routes/predict.py`) calls this with live data fetched per-request:
 
@@ -32,17 +34,17 @@ The nearest fallback location is selected using great-circle (haversine) distanc
 | Evaluation | 10-fold stratified cross-validation |
 | Accuracy | 89.5% |
 | ROC-AUC | 0.953 |
-| Features | EVI, LST, wind speed, humidity, elevation |
-| Output | Risk probability (0–1) + label (Low / Medium / High / Extreme) |
+| Features | EVI, air-temp-encoded, wind speed, humidity, elevation |
+| Output | Risk probability (0–1) + label (Low / Medium / High / Extreme) — thresholds at 0.25 / 0.50 / 0.75 |
 
-See `charts/RESULTS.md` for full metrics, confusion matrix, and feature importances.
+Schema and training metadata are recorded in `models/model_metadata.json`.
 
 ## Feature encoding
 
 | Feature | Encoding | Notes |
 |---|---|---|
 | `evi` | Scaled float (0–1) | Spring EVI composite (May 1 target); MODIS scale factor 0.0001 applied |
-| `lst` | `(T_celsius + 273.15) / 0.02` | Air temperature from Open-Meteo — **not** MODIS Land Surface Temperature; "lst" is a legacy label retained for model compatibility |
+| `air_temp_encoded` | `(T_celsius + 273.15) / 0.02` | Air temperature from Open-Meteo — **not** MODIS Land Surface Temperature; the encoding is retained for model compatibility |
 | `wind` | m/s (float) | Open-Meteo 10m wind speed |
 | `humidity` | % (0–100) | Open-Meteo relative humidity at 2m |
 | `elevation` | meters (float) | Open-Elevation terrain height |
@@ -57,7 +59,7 @@ See `charts/RESULTS.md` for full metrics, confusion matrix, and feature importan
 4. **Weather** — historical Open-Meteo data per point (wind, temperature, humidity); 4-attempt retry with backoff
 5. **Elevation** — Open-Elevation per point
 
-`retrain.py` trains the Random Forest, saves model + scaler, and auto-generates charts and `charts/RESULTS.md`.
+`retrain.py` trains the Random Forest, evaluates with stratified k-fold CV, and writes the model + scaler + `model_metadata.json` into `models/`.
 
 ## Files
 
@@ -65,14 +67,9 @@ See `charts/RESULTS.md` for full metrics, confusion matrix, and feature importan
 ml/
 ├── inference.py          # predict_from_features() — loads model, scales features, returns score
 ├── build_dataset.py      # Full training data pipeline (FIRMS + AppEEARS + Open-Meteo)
-├── retrain.py            # Model training, evaluation, chart + summary generation
-├── charts/
-│   ├── RESULTS.md        # Auto-generated metrics summary
-│   ├── confusion_matrix.png
-│   ├── roc_curve.png
-│   ├── metrics_bar.png
-│   └── feature_distributions.png
+├── retrain.py            # Model training, evaluation, metadata generation
 └── models/
     ├── wildfire_model_predictive.pkl    # Trained RandomForest classifier
-    └── wildfire_scaler_predictive.pkl   # Fitted StandardScaler
+    ├── wildfire_scaler_predictive.pkl   # Fitted StandardScaler
+    └── model_metadata.json              # Feature columns, training date, data year
 ```

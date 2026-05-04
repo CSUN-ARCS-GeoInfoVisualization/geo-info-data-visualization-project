@@ -169,7 +169,7 @@ scikit-learn classifier predicting wildfire risk from 5 live inputs:
 4. `humidity` — relative humidity (%)
 5. `elevation` — meters above sea level
 
-Output: `risk_score` (0–1) + `label` (low / moderate / high). Drives the 3-tier risk-zone palette on the Dashboard, Risk Map, and Research views. Per-zone overrides via `POST /api/predict-custom`.
+Output: `risk_score` (0–1) + `label` (Low / Medium / High / Extreme). The frontend collapses these into a 3-tier risk-zone palette (green / yellow / red) on the Dashboard, Risk Map, and Research views. Per-zone overrides via `POST /api/predict-custom`.
 
 ## Workflow Guidelines
 
