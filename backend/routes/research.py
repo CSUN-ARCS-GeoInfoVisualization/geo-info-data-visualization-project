@@ -83,7 +83,11 @@ def risk_by_zone(zone_type):
     name_key = 'zip' if zone_type == 'zip-codes' else 'name' if zone_type == 'neighborhoods' else 'tract'
 
     features_list = geo.get('features', [])
-    step = max(1, len(features_list) // 500)  # Max ~500 predictions
+    # Cap sampled centroids to stay within Open-Meteo rate limits and worker timeout.
+    # Risk is propagated from the nearest sampled centroid to the rest, so resolution
+    # stays acceptable for a state-wide overlay.
+    max_samples = 120 if zone_type == 'census-tracts' else 200
+    step = max(1, len(features_list) // max_samples)
 
     # Collect sampled centroids
     sampled = []  # (name, lat, lon)
@@ -98,12 +102,26 @@ def risk_by_zone(zone_type):
             continue
         sampled.append((name, centroid[0], centroid[1]))
 
-    # Fetch live weather for all centroids in parallel
+    # Fetch live weather for all centroids in parallel.
+    # If Open-Meteo rate-limits or stalls, keep whatever returned and fall through
+    # to the interpolated path for the rest — never 500 the whole map overlay.
     live_weather: dict[str, dict | None] = {}
-    with ThreadPoolExecutor(max_workers=_WEATHER_WORKERS) as executor:
+    executor = ThreadPoolExecutor(max_workers=_WEATHER_WORKERS)
+    try:
         futures = {executor.submit(_fetch_live_weather, lat, lon): name for name, lat, lon in sampled}
-        for future in as_completed(futures, timeout=30):
-            live_weather[futures[future]] = future.result()
+        try:
+            for future in as_completed(futures, timeout=20):
+                try:
+                    live_weather[futures[future]] = future.result()
+                except Exception:
+                    live_weather[futures[future]] = None
+        except Exception as e:
+            logger.warning("zone weather fetch partial (%s): kept %d/%d", e, len(live_weather), len(futures))
+            for fut, name in futures.items():
+                if not fut.done():
+                    fut.cancel()
+    finally:
+        executor.shutdown(wait=False)
 
     # Build feature vectors — live weather where available, interpolated fallback
     sampled_names = []
