@@ -135,3 +135,16 @@ class NewsArticle(db.Model):
     training_meta = db.Column(db.JSON, nullable=True)
     first_ingested_at = db.Column(db.DateTime(timezone=True), server_default=func.now())
     updated_at = db.Column(db.DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class ZoneRiskCache(db.Model):
+    """Persistent cache for zone/county risk payloads.
+
+    Survives Render redeploys so cold-start latency on the risk overlays
+    drops from 20s+ down to a single DB read (<200ms).
+    """
+    __tablename__ = 'zone_risk_cache'
+
+    cache_key = db.Column(db.String(64), primary_key=True)  # 'counties', 'zip-codes', 'census-tracts', 'neighborhoods'
+    payload = db.Column(db.JSON, nullable=False)
+    computed_at = db.Column(db.DateTime(timezone=True), server_default=func.now(), onupdate=func.now())

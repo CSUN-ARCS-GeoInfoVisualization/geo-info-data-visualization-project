@@ -6,13 +6,16 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime, timedelta, timezone
 
+import threading
+
 import requests
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, current_app, jsonify, request
 from flask_jwt_extended import jwt_required, get_jwt
 
 from ml.inference import predict_from_features, predict_batch_features
 from data.sample_locations import SAMPLE_LOCATIONS
 from data.live_weather import get_weather
+from models import db, ZoneRiskCache
 
 research_bp = Blueprint('research', __name__)
 logger = logging.getLogger(__name__)
@@ -58,34 +61,91 @@ def _get_centroid(coords):
 
 _zone_risk_cache: dict = {}
 
+# Locks so two simultaneous requests don't both kick off the same recompute.
+_zone_recompute_locks: dict[str, threading.Lock] = {}
+_zone_recompute_locks_guard = threading.Lock()
 
-@research_bp.route('/risk-by-zone/<zone_type>', methods=['GET'])
-def risk_by_zone(zone_type):
-    """Compute ML risk per zone — single request replaces 35+ batch calls."""
-    if zone_type not in _VALID_BOUNDARIES:
-        return jsonify({'error': 'Invalid zone type'}), 404
 
-    now = time.time()
-    cache_key = zone_type
-    cached = _zone_risk_cache.get(cache_key)
-    if cached and cached['expires'] > now:
-        return jsonify(cached['data'])
+def _lock_for(cache_key: str) -> threading.Lock:
+    with _zone_recompute_locks_guard:
+        lock = _zone_recompute_locks.get(cache_key)
+        if lock is None:
+            lock = threading.Lock()
+            _zone_recompute_locks[cache_key] = lock
+        return lock
 
+
+def _load_cache_from_db(cache_key: str) -> dict | None:
+    """Read a previously-computed payload out of Postgres. Never raises."""
+    try:
+        row = ZoneRiskCache.query.get(cache_key)
+        if not row:
+            return None
+        return {
+            "data": row.payload,
+            "computed_at": row.computed_at.timestamp() if row.computed_at else 0.0,
+        }
+    except Exception as e:
+        logger.warning("zone_risk_cache DB read failed for %s: %s", cache_key, e)
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
+        return None
+
+
+def _save_cache_to_db(cache_key: str, payload: dict) -> None:
+    """Persist a payload so it survives Render redeploys. Never raises."""
+    try:
+        row = ZoneRiskCache.query.get(cache_key)
+        if row is None:
+            row = ZoneRiskCache(cache_key=cache_key, payload=payload)
+            db.session.add(row)
+        else:
+            row.payload = payload
+        db.session.commit()
+    except Exception as e:
+        logger.warning("zone_risk_cache DB write failed for %s: %s", cache_key, e)
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
+
+
+def _spawn_background_refresh(app, cache_key: str, recompute_fn) -> None:
+    """Recompute a stale cache entry off the request thread."""
+    lock = _lock_for(cache_key)
+    if not lock.acquire(blocking=False):
+        return  # someone else is already refreshing this key
+
+    def _runner():
+        try:
+            with app.app_context():
+                fresh = recompute_fn()
+                if fresh is not None:
+                    _zone_risk_cache[cache_key] = {"data": fresh, "expires": time.time() + _GRID_CACHE_TTL}
+                    _save_cache_to_db(cache_key, fresh)
+        except Exception as e:
+            logger.warning("background refresh failed for %s: %s", cache_key, e)
+        finally:
+            lock.release()
+
+    threading.Thread(target=_runner, name=f"zone-refresh-{cache_key}", daemon=True).start()
+
+
+def _compute_zone_risk(zone_type: str) -> dict | None:
+    """Heavy path: load boundaries, fetch live weather, batch-predict per centroid."""
     filepath = os.path.join(_BOUNDARIES_DIR, f'{zone_type}.json')
     if not os.path.exists(filepath):
-        return jsonify({'error': 'Boundary data not found'}), 404
+        return None
 
     import json as json_mod
     with open(filepath) as f:
         geo = json_mod.load(f)
 
-    # Determine zone name field
     name_key = 'zip' if zone_type == 'zip-codes' else 'name' if zone_type == 'neighborhoods' else 'tract'
 
     features_list = geo.get('features', [])
-    # Cap sampled centroids to stay within Open-Meteo rate limits and worker timeout.
-    # Risk is propagated from the nearest sampled centroid to the rest, so resolution
-    # stays acceptable for a state-wide overlay.
     max_samples = 120 if zone_type == 'census-tracts' else 200
     step = max(1, len(features_list) // max_samples)
 
@@ -161,8 +221,37 @@ def risk_by_zone(zone_type):
         sampled_name = features_list[sampled_idx].get('properties', {}).get(name_key, str(sampled_idx)) if sampled_idx < len(features_list) else ""
         results[name] = sampled_risk.get(sampled_name, {"risk_score": 0, "label": "Low"})
 
-    data = {"zones": results, "zone_type": zone_type, "total": len(results)}
+    return {"zones": results, "zone_type": zone_type, "total": len(results)}
+
+
+@research_bp.route('/risk-by-zone/<zone_type>', methods=['GET'])
+def risk_by_zone(zone_type):
+    """Serve ML risk per zone with three-tier caching: in-memory > Postgres > recompute."""
+    if zone_type not in _VALID_BOUNDARIES:
+        return jsonify({'error': 'Invalid zone type'}), 404
+
+    now = time.time()
+    cache_key = zone_type
+    cached = _zone_risk_cache.get(cache_key)
+    if cached and cached['expires'] > now:
+        return jsonify(cached['data'])
+
+    # In-memory cold (process restart, redeploy) — try Postgres before doing the heavy compute.
+    db_cached = _load_cache_from_db(cache_key)
+    if db_cached:
+        age = now - db_cached['computed_at']
+        _zone_risk_cache[cache_key] = {'data': db_cached['data'], 'expires': now + _GRID_CACHE_TTL}
+        if age > _GRID_CACHE_TTL:
+            # Stale on disk: serve immediately, refresh in background.
+            _spawn_background_refresh(current_app._get_current_object(), cache_key, lambda: _compute_zone_risk(zone_type))
+        return jsonify(db_cached['data'])
+
+    # No cache anywhere — compute synchronously this once, persist for next time.
+    data = _compute_zone_risk(zone_type)
+    if data is None:
+        return jsonify({'error': 'Boundary data not found'}), 404
     _zone_risk_cache[cache_key] = {'data': data, 'expires': now + _GRID_CACHE_TTL}
+    _save_cache_to_db(cache_key, data)
     return jsonify(data)
 
 
@@ -338,36 +427,30 @@ CA_COUNTY_CENTROIDS = [
 _county_cache: dict = {"expires": 0.0, "data": None, "params": None}
 
 
-@research_bp.route('/risk-by-county', methods=['GET'])
-def risk_by_county():
-    """Return risk scores per California county — public endpoint, no auth required."""
-    evi_ov              = request.args.get('evi')
-    air_temp_encoded_ov = request.args.get('air_temp_encoded')
-    wind_ov             = request.args.get('wind')
-    humidity_ov         = request.args.get('humidity')
-    elev_ov             = request.args.get('elevation')
-
-    evi_ov              = float(evi_ov) if evi_ov is not None else None
-    air_temp_encoded_ov = float(air_temp_encoded_ov) if air_temp_encoded_ov is not None else None
-    wind_ov             = float(wind_ov) if wind_ov is not None else None
-    humidity_ov         = float(humidity_ov) if humidity_ov is not None else None
-    elev_ov             = float(elev_ov) if elev_ov is not None else None
-
-    params_key = (evi_ov, air_temp_encoded_ov, wind_ov, humidity_ov, elev_ov)
-    now = time.time()
-    if (_county_cache["data"] is not None
-            and _county_cache["expires"] > now
-            and _county_cache["params"] == params_key):
-        return jsonify(_county_cache["data"])
-
-    # Fetch live weather in parallel for all counties (skip if all weather fields are overridden)
+def _compute_county_risk(evi_ov=None, air_temp_encoded_ov=None, wind_ov=None,
+                         humidity_ov=None, elev_ov=None) -> dict:
+    """Heavy path for /risk-by-county. Honors per-feature overrides."""
+    # Fetch live weather in parallel for all counties (skip if all weather fields are overridden).
+    # Same timeout-safe pattern as risk-by-zone: never let a stalled Open-Meteo call 500 the route.
     need_live = air_temp_encoded_ov is None or wind_ov is None or humidity_ov is None
     live_weather: dict[str, dict | None] = {}
     if need_live:
-        with ThreadPoolExecutor(max_workers=_WEATHER_WORKERS) as executor:
+        executor = ThreadPoolExecutor(max_workers=_WEATHER_WORKERS)
+        try:
             futures = {executor.submit(_fetch_live_weather, lat, lon): name for name, lat, lon in CA_COUNTY_CENTROIDS}
-            for future in as_completed(futures, timeout=30):
-                live_weather[futures[future]] = future.result()
+            try:
+                for future in as_completed(futures, timeout=20):
+                    try:
+                        live_weather[futures[future]] = future.result()
+                    except Exception:
+                        live_weather[futures[future]] = None
+            except Exception as e:
+                logger.warning("county weather fetch partial (%s): kept %d/%d", e, len(live_weather), len(futures))
+                for fut, name in futures.items():
+                    if not fut.done():
+                        fut.cancel()
+        finally:
+            executor.shutdown(wait=False)
 
     names = []
     inputs = []
@@ -392,7 +475,55 @@ def risk_by_county():
         for name, risk, (evi, air_temp_encoded, wind, humidity, elev) in zip(names, batch, inputs)
     }
 
-    data = {"counties": results, "overrides": {"evi": evi_ov, "air_temp_encoded": air_temp_encoded_ov, "wind": wind_ov, "humidity": humidity_ov, "elevation": elev_ov}}
+    return {"counties": results, "overrides": {"evi": evi_ov, "air_temp_encoded": air_temp_encoded_ov, "wind": wind_ov, "humidity": humidity_ov, "elevation": elev_ov}}
+
+
+@research_bp.route('/risk-by-county', methods=['GET'])
+def risk_by_county():
+    """Return risk scores per California county — public endpoint, no auth required.
+
+    Three-tier cache (in-memory > Postgres > recompute) only kicks in for the no-overrides
+    dashboard case; override requests bypass the persistent cache and recompute every time.
+    """
+    evi_ov              = request.args.get('evi')
+    air_temp_encoded_ov = request.args.get('air_temp_encoded')
+    wind_ov             = request.args.get('wind')
+    humidity_ov         = request.args.get('humidity')
+    elev_ov             = request.args.get('elevation')
+
+    evi_ov              = float(evi_ov) if evi_ov is not None else None
+    air_temp_encoded_ov = float(air_temp_encoded_ov) if air_temp_encoded_ov is not None else None
+    wind_ov             = float(wind_ov) if wind_ov is not None else None
+    humidity_ov         = float(humidity_ov) if humidity_ov is not None else None
+    elev_ov             = float(elev_ov) if elev_ov is not None else None
+
+    params_key = (evi_ov, air_temp_encoded_ov, wind_ov, humidity_ov, elev_ov)
+    is_default = params_key == (None, None, None, None, None)
+    now = time.time()
+
+    if is_default:
+        cache_key = 'counties'
+        cached = _zone_risk_cache.get(cache_key)
+        if cached and cached['expires'] > now:
+            return jsonify(cached['data'])
+        db_cached = _load_cache_from_db(cache_key)
+        if db_cached:
+            age = now - db_cached['computed_at']
+            _zone_risk_cache[cache_key] = {'data': db_cached['data'], 'expires': now + _GRID_CACHE_TTL}
+            if age > _GRID_CACHE_TTL:
+                _spawn_background_refresh(current_app._get_current_object(), cache_key, _compute_county_risk)
+            return jsonify(db_cached['data'])
+        data = _compute_county_risk()
+        _zone_risk_cache[cache_key] = {'data': data, 'expires': now + _GRID_CACHE_TTL}
+        _save_cache_to_db(cache_key, data)
+        return jsonify(data)
+
+    # Override path — keep the legacy params-keyed in-memory cache, no DB persistence.
+    if (_county_cache["data"] is not None
+            and _county_cache["expires"] > now
+            and _county_cache["params"] == params_key):
+        return jsonify(_county_cache["data"])
+    data = _compute_county_risk(evi_ov, air_temp_encoded_ov, wind_ov, humidity_ov, elev_ov)
     _county_cache["data"] = data
     _county_cache["expires"] = now + _GRID_CACHE_TTL
     _county_cache["params"] = params_key

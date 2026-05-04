@@ -60,6 +60,31 @@ def _ensure_notification_pref_schema(app):
         app.logger.warning('notification_preferences schema check failed: %s', e)
 
 
+def _warm_zone_risk_cache_on_boot(app):
+    """Hydrate the in-memory zone risk cache from Postgres at startup.
+
+    The DB row may be older than the in-memory TTL — that's fine, the route
+    will serve it instantly and kick off a background refresh. The point is
+    that no user ever waits 20+ seconds on a cold Render boot.
+    """
+    try:
+        with app.app_context():
+            from models import ZoneRiskCache
+            from routes import research as research_module
+            import time as _time
+            now = _time.time()
+            for row in ZoneRiskCache.query.all():
+                research_module._zone_risk_cache[row.cache_key] = {
+                    'data': row.payload,
+                    'expires': now + research_module._GRID_CACHE_TTL,
+                }
+            app.logger.info(
+                'zone_risk_cache warmed: %d keys', len(research_module._zone_risk_cache)
+            )
+    except Exception as e:
+        app.logger.warning('zone_risk_cache warm failed: %s', e)
+
+
 def create_app(config_class=Config):
     app = Flask(__name__)
     app.config.from_object(config_class)
@@ -87,6 +112,11 @@ def create_app(config_class=Config):
     # Render has no migration step, so new columns added to the model after the
     # initial db.create_all() aren't present in prod and cause 500s on /me/notifications.
     _ensure_notification_pref_schema(app)
+
+    # Warm zone/county risk cache from Postgres on boot so the first request
+    # after a Render redeploy serves in <1s instead of triggering the 20s+
+    # live Open-Meteo recompute path.
+    _warm_zone_risk_cache_on_boot(app)
 
     # Initialize email service if RESEND_API_KEY is configured
     if os.getenv('RESEND_API_KEY'):
