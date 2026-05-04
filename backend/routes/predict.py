@@ -376,11 +376,21 @@ def _fetch_containment_by_name() -> dict:
     return lookup
 
 
+_PERIMETER_CACHE: dict = {"data": None, "expires": 0.0}
+_PERIMETER_TTL = 180  # NIFC perimeters refresh ~hourly upstream; 3 min keeps maps near-live
+
+
 @predict_bp.route('/fire-perimeters', methods=['GET'])
 def nifc_fire_perimeters():
     """Proxy NIFC WFIGS fire perimeters (California only) and enrich missing
     containment percentages from CAL FIRE + WFIGS Incident Locations so the
     4-tier color coding can actually kick in."""
+    import time as _time
+    now = _time.time()
+    if _PERIMETER_CACHE["data"] is not None and _PERIMETER_CACHE["expires"] > now:
+        resp = jsonify(_PERIMETER_CACHE["data"])
+        resp.headers['Cache-Control'] = 'public, max-age=180, stale-while-revalidate=600'
+        return resp
     try:
         r = http_requests.get(
             'https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services/'
@@ -436,4 +446,8 @@ def nifc_fire_perimeters():
     except Exception as e:
         logger.warning('News-incident merge failed: %s', e)
 
-    return jsonify(data)
+    _PERIMETER_CACHE["data"] = data
+    _PERIMETER_CACHE["expires"] = now + _PERIMETER_TTL
+    resp = jsonify(data)
+    resp.headers['Cache-Control'] = 'public, max-age=180, stale-while-revalidate=600'
+    return resp

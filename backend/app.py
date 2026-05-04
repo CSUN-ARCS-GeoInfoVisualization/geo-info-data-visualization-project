@@ -1,6 +1,7 @@
 import os
 
 from flask import Flask, jsonify
+from flask_compress import Compress
 from flask_cors import CORS
 from flask_jwt_extended import JWTManager
 from models import db, migrate
@@ -95,6 +96,14 @@ def create_app(config_class=Config):
     migrate.init_app(app, db, directory=migrations_dir)
     CORS(app)
     JWTManager(app)
+
+    # Gzip every response. Boundary GeoJSON (1.3MB), zone-risk JSON (up to
+    # 1.6MB), and fire-perimeters were going out uncompressed; gzip drops
+    # them ~6-8x and is the single biggest wire-time win on the site.
+    app.config['COMPRESS_MIMETYPES'] = ['application/json', 'application/geo+json', 'text/html', 'text/css', 'application/javascript']
+    app.config['COMPRESS_LEVEL'] = 6
+    app.config['COMPRESS_MIN_SIZE'] = 500
+    Compress(app)
 
     # Register blueprints
     app.register_blueprint(auth_bp, url_prefix='/api')
