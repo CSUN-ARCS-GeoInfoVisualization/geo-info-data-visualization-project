@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useMemo, useCallback, memo } from "react";
 import { loadGeoJson } from "../lib/geojsonCache";
+import { apiFetch } from "../services/api";
 import {
   Calendar,
   Filter,
@@ -501,37 +502,81 @@ export function History() {
     averageSize: 0,
   });
 
-  // 1. Load the full perimeter dataset once from Netlify CDN (gzipped ~770KB).
-  //    Derive the available-year list from what's actually in the file — no
-  //    backend dependency, no API year-clamp guesswork.
+  // 1. Populate the year dropdown from the backend (CAL FIRE FRAP covers 1878→present).
+  //    The trimmed static file we used to load only had 2024-2025; the backend
+  //    proxy returns the full historical range with 30-min server-side caching.
   useEffect(() => {
     setLoadingYears(true);
-    loadGeoJson('/Data/California_Fire_Perimeters_trimmed.geojson')
+    apiFetch('/history/perimeters/years')
+      .then((r) => r.ok ? r.json() : null)
       .then((data: any) => {
-        const feats: any[] = Array.isArray(data?.features) ? data.features : [];
-        setAllFeatures(feats);
-        const years = Array.from(
-          new Set(feats.map((f) => Number(f?.properties?.YEAR_)).filter((y) => Number.isFinite(y)))
-        ).sort((a, b) => b - a);
-        setAvailableYears(years);
+        const years: number[] = Array.isArray(data?.years) ? data.years : [];
         if (years.length) {
+          setAvailableYears(years);
           const minY = years[years.length - 1];
           const maxY = years[0];
           setStats((s) => ({ ...s, yearRange: minY === maxY ? `${minY}` : `${minY}-${maxY}` }));
           setSelectedYear((y) => (years.includes(y) ? y : years[0]));
         }
       })
-      .catch((e) => console.warn('Perimeter file fetch failed:', e))
+      .catch((e) => console.warn('Year list fetch failed:', e))
       .finally(() => setLoadingYears(false));
   }, []);
 
-  // 2. When the year changes, slice the in-memory feature list. No network,
-  //    no parse — just a filter pass over the already-loaded array.
+  // 2. When the year changes, fetch THAT year's perimeters from the backend.
+  //    Per-year cache so flipping back and forth between years you've already
+  //    viewed is instant. Backend caches each (year, min_acres) for 30 min,
+  //    so cold years still come in fast on subsequent dashboard loads.
+  const yearCacheRef = useRef<Map<number, any[]>>(new Map());
+  useEffect(() => {
+    const year = selectedYears[0];
+    if (!year) return;
+
+    const cached = yearCacheRef.current.get(year);
+    if (cached) {
+      setAllFeatures(cached);
+      setFireData({ type: 'FeatureCollection', features: cached });
+      const totalFires = cached.length;
+      const totalAcres = cached.reduce((sum: number, f: any) => sum + (f.properties?.GIS_ACRES || 0), 0);
+      setStats((s) => ({
+        ...s,
+        totalFires,
+        totalAcres: Math.round(totalAcres),
+        averageSize: totalFires > 0 ? Math.round(totalAcres / totalFires) : 0,
+      }));
+      return;
+    }
+
+    let cancelled = false;
+    apiFetch(`/history/perimeters?year=${year}`)
+      .then((r) => r.ok ? r.json() : { features: [] })
+      .then((data: any) => {
+        if (cancelled) return;
+        const feats: any[] = Array.isArray(data?.features) ? data.features : [];
+        yearCacheRef.current.set(year, feats);
+        setAllFeatures(feats);
+        setFireData({ type: 'FeatureCollection', features: feats });
+        const totalFires = feats.length;
+        const totalAcres = feats.reduce((sum: number, f: any) => sum + (f.properties?.GIS_ACRES || 0), 0);
+        setStats((s) => ({
+          ...s,
+          totalFires,
+          totalAcres: Math.round(totalAcres),
+          averageSize: totalFires > 0 ? Math.round(totalAcres / totalFires) : 0,
+        }));
+      })
+      .catch((e) => console.warn(`Perimeters for ${year} failed:`, e));
+
+    return () => { cancelled = true; };
+  }, [selectedYear]);
+
+  // Legacy filter pass kept for code paths that still expect allFeatures to be present.
+  // No-op now that the per-year fetch above sets fireData directly.
   useEffect(() => {
     if (!allFeatures) return;
     const features = selectedYears.length
       ? allFeatures.filter((f) => selectedYears.includes(Number(f?.properties?.YEAR_)))
-      : [];
+      : allFeatures;
     setFireData({ type: 'FeatureCollection', features });
     const totalFires = features.length;
     const totalAcres = features.reduce((sum: number, f: any) => sum + (f.properties?.GIS_ACRES || 0), 0);
