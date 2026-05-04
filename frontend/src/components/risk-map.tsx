@@ -212,7 +212,6 @@ export function RiskMap() {
   const [selectedZone, setSelectedZone] = useState<SelectedZone | null>(null);
   const [mapTypeId, setMapTypeId] = useState<'roadmap' | 'satellite' | 'hybrid' | 'terrain'>('satellite');
   const [timeframe, setTimeframe] = useState<"current" | "forecast-6h" | "forecast-24h">("current");
-  const [searchQuery, setSearchQuery] = useState("");
   const [fireIncidents, setFireIncidents] = useState<FireIncident[]>([]);
   const [zoneLevel, setZoneLevel] = useState<ZoneLevel>("counties");
   const [loadingFires, setLoadingFires] = useState(true);
@@ -307,17 +306,6 @@ export function RiskMap() {
                     Interactive Risk Map
                   </CardTitle>
                   <div className="flex flex-wrap items-center gap-2">
-                    {/* Search */}
-                    <div className="relative">
-                      <Search className="absolute left-2 top-2.5 h-4 w-4 text-muted-foreground" />
-                      <Input
-                        placeholder="Search location..."
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        className="w-48 pl-8"
-                      />
-                    </div>
-
                     {/* Map Type Selector */}
                     <Select value={mapTypeId} onValueChange={(value) => setMapTypeId(value as any)}>
                       <SelectTrigger className="w-32">
