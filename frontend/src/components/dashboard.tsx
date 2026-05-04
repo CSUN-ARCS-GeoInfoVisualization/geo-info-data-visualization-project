@@ -30,6 +30,8 @@ interface WeatherData {
   visibility: string;
 }
 
+import { fetchOpenMeteo } from "../lib/openMeteoCache";
+
 async function fetchWeather(lat: number, lng: number): Promise<WeatherData> {
   const url =
     `https://api.open-meteo.com/v1/forecast` +
@@ -39,8 +41,7 @@ async function fetchWeather(lat: number, lng: number): Promise<WeatherData> {
     `&temperature_unit=fahrenheit&wind_speed_unit=mph` +
     `&timezone=auto&forecast_days=1`;
 
-  const res = await fetch(url);
-  const data = await res.json();
+  const data = await fetchOpenMeteo<any>(url);
   const c = data.current;
   const visibilityMeters: number = data.hourly.visibility[0] ?? 0;
 

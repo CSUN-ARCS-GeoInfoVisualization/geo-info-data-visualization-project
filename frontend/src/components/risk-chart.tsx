@@ -6,6 +6,7 @@ import {
   AreaChart, Area,
 } from "recharts";
 import { apiFetch } from "../services/api";
+import { fetchOpenMeteo } from "../lib/openMeteoCache";
 
 interface DayData {
   day: string;
@@ -32,42 +33,45 @@ export function RiskChart({ title, type = "line", lat = 34.0522, lon = -118.2437
     async function fetchForecast() {
       setLoading(true);
       try {
-        // Fetch 7-day weather forecast from Open-Meteo
+        // Two requests in PARALLEL — Open-Meteo forecast and ONE ML prediction.
+        // The previous version fired /predict/batch 7 times sequentially with
+        // identical inputs (same lat/lon every iteration), turning a ~500ms
+        // chart into a ~4s chart. The base risk only depends on lat/lon, so
+        // one call is correct; per-day variation is layered on from weather.
         const url =
           `https://api.open-meteo.com/v1/forecast` +
           `?latitude=${lat}&longitude=${lon}` +
           `&daily=temperature_2m_max,relative_humidity_2m_mean,wind_speed_10m_max` +
           `&temperature_unit=fahrenheit&wind_speed_unit=mph` +
           `&timezone=auto&forecast_days=7`;
-        const res = await fetch(url);
-        const forecast = await res.json();
+        const [forecastRes, predictRes] = await Promise.all([
+          fetchOpenMeteo<any>(url),
+          apiFetch("/predict/batch", {
+            method: "POST",
+            body: JSON.stringify({ items: [{ lat, lon }] }),
+          })
+            .then((r) => (r.ok ? r.json() : null))
+            .catch(() => null),
+        ]);
 
-        if (forecast.daily) {
+        const baseRisk = (predictRes?.results?.[0]?.prediction?.risk_probability ?? null);
+
+        if (forecastRes.daily) {
           const days: DayData[] = [];
           for (let i = 0; i < 7; i++) {
-            const date = new Date(forecast.daily.time[i]);
-            const temp = forecast.daily.temperature_2m_max[i];
-            const hum = forecast.daily.relative_humidity_2m_mean[i];
-            const wind = forecast.daily.wind_speed_10m_max[i];
+            const date = new Date(forecastRes.daily.time[i]);
+            const temp = forecastRes.daily.temperature_2m_max[i];
+            const hum = forecastRes.daily.relative_humidity_2m_mean[i];
+            const wind = forecastRes.daily.wind_speed_10m_max[i];
 
-            // Calculate risk score using the ML model via backend
-            let risk = 0;
-            try {
-              const r = await apiFetch("/predict/batch", {
-                method: "POST",
-                body: JSON.stringify({ items: [{ lat, lon }] }),
-              });
-              if (r.ok) {
-                const d = await r.json();
-                risk = (d.results?.[0]?.prediction?.risk_probability ?? 0) * 5;
-              }
-            } catch {
-              // Estimate risk from weather: higher temp + wind + lower humidity = higher risk
-              risk = Math.min(5, ((temp - 60) / 20 + (30 - hum) / 30 + wind / 40) * 2);
-              risk = Math.max(0, Math.round(risk * 10) / 10);
-            }
+            // Use the ML base risk if we got it; otherwise fall back to a
+            // weather-only heuristic so the chart still renders during outages.
+            let risk = baseRisk !== null
+              ? baseRisk * 5
+              : Math.max(0, Math.min(5,
+                  ((temp - 60) / 20 + (30 - hum) / 30 + wind / 40) * 2));
 
-            // Adjust risk slightly per day based on weather variation
+            // Per-day adjustment from local weather variation
             const weatherFactor = ((temp - 70) / 30 + (50 - hum) / 50 + wind / 50);
             const adjustedRisk = Math.max(0, Math.min(5, risk + weatherFactor * 0.5));
 
