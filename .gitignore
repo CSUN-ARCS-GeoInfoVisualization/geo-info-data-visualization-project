@@ -29,6 +29,7 @@ instance/
 
 # IDE
 .idea/
+.claude/
 
 # Migrations cache (if any)
 migrations/__pycache__/
