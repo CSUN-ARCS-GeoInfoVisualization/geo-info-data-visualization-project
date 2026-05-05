@@ -27,6 +27,15 @@ import matplotlib
 matplotlib.use("Agg")  # non-interactive backend for server environments
 import matplotlib.pyplot as plt
 import seaborn as sns
+
+# SHAP is dev-only (in requirements-dev.txt, NOT requirements.txt) so production
+# Render deploys never install it. The training script degrades gracefully if
+# someone runs it without the dev requirements.
+try:
+    import shap
+    _SHAP_AVAILABLE = True
+except ImportError:
+    _SHAP_AVAILABLE = False
 from sklearn.calibration import CalibratedClassifierCV, calibration_curve
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
@@ -329,13 +338,104 @@ def retrain():
     os.makedirs(_CHARTS_DIR, exist_ok=True)
     _generate_charts(X, y, y_pred, y_proba, base_rf, acc, prec, rec, f1, auc, cm)
     _generate_calibration_chart(y, y_proba_s[:, 1], y_proba_cal[:, 1], auc_s, auc_cal)
-    _generate_summary(acc, prec, rec, f1, auc, cm, importances, n_samples, n_fire, n_nofire)
+
+    if _SHAP_AVAILABLE:
+        print_section("GENERATING SHAP CHARTS")
+        shap_importances = _generate_shap_charts(base_rf, X_scaled, X, FEATURE_COLS)
+    else:
+        print("  shap not installed; skipping SHAP charts. "
+              "Install dev deps with: pip install -r requirements-dev.txt")
+        shap_importances = None
+
+    _generate_summary(acc, prec, rec, f1, auc, cm, importances, n_samples, n_fire, n_nofire,
+                      shap_importances=shap_importances)
     print(f"  Charts saved -> {_CHARTS_DIR}")
 
     print("\nRetrain complete.\n")
 
 
-def _generate_summary(acc, prec, rec, f1, auc, cm, importances, n_samples, n_fire, n_nofire):
+def _generate_shap_charts(base_rf, X_scaled, X_raw, feature_names):
+    """Generate SHAP attribution charts for the uncalibrated base RandomForest.
+
+    Uses TreeExplainer (exact, fast) on the *uncalibrated* base RF because
+    SHAP doesn't natively support CalibratedClassifierCV. The base RF has
+    identical feature ordering and was fit on the same scaled data, so the
+    attributions are valid for interpreting which features drive the model
+    -- they just won't sum to the *calibrated* probability.
+
+    SHAP values are computed in scaled feature space (because that's what
+    the model sees), but axes/colors use the raw values for human-readable
+    plots.
+
+    Returns mean(|SHAP|) per feature so _generate_summary can build a
+    Gini-vs-SHAP comparison table.
+    """
+    explainer = shap.TreeExplainer(base_rf)
+    raw = explainer.shap_values(X_scaled)
+
+    # Binary classifier shape changed across SHAP versions:
+    #   >=0.45  -> 3D ndarray (n_samples, n_features, n_classes)
+    #   <0.45   -> list of 2 arrays [neg_class, pos_class]
+    # We always want the positive ("fire") class.
+    if isinstance(raw, list):
+        shap_vals = raw[1]
+    elif raw.ndim == 3:
+        shap_vals = raw[:, :, 1]
+    else:
+        shap_vals = raw
+
+    # 1. Bar -- global mean(|SHAP|) per feature
+    plt.figure(figsize=(7, 5))
+    shap.summary_plot(
+        shap_vals, X_raw, feature_names=feature_names,
+        plot_type="bar", show=False,
+    )
+    plt.title("SHAP Feature Importance (mean |SHAP|)")
+    plt.tight_layout()
+    plt.savefig(os.path.join(_CHARTS_DIR, "shap_summary_bar.png"),
+                dpi=150, bbox_inches="tight")
+    plt.close()
+
+    # 2. Beeswarm -- per-row SHAP distribution + signed direction
+    plt.figure(figsize=(8, 6))
+    shap.summary_plot(
+        shap_vals, X_raw, feature_names=feature_names,
+        show=False,
+    )
+    plt.title("SHAP Beeswarm — feature impact + value direction")
+    plt.tight_layout()
+    plt.savefig(os.path.join(_CHARTS_DIR, "shap_beeswarm.png"),
+                dpi=150, bbox_inches="tight")
+    plt.close()
+
+    # 3. Dependence plots for the top 3 features (by mean |SHAP|)
+    mean_abs = np.mean(np.abs(shap_vals), axis=0)
+    top3_idx = np.argsort(mean_abs)[-3:][::-1]  # top-3, descending
+
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+    for ax, idx in zip(axes, top3_idx):
+        feat_name = feature_names[idx]
+        shap.dependence_plot(
+            int(idx), shap_vals, X_raw,
+            feature_names=feature_names,
+            interaction_index="auto",
+            ax=ax, show=False,
+        )
+        ax.set_title(f"SHAP dependence: {feat_name}")
+    fig.suptitle(
+        "Top-3 feature dependence plots (color = strongest interacting feature)",
+        y=1.02,
+    )
+    fig.tight_layout()
+    fig.savefig(os.path.join(_CHARTS_DIR, "shap_dependence_top3.png"),
+                dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+    return mean_abs
+
+
+def _generate_summary(acc, prec, rec, f1, auc, cm, importances, n_samples, n_fire, n_nofire,
+                      shap_importances=None):
     tn, fp, fn, tp = cm.ravel()
     spec = tn / (tn + fp)
     miss_rate = fn / (fn + tp)
@@ -399,6 +499,55 @@ def _generate_summary(acc, prec, rec, f1, auc, cm, importances, n_samples, n_fir
         bar = "#" * int(imp * 20)
         lines.append(f"| **{name}** | {imp:.3f} `{bar}` | {descriptions.get(name, '')} |")
 
+    if shap_importances is not None:
+        # Build Gini-vs-SHAP comparison table.
+        # Disagreements between the two are the most interesting rows: Gini
+        # measures how often a feature is split on; SHAP measures how much it
+        # actually moves a prediction (and accounts for feature interactions).
+        gini_rank = {n: i + 1 for i, (n, _) in enumerate(
+            sorted(zip(FEATURE_COLS, importances), key=lambda x: -x[1])
+        )}
+        shap_rank = {n: i + 1 for i, (n, _) in enumerate(
+            sorted(zip(FEATURE_COLS, shap_importances), key=lambda x: -x[1])
+        )}
+
+        lines += [
+            "",
+            "---",
+            "",
+            "## SHAP Feature Attributions",
+            "",
+            "Computed with `shap.TreeExplainer` on the uncalibrated base RandomForest.",
+            "Mean(|SHAP|) measures how much each feature actually moves a prediction,",
+            "averaged across the training set — a richer signal than Gini importance",
+            "because it accounts for feature interactions and (in the beeswarm) shows",
+            "signed direction.",
+            "",
+            "| Feature | Gini Importance | Mean \\|SHAP\\| | Gini Rank | SHAP Rank | Shift |",
+            "|---------|-----------------|---------------|-----------|-----------|-------|",
+        ]
+        for i, name in enumerate(FEATURE_COLS):
+            gi = importances[i]
+            si = shap_importances[i]
+            gr = gini_rank[name]
+            sr = shap_rank[name]
+            shift = gr - sr
+            if shift > 0:
+                shift_str = f"+{shift}"
+            elif shift < 0:
+                shift_str = str(shift)
+            else:
+                shift_str = "—"
+            lines.append(
+                f"| **{name}** | {gi:.3f} | {si:.3f} | {gr} | {sr} | {shift_str} |"
+            )
+        lines += [
+            "",
+            "Positive shift means SHAP ranks the feature higher than Gini does.",
+            "Where the two columns disagree, trust SHAP for *prediction-time impact*",
+            "and Gini for *training-time split frequency*.",
+        ]
+
     lines += [
         "",
         "---",
@@ -430,6 +579,12 @@ def _generate_summary(acc, prec, rec, f1, auc, cm, importances, n_samples, n_fir
         "| `feature_distributions.png` | KDE plots comparing fire vs no-fire for each feature |",
         "| `calibration_curve.png` | Predicted probability vs observed fire frequency, before/after sigmoid calibration |",
     ]
+    if shap_importances is not None:
+        lines += [
+            "| `shap_summary_bar.png` | SHAP global importance — mean(\\|SHAP\\|) per feature; alternative to Gini |",
+            "| `shap_beeswarm.png` | SHAP per-row distribution — color = feature value, x = SHAP impact (sign = direction) |",
+            "| `shap_dependence_top3.png` | Top-3 features by mean(\\|SHAP\\|), each plotted against its SHAP value and colored by the strongest interacting feature |",
+        ]
 
     path = os.path.join(_CHARTS_DIR, "RESULTS.md")
     with open(path, "w", encoding="utf-8") as f:
