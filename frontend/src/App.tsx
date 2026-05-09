@@ -77,7 +77,7 @@ type SettingsTab = "profile" | "locations" | "notifications";
 
 const NAV_LINKS: { page: Page; label: string }[] = [
   { page: "dashboard", label: "Dashboard" },
-  { page: "evacuation-routes", label: "Evacuation Routes" },
+  { page: "evacuation-routes", label: "Shelters & Evacuation" },
   { page: "news", label: "News" },
   { page: "risk-map", label: "Risk Map" },
   { page: "alerts", label: "Alerts" },

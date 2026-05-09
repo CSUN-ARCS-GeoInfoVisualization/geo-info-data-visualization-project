@@ -117,7 +117,13 @@ const safetyChecklist = {
 };
 
 // Deck.gl overlay component with clustering
-function FireFacilitiesOverlay({ smallDots = false }: { smallDots?: boolean }) {
+function FireFacilitiesOverlay({
+  smallDots = false,
+  onRouteTo,
+}: {
+  smallDots?: boolean;
+  onRouteTo?: (target: { lat: number; lng: number; label: string }) => void;
+}) {
   const map = useMap();
   const [overlay, setOverlay] = useState<GoogleMapsOverlay | null>(null);
   const [tooltip, setTooltip] = useState<any>(null);
@@ -499,25 +505,50 @@ function FireFacilitiesOverlay({ smallDots = false }: { smallDots?: boolean }) {
             )}
           </div>
           {tooltip.content.latitude != null && tooltip.content.longitude != null && (
-            <a
-              href={`https://www.google.com/maps/dir/?api=1&destination=${tooltip.content.latitude},${tooltip.content.longitude}`}
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{
-                display: 'block',
-                marginTop: 10,
-                textAlign: 'center',
-                background: '#2563eb',
-                color: 'white',
-                padding: '8px 12px',
-                borderRadius: 6,
-                fontSize: 12,
-                fontWeight: 600,
-                textDecoration: 'none',
-              }}
-            >
-              Get Directions (Google Maps)
-            </a>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 10 }}>
+              {onRouteTo && (
+                <button
+                  onClick={() => {
+                    onRouteTo({
+                      lat: tooltip.content.latitude,
+                      lng: tooltip.content.longitude,
+                      label: tooltip.content.shelter_name || 'Shelter',
+                    });
+                    setTooltip(null);
+                  }}
+                  style={{
+                    background: '#16a34a',
+                    color: 'white',
+                    padding: '8px 12px',
+                    borderRadius: 6,
+                    fontSize: 12,
+                    fontWeight: 600,
+                    border: 'none',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Route on this map
+                </button>
+              )}
+              <a
+                href={`https://www.google.com/maps/dir/?api=1&destination=${tooltip.content.latitude},${tooltip.content.longitude}`}
+                target="_blank"
+                rel="noopener noreferrer"
+                style={{
+                  display: 'block',
+                  textAlign: 'center',
+                  background: '#2563eb',
+                  color: 'white',
+                  padding: '8px 12px',
+                  borderRadius: 6,
+                  fontSize: 12,
+                  fontWeight: 600,
+                  textDecoration: 'none',
+                }}
+              >
+                Open in Google Maps
+              </a>
+            </div>
           )}
         </div>
       )}
@@ -578,9 +609,11 @@ function FireFacilitiesOverlay({ smallDots = false }: { smallDots?: boolean }) {
 function DirectionsPanel({
   open,
   onClose,
+  routeTarget,
 }: {
   open: boolean;
   onClose: () => void;
+  routeTarget?: { lat: number; lng: number; label: string } | null;
 }) {
   const map = useMap();
   const [userLat, setUserLat] = useState<number | null>(null);
@@ -597,22 +630,21 @@ function DirectionsPanel({
   const [loading, setLoading] = useState(false);
   const rendererRef = useRef<google.maps.DirectionsRenderer | null>(null);
 
-  // Get user location on mount
+  // Get user location once the panel opens (or a shelter route is requested)
   useEffect(() => {
-    if (open && !userLat) {
+    if ((open || routeTarget) && !userLat) {
       navigator.geolocation?.getCurrentPosition(
         (pos) => {
           setUserLat(pos.coords.latitude);
           setUserLng(pos.coords.longitude);
         },
         () => {
-          // Default to LA if geolocation fails
           setUserLat(34.0522);
           setUserLng(-118.2437);
         }
       );
     }
-  }, [open, userLat]);
+  }, [open, routeTarget, userLat]);
 
   // Cleanup renderer on close
   useEffect(() => {
@@ -672,6 +704,59 @@ function DirectionsPanel({
   const findNearestShelter = () => {
     setDestination("nearest emergency shelter California");
   };
+
+  // Auto-route when a shelter is picked from the map
+  useEffect(() => {
+    if (!routeTarget || !map || !userLat || !userLng) return;
+    const dest = `${routeTarget.lat},${routeTarget.lng}`;
+    setDestination(routeTarget.label || dest);
+
+    let cancelled = false;
+    (async () => {
+      setLoading(true);
+      setError("");
+      setRouteInfo(null);
+      try {
+        const service = new google.maps.DirectionsService();
+        const result = await service.route({
+          origin: { lat: userLat, lng: userLng },
+          destination: { lat: routeTarget.lat, lng: routeTarget.lng },
+          travelMode: google.maps.TravelMode.DRIVING,
+          provideRouteAlternatives: true,
+          drivingOptions: {
+            departureTime: new Date(),
+            trafficModel: google.maps.TrafficModel.BEST_GUESS,
+          },
+        });
+        if (cancelled) return;
+        if (result.routes.length > 0) {
+          const route = result.routes[0];
+          const leg = route.legs[0];
+          if (rendererRef.current) rendererRef.current.setMap(null);
+          const renderer = new google.maps.DirectionsRenderer({
+            map,
+            directions: result,
+            polylineOptions: { strokeColor: "#16a34a", strokeWeight: 5 },
+          });
+          rendererRef.current = renderer;
+          setRouteInfo({
+            distance: leg.distance?.text || "Unknown",
+            duration: leg.duration?.text || "Unknown",
+            durationInTraffic: leg.duration_in_traffic?.text,
+            steps: leg.steps.map((s) => s.instructions.replace(/<[^>]+>/g, "")),
+            summary: route.summary,
+          });
+        }
+      } catch (e: any) {
+        if (!cancelled) setError(e.message || "Failed to calculate route");
+      }
+      if (!cancelled) setLoading(false);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [routeTarget, map, userLat, userLng]);
 
   if (!open) return null;
 
@@ -754,6 +839,12 @@ export function EvacuationRoutes() {
   const [checkedItems, setCheckedItems] = useState<{[key: string]: boolean}>({});
   const [smallDots, setSmallDots] = useState(false);
   const [directionsOpen, setDirectionsOpen] = useState(false);
+  const [routeTarget, setRouteTarget] = useState<{ lat: number; lng: number; label: string } | null>(null);
+
+  const handleRouteTo = (target: { lat: number; lng: number; label: string }) => {
+    setRouteTarget(target);
+    setDirectionsOpen(true);
+  };
 
   const toggleCheckbox = (level: string, index: number) => {
     const key = `${level}-${index}`;
@@ -787,9 +878,9 @@ export function EvacuationRoutes() {
       {/* Header */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
-          <h1 className="text-3xl font-bold mb-2">Evacuation Routes</h1>
+          <h1 className="text-3xl font-bold mb-2">Shelters & Evacuation</h1>
           <p className="text-muted-foreground">
-            Current evacuation zones, routes, and emergency assembly points
+            Find a shelter near you, get directions, and review evacuation guidance — anytime, not just during an emergency.
           </p>
         </div>
         <div className="flex gap-2">
@@ -804,31 +895,22 @@ export function EvacuationRoutes() {
         </div>
       </div>
 
-      {/* Emergency Alert */}
-      <Alert className="border-l-4 border-l-red-500 bg-red-50">
-        <AlertTriangle className="h-4 w-4" />
-        <AlertDescription>
-          <div className="flex items-center justify-between">
-            <div>
-              <strong>Active Evacuation Order:</strong> Zone A residents must evacuate immediately.
-              Take Highway 101 North or Mountain View Road.
-            </div>
-            <Button size="sm" variant="destructive">
-              View Details
-            </Button>
-          </div>
-        </AlertDescription>
-      </Alert>
-
       {/* Directions Panel */}
-      <DirectionsPanel open={directionsOpen} onClose={() => setDirectionsOpen(false)} />
+      <DirectionsPanel
+        open={directionsOpen}
+        onClose={() => {
+          setDirectionsOpen(false);
+          setRouteTarget(null);
+        }}
+        routeTarget={routeTarget}
+      />
 
       {/* Interactive Map with Fire Facilities */}
       <Card>
         <CardHeader className="flex flex-row items-center justify-between">
           <CardTitle className="flex items-center gap-2">
             <MapPin className="h-5 w-5" />
-            Interactive Evacuation Zone Map
+            Find a Shelter
           </CardTitle>
 
           {/* Small Dots Toggle */}
@@ -852,7 +934,7 @@ export function EvacuationRoutes() {
               gestureHandling="greedy"
               disableDefaultUI={false}
             >
-              <FireFacilitiesOverlay smallDots={smallDots} />
+              <FireFacilitiesOverlay smallDots={smallDots} onRouteTo={handleRouteTo} />
               <SavedLocationsOverlay />
             </Map>
           </div>
