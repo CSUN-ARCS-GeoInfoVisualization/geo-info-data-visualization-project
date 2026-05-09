@@ -120,17 +120,23 @@ const safetyChecklist = {
 function FireFacilitiesOverlay({
   smallDots = false,
   onRouteTo,
+  showFires = true,
+  showEvacZones = true,
 }: {
   smallDots?: boolean;
   onRouteTo?: (target: { lat: number; lng: number; label: string }) => void;
+  showFires?: boolean;
+  showEvacZones?: boolean;
 }) {
   const map = useMap();
   const [overlay, setOverlay] = useState<GoogleMapsOverlay | null>(null);
   const [tooltip, setTooltip] = useState<any>(null);
+  const [zoneTooltip, setZoneTooltip] = useState<any>(null);
   const [hoveredShelter, setHoveredShelter] = useState<any>(null);
   const [facilitiesData, setFacilitiesData] = useState<any[]>([]);
   const [clusteredData, setClusteredData] = useState<any[]>([]);
   const [firePerimeters, setFirePerimeters] = useState<any>(null);
+  const [evacZones, setEvacZones] = useState<any>(null);
   const [zoom, setZoom] = useState(8);
 
   // NIFC fire perimeters — so the evac map renders the same "avoid these areas"
@@ -143,6 +149,25 @@ function FireFacilitiesOverlay({
         if (data?.features) setFirePerimeters(data);
       })
       .catch((e) => console.warn('NIFC perimeters fetch failed (evac):', e));
+  }, []);
+
+  // Statewide CA active evacuation orders/warnings (Cal OES / Genasys aggregated)
+  useEffect(() => {
+    let cancelled = false;
+    const load = () => {
+      apiFetch('/evacuation-zones')
+        .then((r) => (r.ok ? r.json() : { features: [] }))
+        .then((data) => {
+          if (!cancelled && data?.features) setEvacZones(data);
+        })
+        .catch((e) => console.warn('Evac zones fetch failed:', e));
+    };
+    load();
+    const interval = setInterval(load, 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(interval);
+    };
   }, []);
 
   // Shelter facility type icons and colors based on usage code
@@ -265,7 +290,11 @@ function FireFacilitiesOverlay({
 
   useEffect(() => {
     if (!map) return;
-    if (clusteredData.length === 0 && !firePerimeters?.features?.length) return;
+    if (
+      clusteredData.length === 0 &&
+      !firePerimeters?.features?.length &&
+      !evacZones?.features?.length
+    ) return;
 
     // Clean up old overlay first
     if (overlay) {
@@ -281,7 +310,45 @@ function FireFacilitiesOverlay({
       return [220, 38, 38, 240];
     };
 
-    const fireLayer = firePerimeters?.features?.length
+    // Cal OES / Genasys status → color (RGBA). Lower opacity for fill so fire
+    // perimeters and shelter icons remain readable on top.
+    const colorForZoneStatus = (status: string | undefined, fill: boolean): [number, number, number, number] => {
+      const s = (status || '').toLowerCase();
+      if (s.includes('order'))    return fill ? [220, 38, 38, 90]  : [220, 38, 38, 230]; // red
+      if (s.includes('warning'))  return fill ? [249, 115, 22, 90] : [249, 115, 22, 230]; // orange
+      if (s.includes('shelter'))  return fill ? [147, 51, 234, 90] : [147, 51, 234, 230]; // purple — shelter in place
+      if (s.includes('advisory')) return fill ? [250, 204, 21, 80] : [250, 204, 21, 220]; // yellow
+      return fill ? [107, 114, 128, 60] : [107, 114, 128, 200];                          // grey fallback
+    };
+
+    const evacZoneLayer = (showEvacZones && evacZones?.features?.length)
+      ? new GeoJsonLayer({
+          id: 'cal-oes-evac-zones',
+          data: evacZones,
+          pickable: true,
+          stroked: true,
+          filled: true,
+          lineWidthMinPixels: 1.5,
+          getLineColor: (f: any) => colorForZoneStatus(f.properties?.STATUS, false),
+          getFillColor: (f: any) => colorForZoneStatus(f.properties?.STATUS, true),
+          getLineWidth: 2,
+          updateTriggers: {
+            getFillColor: [evacZones.features.length],
+            getLineColor: [evacZones.features.length],
+          },
+          onClick: (info: any) => {
+            if (info.object) {
+              setZoneTooltip({
+                x: info.x,
+                y: info.y,
+                props: info.object.properties || {},
+              });
+            }
+          },
+        })
+      : null;
+
+    const fireLayer = (showFires && firePerimeters?.features?.length)
       ? new GeoJsonLayer({
           id: 'evac-nifc-perimeters',
           data: firePerimeters,
@@ -299,9 +366,10 @@ function FireFacilitiesOverlay({
         })
       : null;
 
-    // Create new deck.gl overlay
+    // Create new deck.gl overlay — order matters: bottom-up (zones below fires below shelters)
     const deckOverlay = new GoogleMapsOverlay({
       layers: [
+        ...(evacZoneLayer ? [evacZoneLayer] : []),
         ...(fireLayer ? [fireLayer] : []),
         new IconLayer({
           id: 'fire-facilities-clustered',
@@ -429,10 +497,70 @@ function FireFacilitiesOverlay({
         deckOverlay.finalize();
       }
     };
-  }, [map, clusteredData, firePerimeters]);
+  }, [map, clusteredData, firePerimeters, evacZones, showFires, showEvacZones]);
 
   return (
     <>
+      {zoneTooltip && (
+        <div
+          style={{
+            position: 'absolute',
+            zIndex: 1001,
+            left: zoneTooltip.x + 10,
+            top: zoneTooltip.y + 10,
+            backgroundColor: 'white',
+            padding: '12px',
+            borderRadius: '8px',
+            boxShadow: '0 4px 6px rgba(0,0,0,0.15)',
+            maxWidth: '320px',
+            border: '1px solid #e5e7eb',
+            fontSize: '12px',
+            lineHeight: '1.5',
+          }}
+        >
+          <button
+            onClick={() => setZoneTooltip(null)}
+            style={{
+              position: 'absolute', top: 6, right: 8,
+              background: 'none', border: 'none', cursor: 'pointer',
+              fontSize: 18, color: '#6b7280',
+            }}
+          >×</button>
+          <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4, paddingRight: 16 }}>
+            {zoneTooltip.props.ZONE_NAME || zoneTooltip.props.ZONE_ID || 'Evacuation Zone'}
+          </div>
+          {zoneTooltip.props.STATUS && (
+            <div style={{
+              display: 'inline-block', padding: '2px 8px', borderRadius: 4,
+              fontWeight: 600, marginBottom: 6,
+              backgroundColor:
+                zoneTooltip.props.STATUS.toLowerCase().includes('order')   ? '#fee2e2' :
+                zoneTooltip.props.STATUS.toLowerCase().includes('warning') ? '#ffedd5' :
+                zoneTooltip.props.STATUS.toLowerCase().includes('shelter') ? '#f3e8ff' : '#fef3c7',
+              color:
+                zoneTooltip.props.STATUS.toLowerCase().includes('order')   ? '#991b1b' :
+                zoneTooltip.props.STATUS.toLowerCase().includes('warning') ? '#9a3412' :
+                zoneTooltip.props.STATUS.toLowerCase().includes('shelter') ? '#6b21a8' : '#92400e',
+            }}>
+              {zoneTooltip.props.STATUS}
+            </div>
+          )}
+          {zoneTooltip.props.COUNTY && <div><strong>County:</strong> {zoneTooltip.props.COUNTY}</div>}
+          {zoneTooltip.props.EVENT_TYPE && <div><strong>Event:</strong> {zoneTooltip.props.EVENT_TYPE}</div>}
+          {zoneTooltip.props.CRITICAL_INFO && (
+            <div style={{ marginTop: 6, color: '#374151' }}>{zoneTooltip.props.CRITICAL_INFO}</div>
+          )}
+          {zoneTooltip.props.STATEWIDE_LAST_UPDATED && (
+            <div style={{ marginTop: 6, color: '#6b7280', fontSize: 11 }}>
+              Updated: {new Date(zoneTooltip.props.STATEWIDE_LAST_UPDATED).toLocaleString()}
+            </div>
+          )}
+          <div style={{ marginTop: 6, color: '#9ca3af', fontSize: 10 }}>
+            Source: Cal OES statewide aggregation
+          </div>
+        </div>
+      )}
+
       {tooltip && (
         <div
           style={{
@@ -840,6 +968,8 @@ export function EvacuationRoutes() {
   const [smallDots, setSmallDots] = useState(false);
   const [directionsOpen, setDirectionsOpen] = useState(false);
   const [routeTarget, setRouteTarget] = useState<{ lat: number; lng: number; label: string } | null>(null);
+  const [showFires, setShowFires] = useState(true);
+  const [showEvacZones, setShowEvacZones] = useState(true);
 
   const handleRouteTo = (target: { lat: number; lng: number; label: string }) => {
     setRouteTarget(target);
@@ -907,22 +1037,41 @@ export function EvacuationRoutes() {
 
       {/* Interactive Map with Fire Facilities */}
       <Card>
-        <CardHeader className="flex flex-row items-center justify-between">
+        <CardHeader className="flex flex-row items-center justify-between flex-wrap gap-3">
           <CardTitle className="flex items-center gap-2">
             <MapPin className="h-5 w-5" />
             Find a Shelter
           </CardTitle>
 
-          {/* Small Dots Toggle */}
-          <label className="flex items-center gap-2 cursor-pointer">
-            <input
-              type="checkbox"
-              checked={smallDots}
-              onChange={(e) => setSmallDots(e.target.checked)}
-              className="w-4 h-4 cursor-pointer"
-            />
-            <span className="text-sm font-medium">Small Icons</span>
-          </label>
+          <div className="flex items-center gap-4 flex-wrap">
+            <label className="flex items-center gap-2 cursor-pointer text-sm">
+              <input
+                type="checkbox"
+                checked={showEvacZones}
+                onChange={(e) => setShowEvacZones(e.target.checked)}
+                className="w-4 h-4 cursor-pointer accent-red-600"
+              />
+              <span className="font-medium">Evacuation Zones</span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer text-sm">
+              <input
+                type="checkbox"
+                checked={showFires}
+                onChange={(e) => setShowFires(e.target.checked)}
+                className="w-4 h-4 cursor-pointer accent-orange-600"
+              />
+              <span className="font-medium">Active Fires</span>
+            </label>
+            <label className="flex items-center gap-2 cursor-pointer text-sm">
+              <input
+                type="checkbox"
+                checked={smallDots}
+                onChange={(e) => setSmallDots(e.target.checked)}
+                className="w-4 h-4 cursor-pointer"
+              />
+              <span className="font-medium">Small Icons</span>
+            </label>
+          </div>
         </CardHeader>
         <CardContent>
           {/* Google Map with Deck.gl Overlay */}
@@ -934,7 +1083,12 @@ export function EvacuationRoutes() {
               gestureHandling="greedy"
               disableDefaultUI={false}
             >
-              <FireFacilitiesOverlay smallDots={smallDots} onRouteTo={handleRouteTo} />
+              <FireFacilitiesOverlay
+                smallDots={smallDots}
+                onRouteTo={handleRouteTo}
+                showFires={showFires}
+                showEvacZones={showEvacZones}
+              />
               <SavedLocationsOverlay />
             </Map>
           </div>
@@ -994,6 +1148,20 @@ export function EvacuationRoutes() {
                   </div>
                 </div>
               </div>
+            </div>
+
+            {/* Active Evacuation Zones */}
+            <div className="mt-4 pt-4 border-t border-gray-200">
+              <div className="text-base font-semibold text-muted-foreground mb-2">Active Evacuation Zones — Statewide CA</div>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
+                <div className="flex items-center gap-2"><span className="inline-block w-4 h-3 rounded" style={{ backgroundColor: 'rgba(220,38,38,0.55)', border: '1.5px solid #dc2626' }} /> Order</div>
+                <div className="flex items-center gap-2"><span className="inline-block w-4 h-3 rounded" style={{ backgroundColor: 'rgba(249,115,22,0.55)', border: '1.5px solid #f97316' }} /> Warning</div>
+                <div className="flex items-center gap-2"><span className="inline-block w-4 h-3 rounded" style={{ backgroundColor: 'rgba(250,204,21,0.55)', border: '1.5px solid #facc15' }} /> Advisory</div>
+                <div className="flex items-center gap-2"><span className="inline-block w-4 h-3 rounded" style={{ backgroundColor: 'rgba(147,51,234,0.55)', border: '1.5px solid #9333ea' }} /> Shelter in Place</div>
+              </div>
+              <p className="text-xs text-muted-foreground mt-2">
+                Statewide evacuation polygons aggregated by Cal OES from county sheriffs and Genasys PROTECT (the same source Watch Duty uses). Active zones only — cleared zones drop off automatically. Click a zone for status, county, and instructions.
+              </p>
             </div>
 
             {/* Active Fire Perimeters */}

@@ -475,3 +475,49 @@ def nifc_fire_perimeters():
     resp = jsonify(data)
     resp.headers['Cache-Control'] = 'public, max-age=180, stale-while-revalidate=600'
     return resp
+
+
+_EVAC_ZONE_CACHE: dict = {"data": None, "expires": 0.0}
+_EVAC_ZONE_TTL = 60  # Cal OES pipeline refreshes ~10 min upstream; 60s keeps UI fresh
+
+
+@predict_bp.route('/evacuation-zones', methods=['GET'])
+def evacuation_zones():
+    """Statewide California active evacuation zones from the Cal OES /
+    Genasys-aggregated CA_EVACUATIONS_PROD feature service.
+
+    Same source Watch Duty consumes. Layer is filtered upstream to ACTIVE
+    zones only — cleared zones drop out (no 'All Clear' status appears).
+    """
+    import time as _time
+    now = _time.time()
+    if _EVAC_ZONE_CACHE["data"] is not None and _EVAC_ZONE_CACHE["expires"] > now:
+        resp = jsonify(_EVAC_ZONE_CACHE["data"])
+        resp.headers['Cache-Control'] = 'public, max-age=60, stale-while-revalidate=300'
+        return resp
+
+    try:
+        r = http_requests.get(
+            'https://services3.arcgis.com/uknczv4rpevve42E/arcgis/rest/services/'
+            'CA_EVACUATIONS_PROD/FeatureServer/0/query',
+            params={
+                'where': "1=1",
+                'outFields': 'COUNTY,ZONE_NAME,ZONE_ID,STATUS,EVENT_TYPE,'
+                             'CRITICAL_INFO,PUBLIC_INFO,STATEWIDE_LAST_UPDATED',
+                'outSR': '4326',
+                'f': 'geojson',
+            },
+            timeout=15,
+            headers={'User-Agent': 'FireScopeProxy/1.0'},
+        )
+        r.raise_for_status()
+        data = r.json() or {'type': 'FeatureCollection', 'features': []}
+    except Exception as e:
+        logger.warning('Cal OES evacuation zones proxy failed: %s', e)
+        return jsonify({'type': 'FeatureCollection', 'features': []}), 200
+
+    _EVAC_ZONE_CACHE["data"] = data
+    _EVAC_ZONE_CACHE["expires"] = now + _EVAC_ZONE_TTL
+    resp = jsonify(data)
+    resp.headers['Cache-Control'] = 'public, max-age=60, stale-while-revalidate=300'
+    return resp
