@@ -256,10 +256,16 @@ export function SettingsPage({ defaultTab = "profile" }: SettingsPageProps) {
                     badgeColor="bg-orange-100 text-orange-700"
                   />
                   <AboutItem
-                    name="FEMA National Shelter System"
-                    description="Backend proxy /api/shelters queries FEMA's NSS (FEMA_NSS + OpenShelters fallback) for active California emergency shelters. Populates the Evacuation Routes map shelter clusters when FEMA has an open event for CA; otherwise the feed is intentionally empty."
-                    badge="Federal"
-                    badgeColor="bg-amber-100 text-amber-700"
+                    name="CalOES CA_Shelter_system (replaces FEMA NSS)"
+                    description="Backend /api/shelters queries the CalOES-published CA_Shelter_system feature service on services2.arcgis.com — a statewide mirror of the legacy FEMA National Shelter System California subset, with 8,014 pre-staged emergency facilities (5,096 dual-purpose, 2,218 evacuation, 699 post-impact). We migrated off FEMA's own public NSS endpoint after CAL FIRE / FEMA reduced it to currently-open shelters only (~10 features nationwide, zero in CA). Field names are 10-char ArcGIS-shapefile style upstream and remapped server-side to the original FEMA NSS schema (shelter_name, address_1, evacuation_capacity, etc.) so the Shelters & Evacuation page consumes them directly. Refreshes every 6 h; treat as a slow-moving inventory snapshot."
+                    badge="State agency"
+                    badgeColor="bg-orange-100 text-orange-700"
+                  />
+                  <AboutItem
+                    name="Cal OES CA_EVACUATIONS_PROD (active evacuation zones)"
+                    description="Backend /api/evacuation-zones proxies the Cal OES statewide evacuation feature service on services3.arcgis.com — the same source Watch Duty consumes. It aggregates Genasys PROTECT (formerly Zonehaven) zone polygons plus county sheriff / EOC publication feeds into one statewide layer. Filtered to active statuses only: Evacuation Order, Warning, Advisory, Shelter in Place. Cleared zones drop off the upstream layer rather than persisting with an 'All Clear' status. Powers the live red banner + always-visible centroid pins on the Shelters & Evacuation page; auto-refresh every 60 s."
+                    badge="State agency"
+                    badgeColor="bg-orange-100 text-orange-700"
                   />
                 </div>
               </div>
