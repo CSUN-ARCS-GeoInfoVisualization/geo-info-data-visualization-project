@@ -82,32 +82,21 @@ cd backend && source .venv/bin/activate && python app.py
 cd frontend && VITE_API_URL=http://localhost:5000/api npm run dev
 ```
 
-### Production deploy (manual until Netlify env-var is fixed)
+### Production deploy
+
+Push to `main`. CI syncs to `domain-deployment`, Netlify auto-builds with the prod env vars (`VITE_API_URL`, `VITE_GOOGLE_MAPS_API_KEY` are configured at site level, scope = all contexts). No manual override needed.
+
+If you ever need to force a fresh build (e.g., to clear Netlify's build cache):
 
 ```bash
-cd frontend
-VITE_API_URL=https://firescope-api.onrender.com/api \
-VITE_GOOGLE_MAPS_API_KEY=<key> \
-npm run build
-cd ..
-netlify deploy --site=4d02944f-31ae-486b-a273-56dfe3d5016b \
-  --dir=frontend/build --prod --no-build \
-  --message="<what changed>"
+netlify api createSiteBuild --data '{"site_id":"4d02944f-31ae-486b-a273-56dfe3d5016b","clear_cache":true}'
 ```
 
 ---
 
 ## Next up — queue (priority order)
 
-### 1. Fix Netlify auto-deploy (small but blocking)
-Push to `main` should produce a working production bundle without manual override. Current state: every push builds with `VITE_API_URL` undefined, so the bundle calls `localhost:5000` and dies.
-
-- **Where:** Netlify dashboard → `firescope` site → Site settings → Environment variables
-- **Add:** `VITE_API_URL = https://firescope-api.onrender.com/api`, scope = "All deploy contexts" (or at minimum "Production")
-- **Add:** `VITE_GOOGLE_MAPS_API_KEY = <key from .env>`, same scope
-- **Verify:** push a no-op commit to `main`, watch Netlify build, confirm new bundle hash references `firescope-api.onrender.com/api` (not `localhost`)
-
-### 2. Per-zone independent overrides (researcher page)
+### 1. Per-zone independent overrides (researcher page)
 Originally queued in the prior session memory, still pending.
 
 - State: `zoneOverrides: Map<string, {evi, lst, wind, elevation}>`
@@ -117,28 +106,28 @@ Originally queued in the prior session memory, still pending.
 - Multiple zones can have different overrides simultaneously
 - **Where:** `frontend/src/components/research-page.tsx`
 
-### 3. FIRMS hotspots as polygon zones (not circles)
+### 2. FIRMS hotspots as polygon zones (not circles)
 Convert each FIRMS point into a small polygon sized by FRP (fire radiative power) — red shaded boundaries instead of `ScatterplotLayer` dots. Use `GeoJsonLayer` with generated polygons.
 
 - **Where:** `frontend/src/components/FIRMSMap.tsx`
 
-### 4. Surface evacuation zones on the other maps
+### 3. Surface evacuation zones on the other maps
 Right now zones only render on the Shelters & Evacuation page. Consider an opt-in "Show evacuation zones" toggle on the Dashboard `GoogleRiskMap` and the `risk-map` page so users see active orders without leaving the page they're on.
 
-### 5. "Find shelters near me" geolocation flow
+### 4. "Find shelters near me" geolocation flow
 Right now you can route TO a shelter you've already found. Add a one-click "Show 10 nearest shelters to my current location" button that:
 - Requests `navigator.geolocation`
 - Computes haversine distance to all 8,014 shelters server-side (or sorts client-side)
 - Highlights the 10 nearest with a different icon / list view
 - Each row has the same Route / Open in Google Maps actions
 
-### 6. Persistent route memory
+### 5. Persistent route memory
 When a user routes to a shelter and reloads the page, the polyline disappears. Consider persisting the last route target in `localStorage` so it auto-restores.
 
-### 7. Fix `evacuationZones` mock array (cleanup)
+### 6. Fix `evacuationZones` mock array (cleanup)
 `frontend/src/components/evacuation-routes.tsx` line ~25 still has a hard-coded `evacuationZones` array (Zone A / Zone B mock data) used inside a commented-out grid. Either delete it or repurpose it for the now-real Cal OES data.
 
-### 8. Polygon click priority over centroid pin
+### 7. Polygon click priority over centroid pin
 At zoom 13+, both the polygon and the centroid pin are pickable. Click currently picks whichever deck.gl considers on top (the pin). Either suppress the pin at high zoom or merge the two click handlers so the same tooltip opens regardless.
 
 ---

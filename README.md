@@ -147,22 +147,9 @@ SENDER_NAME=FireScope Alerts
 - **Backend:** Render — `firescope-api` (`srv-d71dltgule4c73cqkbj0`), Python + gunicorn on the `main` branch. Manual redeploy hook: `curl -X POST "https://api.render.com/deploy/srv-d71dltgule4c73cqkbj0?key=IW-X7ztdGiA"`.
 - **Database:** Render-managed Postgres (Basic-256MB).
 
-Secrets are stored in Netlify and Render environment variables — never in the repo.
+Secrets are stored in Netlify and Render environment variables — never in the repo. Required Netlify env vars (already configured): `VITE_API_URL=https://firescope-api.onrender.com/api`, `VITE_GOOGLE_MAPS_API_KEY=…`. Both scoped to all contexts.
 
-### ⚠ Known deploy gotcha
-
-The Netlify auto-build is **not currently passing the `VITE_API_URL` env var into the Vite build**, so any push to `main` produces a bundle that points the frontend at `http://localhost:5000/api` and breaks every API call in production. Until that is fixed in Netlify Site settings → Environment variables (must be present and scoped to the production context), every deploy needs a manual override:
-
-```bash
-cd frontend
-VITE_API_URL=https://firescope-api.onrender.com/api \
-VITE_GOOGLE_MAPS_API_KEY=<your-key> \
-npm run build
-cd ..
-netlify deploy --site=4d02944f-31ae-486b-a273-56dfe3d5016b \
-  --dir=frontend/build --prod --no-build \
-  --message="manual deploy: prod env baked in"
-```
+Push to `main` → CI auto-syncs `domain-deployment` → Netlify builds + publishes. No manual deploy needed.
 
 ## Data Sources
 
