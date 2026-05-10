@@ -63,7 +63,46 @@ const causeLabel = (v: any): string => {
   return String(v);
 };
 
-const HistoricalFirePerimetersOverlay = memo(function HistoricalFirePerimetersOverlay({ fireData, selectedFire, onSelect }: { fireData: any; selectedFire: any; onSelect: (props: any | null) => void }) {
+// Normalise FRAP FIRE_NAME / DINS INCIDENTNAME for fuzzy matching.
+// FRAP uses upper-case names sometimes with " FIRE" or "(COMPLEX)" suffix;
+// DINS uses mixed case. Collapse to a comparable key.
+const normFireName = (s: any): string => String(s || '')
+  .toUpperCase()
+  .replace(/\s+FIRE\b/g, '')
+  .replace(/\s*\([^)]*\)\s*$/g, '')
+  .replace(/[^A-Z0-9]+/g, ' ')
+  .trim();
+
+const HistoricalFirePerimetersOverlay = memo(function HistoricalFirePerimetersOverlay({ fireData, selectedFire, onSelect, dinsData }: { fireData: any; selectedFire: any; onSelect: (props: any | null) => void; dinsData: any[] }) {
+  // Build incident-name → damage breakdown map (for the selected-fire card and
+  // the year aggregate). Memoised on dinsData so it's a single pass per year.
+  const damageByFire = useMemo(() => {
+    const m = new Map<string, { total: number; destroyed: number; major: number; minor: number; affected: number; noDamage: number; other: number }>();
+    for (const f of dinsData || []) {
+      const name = normFireName(f?.properties?.INCIDENTNAME);
+      if (!name) continue;
+      const d = String(f?.properties?.DAMAGE || '');
+      const cur = m.get(name) || { total: 0, destroyed: 0, major: 0, minor: 0, affected: 0, noDamage: 0, other: 0 };
+      cur.total += 1;
+      if (d.includes('Destroyed')) cur.destroyed += 1;
+      else if (d.includes('Major')) cur.major += 1;
+      else if (d.includes('Minor')) cur.minor += 1;
+      else if (d.includes('Affected')) cur.affected += 1;
+      else if (d.includes('No Damage')) cur.noDamage += 1;
+      else cur.other += 1;
+      m.set(name, cur);
+    }
+    return m;
+  }, [dinsData]);
+  const yearDamageTotal = useMemo(() => {
+    let total = 0; let destroyed = 0; let firesWithDamage = 0;
+    for (const v of damageByFire.values()) {
+      total += v.total; destroyed += v.destroyed;
+      if (v.destroyed + v.major + v.minor + v.affected > 0) firesWithDamage += 1;
+    }
+    return { total, destroyed, firesWithDamage };
+  }, [damageByFire]);
+  const selectedFireDamage = selectedFire ? damageByFire.get(normFireName(selectedFire.FIRE_NAME)) : null;
   const map = useMap();
   const overlayRef = useRef<GoogleMapsOverlay | null>(null);
   const onSelectRef = useRef(onSelect);
@@ -196,6 +235,27 @@ const HistoricalFirePerimetersOverlay = memo(function HistoricalFirePerimetersOv
                 {selectedFire.CAUSE != null && selectedFire.CAUSE !== '' && <div><strong>Cause:</strong> {causeLabel(selectedFire.CAUSE)}</div>}
                 {selectedFire.COMPLEX_NAME && <div><strong>Complex:</strong> {selectedFire.COMPLEX_NAME}</div>}
               </div>
+              {/* Per-fire DINS damage summary. CAL FIRE only inspects fires
+                  that destroyed structures, so a missing entry means the fire
+                  burned wildland with no buildings affected — that's the most
+                  common case in California. */}
+              <div className="pt-2 border-t">
+                <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Structure damage (DINS)</div>
+                {selectedFire.YEAR_ != null && Number(selectedFire.YEAR_) < 2013 ? (
+                  <div className="text-xs text-muted-foreground">DINS coverage starts 2013.</div>
+                ) : selectedFireDamage ? (
+                  <div className="text-xs space-y-0.5">
+                    <div><strong>{selectedFireDamage.total.toLocaleString()}</strong> structures inspected</div>
+                    {selectedFireDamage.destroyed > 0 && <div className="text-red-700">• {selectedFireDamage.destroyed.toLocaleString()} destroyed (&gt;50%)</div>}
+                    {selectedFireDamage.major > 0 && <div className="text-orange-700">• {selectedFireDamage.major.toLocaleString()} major (25–50%)</div>}
+                    {selectedFireDamage.minor > 0 && <div className="text-yellow-700">• {selectedFireDamage.minor.toLocaleString()} minor (10–25%)</div>}
+                    {selectedFireDamage.affected > 0 && <div className="text-green-700">• {selectedFireDamage.affected.toLocaleString()} affected (1–10%)</div>}
+                    {selectedFireDamage.noDamage > 0 && <div className="text-blue-700">• {selectedFireDamage.noDamage.toLocaleString()} inspected, no damage</div>}
+                  </div>
+                ) : (
+                  <div className="text-xs text-muted-foreground">No structures damaged — wildland fire.</div>
+                )}
+              </div>
               <button
                 onClick={() => onSelect(null)}
                 className="mt-1 text-xs text-red-500 hover:text-red-700 font-medium"
@@ -227,8 +287,19 @@ const HistoricalFirePerimetersOverlay = memo(function HistoricalFirePerimetersOv
                       </div>
                     </div>
                   </div>
+                  {yearDamageTotal.total > 0 && (
+                    <div className="pt-2 border-t">
+                      <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1">Structure damage</div>
+                      <div className="text-xs">
+                        <strong>{yearDamageTotal.destroyed.toLocaleString()}</strong> destroyed across <strong>{yearDamageTotal.firesWithDamage}</strong> {yearDamageTotal.firesWithDamage === 1 ? 'fire' : 'fires'}
+                      </div>
+                      <div className="text-[11px] text-muted-foreground mt-0.5">
+                        {yearDamageTotal.total.toLocaleString()} total structures inspected (DINS)
+                      </div>
+                    </div>
+                  )}
                   <p className="text-[10px] text-muted-foreground pt-2 border-t">
-                    Click a fire on the map or pick one from the dropdown above to see its detail.
+                    Click a fire on the map or pick one from the dropdown above to see its detail. Most California fires burn wildland with no structures destroyed — the year's damage typically concentrates in 1–3 urban-interface fires.
                   </p>
                 </>
               )}
@@ -240,24 +311,21 @@ const HistoricalFirePerimetersOverlay = memo(function HistoricalFirePerimetersOv
   );
 });
 
-// DINS Damage Overlay Component
+// DINS Damage Overlay Component — receives dinsData from the parent so the
+// fetch happens once per year and is shared with the fire-info card.
 function DINSDamageOverlay({
   enabled,
   opacity,
   radius,
-  year,
-  onCountChange,
+  dinsData,
 }: {
   enabled: boolean;
   opacity: number;
   radius: number;
-  year: number;
-  onCountChange?: (count: number, year: number) => void;
+  dinsData: any[];
 }) {
   const map = useMap();
-  // Ref so the overlay is created once — no new WebGL context on re-renders
   const overlayRef = useRef<GoogleMapsOverlay | null>(null);
-  const [dinsData, setDinsData] = useState<any[]>([]);
   const [hoveredStructure, setHoveredStructure] = useState<any>(null);
   const [selectedStructure, setSelectedStructure] = useState<any>(null);
 
@@ -270,34 +338,6 @@ function DINSDamageOverlay({
     if (damage?.includes('No Damage')) return [59, 130, 246, alpha];
     return [156, 163, 175, alpha];
   };
-
-  // Load DINS structures for the selected year. CAL FIRE DINS coverage starts
-  // 2013 — older years just return empty rather than 404.
-  useEffect(() => {
-    if (!enabled || !year || year < 2013) {
-      setDinsData([]);
-      onCountChange?.(0, year);
-      return;
-    }
-    let cancelled = false;
-    apiFetch(`/history/dins?year=${year}`)
-      .then((r) => (r.ok ? r.json() : { features: [] }))
-      .then((data: any) => {
-        if (cancelled) return;
-        const feats = data?.features || [];
-        // Geometry is GeoJSON Point but the renderer reads LATITUDE/LONGITUDE
-        // attributes — keep those, but also normalise so feats from coords work.
-        setDinsData(feats);
-        onCountChange?.(feats.length, year);
-      })
-      .catch((e) => {
-        if (cancelled) return;
-        console.error('DINS fetch failed for year', year, e);
-        setDinsData([]);
-        onCountChange?.(0, year);
-      });
-    return () => { cancelled = true; };
-  }, [year, enabled, onCountChange]);
 
   // Create the overlay ONCE when the map is ready, destroy only on unmount
   useEffect(() => {
@@ -455,13 +495,35 @@ export function History() {
   // Default to the most recent *complete* fire year (current year − 1) so the
   // map opens on a year that actually has full CAL FIRE records.
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear() - 1);
+  // DINS structures for the selected year — fetched ONCE here and shared with
+  // both overlays plus the fire info card (so the per-fire damage breakdown
+  // doesn't trigger a duplicate fetch).
+  const [dinsData, setDinsData] = useState<any[]>([]);
   const [dinsCount, setDinsCount] = useState<number | null>(null);
-  const handleDinsCount = useCallback((count: number, _year: number) => {
-    setDinsCount(count);
-  }, []);
-  // Reset count to "loading…" when year changes so the label doesn't show
-  // the previous year's number while the new fetch is in flight.
-  useEffect(() => { setDinsCount(null); }, [selectedYear]);
+  useEffect(() => {
+    setDinsCount(null);
+    if (!selectedYear || selectedYear < 2013) {
+      setDinsData([]);
+      setDinsCount(0);
+      return;
+    }
+    let cancelled = false;
+    apiFetch(`/history/dins?year=${selectedYear}`)
+      .then((r) => (r.ok ? r.json() : { features: [] }))
+      .then((data: any) => {
+        if (cancelled) return;
+        const feats = data?.features || [];
+        setDinsData(feats);
+        setDinsCount(feats.length);
+      })
+      .catch((e) => {
+        if (cancelled) return;
+        console.error('DINS fetch failed for year', selectedYear, e);
+        setDinsData([]);
+        setDinsCount(0);
+      });
+    return () => { cancelled = true; };
+  }, [selectedYear]);
   const selectedYears = [selectedYear]; // kept as an array locally so the existing overlay contract still works
   const mapTypeId: 'roadmap' = 'roadmap';
   const [searchQuery, setSearchQuery] = useState("");
@@ -797,6 +859,7 @@ export function History() {
                       fireData={fireData}
                       selectedFire={selectedFire}
                       onSelect={handleOverlaySelect}
+                      dinsData={dinsData}
                     />
                   )}
                   {/* Structure Damage (DINS) — sits on top of the perimeter
@@ -806,8 +869,7 @@ export function History() {
                     enabled={showDins}
                     opacity={dinsOpacity}
                     radius={dinsRadius}
-                    year={selectedYear}
-                    onCountChange={handleDinsCount}
+                    dinsData={dinsData}
                   />
                 </GoogleMap>
               </div>
