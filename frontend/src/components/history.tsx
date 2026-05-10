@@ -927,7 +927,7 @@ export function History() {
 
                 {showDins && (
                   <div className="pt-3 border-t">
-                    <h4 className="font-semibold text-sm mb-2">Structure damage</h4>
+                    <h4 className="font-semibold text-sm mb-2">Structure damage <span className="text-xs font-normal text-muted-foreground">— DINS coverage 2013 to present</span></h4>
                     <div className="grid grid-cols-2 gap-2 text-xs">
                       <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full" style={{ backgroundColor: 'rgb(220, 38, 38)' }} /><span>Destroyed (&gt;50%)</span></div>
                       <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full" style={{ backgroundColor: 'rgb(249, 115, 22)' }} /><span>Major (25–50%)</span></div>
@@ -936,6 +936,9 @@ export function History() {
                       <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full" style={{ backgroundColor: 'rgb(59, 130, 246)' }} /><span>No Damage</span></div>
                       <div className="flex items-center gap-2"><div className="w-3 h-3 rounded-full" style={{ backgroundColor: 'rgb(156, 163, 175)' }} /><span>Inaccessible</span></div>
                     </div>
+                    <p className="text-xs text-muted-foreground mt-2">
+                      Source: CAL FIRE Damage Inspection Program (POSTFIRE_MASTER_DATA_SHARE). 132,000+ structures statewide, 2013–present. Pre-2013 fires don't have DINS records.
+                    </p>
                   </div>
                 )}
 
@@ -996,8 +999,8 @@ export function History() {
             </CardHeader>
             <CardContent className="space-y-2 text-sm">
               <p className="text-muted-foreground">
-                Perimeters: CAL FIRE FRAP (full polygon geometry).<br />
-                Structure damage: CAL FIRE DINS post-fire assessments.
+                Perimeters: CAL FIRE FRAP (full polygon geometry, 1878–present).<br />
+                Structure damage: CAL FIRE DINS post-fire assessments (<strong>2013–present</strong>; older fires have no DINS records because the program didn't exist).
               </p>
               <p className="text-xs text-muted-foreground">
                 Data range: <strong>{stats.yearRange || '—'}</strong> · Source files updated periodically; not live.

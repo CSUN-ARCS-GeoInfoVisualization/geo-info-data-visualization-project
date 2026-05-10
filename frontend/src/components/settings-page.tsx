@@ -250,9 +250,9 @@ export function SettingsPage({ defaultTab = "profile" }: SettingsPageProps) {
                     badgeColor="bg-orange-100 text-orange-700"
                   />
                   <AboutItem
-                    name="CAL FIRE DINS (Damage Inspection)"
-                    description="Post-fire structure damage inspection records available via /api/history/dins. Endpoint shipped; UI layer is currently disabled on the History page."
-                    badge="State agency"
+                    name="CAL FIRE DINS (Damage Inspection) — 2013 to present"
+                    description="Post-fire structure damage inspection records from CAL FIRE's POSTFIRE_MASTER_DATA_SHARE feature service (132,000+ structures statewide). Coverage starts 2013 — older fires don't have DINS records because the program didn't exist. Backend /api/history/dins?year=YYYY filters by INCIDENTSTARTDATE; the History page's 'Structure Damage (DINS)' toggle renders the matching points layered over that year's fire perimeters, plus a per-fire damage breakdown in the fire-info card."
+                    badge="State agency · 2013→present"
                     badgeColor="bg-orange-100 text-orange-700"
                   />
                   <AboutItem
