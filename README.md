@@ -1,7 +1,7 @@
 # FireScope
 
 **Live site:** https://firescope.netlify.app
-**Latest stable:** [`v2.2-stable`](https://github.com/CSUN-ARCS-GeoInfoVisualization/geo-info-data-visualization-project/releases/tag/v2.2-stable) — see [`docs/SESSION_HANDOFF.md`](docs/SESSION_HANDOFF.md) to pick up where the team left off.
+**Latest stable:** [`v2.3-stable`](https://github.com/CSUN-ARCS-GeoInfoVisualization/geo-info-data-visualization-project/releases/tag/v2.3-stable) — see [`docs/SESSION_HANDOFF.md`](docs/SESSION_HANDOFF.md) to pick up where the team left off.
 
 California wildfire risk visualization and prediction platform. Senior research project at California State University, Northridge (2025–2026).
 
@@ -26,7 +26,7 @@ FireScope aggregates open-source wildfire data from government agencies, satelli
 
 - **Dashboard** — Split view: risk-zone map (county / ZIP / tract / neighborhood) + active-fire perimeter map with 4-tier containment coloring
 - **Research page** — Slider-driven per-zone overrides (EVI, temperature, wind, humidity, elevation) with live risk recomputation
-- **History page** — 22k+ CAL FIRE perimeters back to 1950, year selector, fire search dropdown, click-to-inspect info card, decoded CAUSE codes
+- **History page** — 22k+ CAL FIRE perimeters back to 1878, year selector, fire search dropdown, click-to-inspect info card with decoded CAUSE codes, and per-year **CAL FIRE DINS structure damage** (2013→present) overlaid on each year's perimeters with a per-fire damage breakdown (Destroyed / Major / Minor / Affected / No Damage) so users immediately see whether a fire was a 0-structure wildland burn or a catastrophic urban-interface event. Year-aggregate card surfaces totals (e.g., "22,701 destroyed across 35 fires" for 2018)
 - **Shelters & Evacuation** — 8,014 California pre-staged emergency shelters (CalOES mirror of the FEMA NSS dataset) with click-to-route both inside the FireScope map (Google DirectionsService polyline) and via "Open in Google Maps" turn-by-turn. Live statewide active **evacuation orders / warnings / advisories / shelter-in-place** zones from the Cal OES `CA_EVACUATIONS_PROD` aggregation (the same source Watch Duty consumes — pulls Genasys PROTECT zones plus county sheriffs). Always-visible centroid pins, "Show on map" zoom-to-fit banner, 60 s auto-refresh.
 - **Active Fires** — NIFC year-to-date perimeters with CAL FIRE + WFIGS containment enrichment
 - **Alerts** — NWS Red Flag Warnings, GNews wildfire articles, user-threshold email notifications
@@ -156,7 +156,7 @@ Push to `main` → CI auto-syncs `domain-deployment` → Netlify builds + publis
 See the in-app **Settings → About** page (`/settings`) for the full list with badges, or browse `backend/routes/` for the ingestion code. Summary:
 
 - **Satellite:** NASA FIRMS (VIIRS SNPP), NASA ORNL DAAC MODIS MOD13Q1 (EVI)
-- **Fire agencies:** CAL FIRE Incidents & Historic Fire Perimeters, NIFC WFIGS (perimeters + incident locations), CAL FIRE DINS
+- **Fire agencies:** CAL FIRE Incidents & Historic Fire Perimeters, NIFC WFIGS (perimeters + incident locations), CAL FIRE DINS Damage Inspection Program (POSTFIRE_MASTER_DATA_SHARE — 132,000+ structures statewide, 2013→present)
 - **Emergency management:** Cal OES `CA_EVACUATIONS_PROD` (statewide aggregation of Genasys PROTECT zones + county sheriff/EOC feeds), CalOES-mirrored CA Shelter System (8,014 facilities — replaces the gutted FEMA NSS public layer)
 - **Weather & news:** NOAA NWS ATOM feed, Open-Meteo, GNews API
 - **Mapping:** Google Maps Platform, deck.gl v9
