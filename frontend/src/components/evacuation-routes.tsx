@@ -17,7 +17,7 @@ import { Badge } from "./ui/badge";
 import { Alert, AlertDescription } from "./ui/alert";
 import { Map, Marker, useMap } from '@vis.gl/react-google-maps';
 import { GoogleMapsOverlay } from '@deck.gl/google-maps';
-import { IconLayer, GeoJsonLayer } from '@deck.gl/layers';
+import { IconLayer, GeoJsonLayer, ScatterplotLayer } from '@deck.gl/layers';
 import Supercluster from 'supercluster';
 import { apiFetch } from '../services/api';
 import { SavedLocationsOverlay } from './GoogleRiskMap';
@@ -122,11 +122,15 @@ function FireFacilitiesOverlay({
   onRouteTo,
   showFires = true,
   showEvacZones = true,
+  onZonesLoaded,
+  fitBoundsRef,
 }: {
   smallDots?: boolean;
   onRouteTo?: (target: { lat: number; lng: number; label: string }) => void;
   showFires?: boolean;
   showEvacZones?: boolean;
+  onZonesLoaded?: (count: number) => void;
+  fitBoundsRef?: React.MutableRefObject<(() => void) | null>;
 }) {
   const map = useMap();
   const [overlay, setOverlay] = useState<GoogleMapsOverlay | null>(null);
@@ -158,7 +162,10 @@ function FireFacilitiesOverlay({
       apiFetch('/evacuation-zones')
         .then((r) => (r.ok ? r.json() : { features: [] }))
         .then((data) => {
-          if (!cancelled && data?.features) setEvacZones(data);
+          if (!cancelled && data?.features) {
+            setEvacZones(data);
+            onZonesLoaded?.(data.features.length);
+          }
         })
         .catch((e) => console.warn('Evac zones fetch failed:', e));
     };
@@ -168,7 +175,35 @@ function FireFacilitiesOverlay({
       cancelled = true;
       clearInterval(interval);
     };
-  }, []);
+  }, [onZonesLoaded]);
+
+  // Expose a "fit bounds to all active zones" handler to the parent so the
+  // header button can call it. Zones are tiny (often <1 km) and centroid
+  // pins keep them findable, but users still need a one-click way to dive in.
+  useEffect(() => {
+    if (!fitBoundsRef) return;
+    if (!map || !evacZones?.features?.length) {
+      fitBoundsRef.current = null;
+      return;
+    }
+    fitBoundsRef.current = () => {
+      const bounds = new google.maps.LatLngBounds();
+      const visit = (c: any) => {
+        if (typeof c[0] === 'number') bounds.extend({ lng: c[0], lat: c[1] });
+        else c.forEach(visit);
+      };
+      evacZones.features.forEach((f: any) => f.geometry?.coordinates && visit(f.geometry.coordinates));
+      if (!bounds.isEmpty()) {
+        map.fitBounds(bounds, 80);
+        // Cap zoom — fitBounds on tiny clustered polygons would otherwise
+        // zoom to street level and lose context.
+        const listener = google.maps.event.addListenerOnce(map, 'idle', () => {
+          if ((map.getZoom() || 0) > 13) map.setZoom(13);
+        });
+        void listener;
+      }
+    };
+  }, [map, evacZones, fitBoundsRef]);
 
   // Shelter facility type icons and colors based on usage code
   const getFacilityStyle = (usageCode: string, facilityType: string) => {
@@ -321,7 +356,32 @@ function FireFacilitiesOverlay({
       return fill ? [107, 114, 128, 60] : [107, 114, 128, 200];                          // grey fallback
     };
 
-    const evacZoneLayer = (showEvacZones && evacZones?.features?.length)
+    // Compute centroids so we can render an always-visible pin for each
+    // active zone — most CA evacuation orders are ~1 km wide polygons that
+    // become sub-pixel at any zoom > regional. The pin keeps them findable.
+    const bboxCenter = (geom: any): [number, number] | null => {
+      if (!geom?.coordinates) return null;
+      let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+      const visit = (c: any) => {
+        if (typeof c[0] === 'number') {
+          if (c[0] < minX) minX = c[0];
+          if (c[0] > maxX) maxX = c[0];
+          if (c[1] < minY) minY = c[1];
+          if (c[1] > maxY) maxY = c[1];
+        } else c.forEach(visit);
+      };
+      visit(geom.coordinates);
+      if (!isFinite(minX)) return null;
+      return [(minX + maxX) / 2, (minY + maxY) / 2];
+    };
+
+    const evacZonePoints = (showEvacZones && evacZones?.features?.length)
+      ? evacZones.features
+          .map((f: any) => ({ center: bboxCenter(f.geometry), props: f.properties || {} }))
+          .filter((x: any) => x.center)
+      : [];
+
+    const evacZonePolygonLayer = (showEvacZones && evacZones?.features?.length)
       ? new GeoJsonLayer({
           id: 'cal-oes-evac-zones',
           data: evacZones,
@@ -348,6 +408,29 @@ function FireFacilitiesOverlay({
         })
       : null;
 
+    // Always-visible pins at zone centroids — sized in pixels, so they show up
+    // at every zoom. Click opens the same tooltip as the polygon.
+    const evacZoneMarkerLayer = evacZonePoints.length
+      ? new ScatterplotLayer({
+          id: 'cal-oes-evac-zone-markers',
+          data: evacZonePoints,
+          pickable: true,
+          stroked: true,
+          filled: true,
+          radiusUnits: 'pixels',
+          getPosition: (d: any) => d.center,
+          getRadius: 9,
+          getFillColor: (d: any) => colorForZoneStatus(d.props?.STATUS, false),
+          getLineColor: [255, 255, 255, 240],
+          lineWidthMinPixels: 2,
+          onClick: (info: any) => {
+            if (info.object) {
+              setZoneTooltip({ x: info.x, y: info.y, props: info.object.props });
+            }
+          },
+        })
+      : null;
+
     const fireLayer = (showFires && firePerimeters?.features?.length)
       ? new GeoJsonLayer({
           id: 'evac-nifc-perimeters',
@@ -366,10 +449,11 @@ function FireFacilitiesOverlay({
         })
       : null;
 
-    // Create new deck.gl overlay — order matters: bottom-up (zones below fires below shelters)
+    // Create new deck.gl overlay — order matters: bottom-up
+    // (zone polygons → fire perimeters → shelters → zone pins on top so they're never hidden)
     const deckOverlay = new GoogleMapsOverlay({
       layers: [
-        ...(evacZoneLayer ? [evacZoneLayer] : []),
+        ...(evacZonePolygonLayer ? [evacZonePolygonLayer] : []),
         ...(fireLayer ? [fireLayer] : []),
         new IconLayer({
           id: 'fire-facilities-clustered',
@@ -484,7 +568,8 @@ function FireFacilitiesOverlay({
               }
             }
           }
-        })
+        }),
+        ...(evacZoneMarkerLayer ? [evacZoneMarkerLayer] : []),
       ]
     });
 
@@ -970,6 +1055,8 @@ export function EvacuationRoutes() {
   const [routeTarget, setRouteTarget] = useState<{ lat: number; lng: number; label: string } | null>(null);
   const [showFires, setShowFires] = useState(true);
   const [showEvacZones, setShowEvacZones] = useState(true);
+  const [activeZoneCount, setActiveZoneCount] = useState(0);
+  const fitZonesRef = useRef<(() => void) | null>(null);
 
   const handleRouteTo = (target: { lat: number; lng: number; label: string }) => {
     setRouteTarget(target);
@@ -1035,6 +1122,27 @@ export function EvacuationRoutes() {
         routeTarget={routeTarget}
       />
 
+      {/* Active Evacuation Banner — visible only when CA has active orders */}
+      {activeZoneCount > 0 && (
+        <Alert className="border-l-4 border-l-red-500 bg-red-50">
+          <AlertTriangle className="h-4 w-4 text-red-600" />
+          <AlertDescription>
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div className="text-sm">
+                <strong className="text-red-700">{activeZoneCount} active evacuation order{activeZoneCount === 1 ? '' : 's'}</strong> in California right now (Cal OES live feed). They appear as red dots on the map below — click "Show on map" to zoom to them.
+              </div>
+              <Button
+                size="sm"
+                variant="destructive"
+                onClick={() => fitZonesRef.current?.()}
+              >
+                Show on map
+              </Button>
+            </div>
+          </AlertDescription>
+        </Alert>
+      )}
+
       {/* Interactive Map with Fire Facilities */}
       <Card>
         <CardHeader className="flex flex-row items-center justify-between flex-wrap gap-3">
@@ -1088,6 +1196,8 @@ export function EvacuationRoutes() {
                 onRouteTo={handleRouteTo}
                 showFires={showFires}
                 showEvacZones={showEvacZones}
+                onZonesLoaded={setActiveZoneCount}
+                fitBoundsRef={fitZonesRef}
               />
               <SavedLocationsOverlay />
             </Map>
