@@ -32,14 +32,15 @@ PERIMETERS_URL = (
     "https://services1.arcgis.com/jUJYIo9tSA7EHvfZ/ArcGIS/rest/services/"
     "California_Historic_Fire_Perimeters/FeatureServer/0/query"
 )
-# CAL FIRE publishes DINS (damage inspection) as separate FeatureServers per
-# incident. The consolidated "POSTFIRE_MASTER_DATA" layer lives on a different
-# endpoint and changes over time, so we accept a `service` override and default
-# to the most recent consolidated layer we have verified.
+# CAL FIRE DINS (Damage Inspection Program) — statewide consolidated layer.
+# The previous CALFIRE_Damage_INSpection_DINS_data layer was retired; the
+# authoritative endpoint is now POSTFIRE_MASTER_DATA_SHARE on services1
+# (132k+ structures, 2013→present, INCIDENTSTARTDATE for year filtering).
 DINS_DEFAULT_URL = (
-    "https://services1.arcgis.com/jUJYIo9tSA7EHvfZ/ArcGIS/rest/services/"
-    "CALFIRE_Damage_INSpection_DINS_data/FeatureServer/0/query"
+    "https://services1.arcgis.com/jUJYIo9tSA7EHvfZ/arcgis/rest/services/"
+    "POSTFIRE_MASTER_DATA_SHARE/FeatureServer/0/query"
 )
+DINS_PAGE_SIZE = 2000  # ArcGIS hosted-FS hard cap
 
 _cache: dict = {}
 CACHE_TTL = 3600  # 1 hour
@@ -146,26 +147,70 @@ def history_perimeters():
 
 @history_bp.route('/dins', methods=['GET'])
 def history_dins():
-    """Return CAL FIRE DINS (Damage INSpection) points, optionally filtered by year.
+    """Return CAL FIRE DINS (Damage INSpection) points filtered by incident year.
 
     Query params:
-      year (int, optional) — filter by incident year.
+      year (int, REQUIRED) — incident year (2013 onward; CAL FIRE DINS coverage starts 2013).
       service (str, optional) — override upstream URL (for ad-hoc fire-specific DINS).
+
+    Pages through ArcGIS's 2,000-row hard cap so big years (2018, 2020, 2025)
+    return the full set in one response. Cached 1 h per year.
     """
     try:
         year = int(request.args.get('year')) if request.args.get('year') else None
     except Exception:
         year = None
     url = request.args.get('service') or DINS_DEFAULT_URL
-    where = f"YEAR_ = {year}" if year else "1=1"
-    params = {
-        'where': where,
-        'outFields': '*',
-        'f': 'geojson',
-        'resultRecordCount': 5000,
-    }
+
+    if year is None:
+        # Don't pull the full 132k statewide set in one shot — force a year filter.
+        return jsonify({'type': 'FeatureCollection', 'features': [],
+                        'error': 'year query param is required'}), 400
+
     cache_key = f"dins::{url}::{year}"
-    data = _cached_fetch(cache_key, url, params)
+    now = time.time()
+    hit = _cache.get(cache_key)
+    if hit and (now - hit[0]) < CACHE_TTL:
+        resp = jsonify(hit[1])
+        resp.headers['Cache-Control'] = 'public, max-age=3600'
+        return resp
+
+    # INCIDENTSTARTDATE is a date field; bracket it to the calendar year.
+    where = (
+        f"INCIDENTSTARTDATE >= DATE '{year}-01-01' AND "
+        f"INCIDENTSTARTDATE < DATE '{year + 1}-01-01'"
+    )
+    base_params = {
+        'where': where,
+        'outFields': 'OBJECTID,DAMAGE,INCIDENTNAME,INCIDENTNUM,INCIDENTSTARTDATE,'
+                     'CITY,COUNTY,STREETNUMBER,STREETNAME,STREETTYPE,'
+                     'LATITUDE,LONGITUDE,STRUCTURETYPE,STRUCTURECATEGORY,YEARBUILT',
+        'outSR': '4326',
+        'f': 'geojson',
+        'resultRecordCount': DINS_PAGE_SIZE,
+    }
+
+    features = []
+    offset = 0
+    try:
+        for _ in range(20):  # safety cap: 20 pages × 2000 = 40k features per year
+            params = {**base_params, 'resultOffset': offset}
+            r = http_requests.get(url, params=params, timeout=30,
+                                  headers={'User-Agent': 'FireScopeProxy/1.0'})
+            r.raise_for_status()
+            page = r.json() or {}
+            page_feats = page.get('features') or []
+            features.extend(page_feats)
+            if len(page_feats) < DINS_PAGE_SIZE:
+                break
+            offset += DINS_PAGE_SIZE
+    except Exception as e:
+        logger.warning('DINS proxy failed (year=%s): %s', year, e)
+        return jsonify({'type': 'FeatureCollection', 'features': []}), 200
+
+    data = {'type': 'FeatureCollection', 'features': features}
+    _cache[cache_key] = (now, data)
+    logger.info('DINS year=%s loaded %d structures', year, len(features))
     resp = jsonify(data)
-    resp.headers['Cache-Control'] = 'public, max-age=1800'
+    resp.headers['Cache-Control'] = 'public, max-age=3600'
     return resp

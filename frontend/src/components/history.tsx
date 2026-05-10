@@ -244,11 +244,15 @@ const HistoricalFirePerimetersOverlay = memo(function HistoricalFirePerimetersOv
 function DINSDamageOverlay({
   enabled,
   opacity,
-  radius
+  radius,
+  year,
+  onCountChange,
 }: {
   enabled: boolean;
   opacity: number;
   radius: number;
+  year: number;
+  onCountChange?: (count: number, year: number) => void;
 }) {
   const map = useMap();
   // Ref so the overlay is created once — no new WebGL context on re-renders
@@ -267,17 +271,33 @@ function DINSDamageOverlay({
     return [156, 163, 175, alpha];
   };
 
-  // Load DINS data — runs once. Static GeoJSON served by Netlify CDN.
+  // Load DINS structures for the selected year. CAL FIRE DINS coverage starts
+  // 2013 — older years just return empty rather than 404.
   useEffect(() => {
-    loadGeoJson('/Data/POSTFIRE_MASTER_DATA_trimmed.geojson')
+    if (!enabled || !year || year < 2013) {
+      setDinsData([]);
+      onCountChange?.(0, year);
+      return;
+    }
+    let cancelled = false;
+    apiFetch(`/history/dins?year=${year}`)
+      .then((r) => (r.ok ? r.json() : { features: [] }))
       .then((data: any) => {
-        console.log('Loaded DINS structures:', data.features?.length || 0);
-        setDinsData(data.features || []);
+        if (cancelled) return;
+        const feats = data?.features || [];
+        // Geometry is GeoJSON Point but the renderer reads LATITUDE/LONGITUDE
+        // attributes — keep those, but also normalise so feats from coords work.
+        setDinsData(feats);
+        onCountChange?.(feats.length, year);
       })
-      .catch(error => {
-        console.error('Error loading DINS data:', error);
+      .catch((e) => {
+        if (cancelled) return;
+        console.error('DINS fetch failed for year', year, e);
+        setDinsData([]);
+        onCountChange?.(0, year);
       });
-  }, []);
+    return () => { cancelled = true; };
+  }, [year, enabled, onCountChange]);
 
   // Create the overlay ONCE when the map is ready, destroy only on unmount
   useEffect(() => {
@@ -435,6 +455,13 @@ export function History() {
   // Default to the most recent *complete* fire year (current year − 1) so the
   // map opens on a year that actually has full CAL FIRE records.
   const [selectedYear, setSelectedYear] = useState<number>(new Date().getFullYear() - 1);
+  const [dinsCount, setDinsCount] = useState<number | null>(null);
+  const handleDinsCount = useCallback((count: number, _year: number) => {
+    setDinsCount(count);
+  }, []);
+  // Reset count to "loading…" when year changes so the label doesn't show
+  // the previous year's number while the new fetch is in flight.
+  useEffect(() => { setDinsCount(null); }, [selectedYear]);
   const selectedYears = [selectedYear]; // kept as an array locally so the existing overlay contract still works
   const mapTypeId: 'roadmap' = 'roadmap';
   const [searchQuery, setSearchQuery] = useState("");
@@ -779,6 +806,8 @@ export function History() {
                     enabled={showDins}
                     opacity={dinsOpacity}
                     radius={dinsRadius}
+                    year={selectedYear}
+                    onCountChange={handleDinsCount}
                   />
                 </GoogleMap>
               </div>
@@ -792,7 +821,18 @@ export function History() {
                   </div>
                   <div className="flex items-center gap-2">
                     <Switch id="layer-dins" checked={showDins} onCheckedChange={setShowDins} />
-                    <label htmlFor="layer-dins" className="text-sm font-medium cursor-pointer">Structure Damage (DINS)</label>
+                    <label htmlFor="layer-dins" className="text-sm font-medium cursor-pointer">
+                      Structure Damage (DINS)
+                      {showDins && (
+                        <span className="ml-2 text-xs text-muted-foreground">
+                          {selectedYear < 2013
+                            ? '(coverage starts 2013)'
+                            : dinsCount === null
+                            ? '— loading…'
+                            : `— ${dinsCount.toLocaleString()} structures in ${selectedYear}`}
+                        </span>
+                      )}
+                    </label>
                   </div>
                 </div>
 
