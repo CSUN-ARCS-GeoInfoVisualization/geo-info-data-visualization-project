@@ -67,7 +67,11 @@ tmp/
 # Local Netlify folder
 .netlify
 
+# Stray docs (class assignments, etc.)
+*.docx
+
 # Claude Code / Claude Flow / council scratch
 .claude/
 .claude-flow/
 .council/
+.gitnexus
