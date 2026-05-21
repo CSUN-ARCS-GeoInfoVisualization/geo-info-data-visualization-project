@@ -23,7 +23,7 @@ Planned option 3 — in-house ML training snapshots (future work):
 import time
 import logging
 import requests as http_requests
-from flask import Blueprint, request, jsonify
+from flask import Blueprint, current_app, request, jsonify
 
 logger = logging.getLogger(__name__)
 history_bp = Blueprint('history', __name__)
