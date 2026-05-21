@@ -195,7 +195,8 @@ def history_dins():
         return jsonify({'type': 'FeatureCollection', 'features': [],
                         'error': 'year query param is required'}), 400
 
-    cache_key = f"history_dins:{url}:{year}"
+    # Short key — full URL was overflowing String(128) → cache silently broken
+    cache_key = f"history_dins:{year}" if url == DINS_DEFAULT_URL else f"history_dins_alt:{abs(hash(url))%(10**10)}:{year}"
 
     def _compute():
         # INCIDENTSTARTDATE is a date field; bracket it to the calendar year.
