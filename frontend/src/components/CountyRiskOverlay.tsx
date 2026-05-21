@@ -34,7 +34,13 @@ interface Props {
 export function CountyRiskOverlay({ overrides, onCountyClick }: Props) {
   const map = useMap();
   const overlayRef = useRef<GoogleMapsOverlay | null>(null);
+  const riskDataRef = useRef<CountyRiskData>({});
+  const onClickRef = useRef(onCountyClick);
   const [riskData, setRiskData] = useState<CountyRiskData>({});
+
+  // Keep refs in sync without triggering effects
+  useEffect(() => { onClickRef.current = onCountyClick; }, [onCountyClick]);
+  useEffect(() => { riskDataRef.current = riskData; }, [riskData]);
 
   // Fetch risk scores per county
   useEffect(() => {
@@ -52,16 +58,23 @@ export function CountyRiskOverlay({ overrides, onCountyClick }: Props) {
       .catch((e) => console.warn("County risk fetch failed:", e));
   }, [overrides?.evi, overrides?.lst, overrides?.wind, overrides?.elevation]);
 
-  // Render overlay when data + map are ready
+  // Create overlay ONCE per map mount — survives subsequent renders
   useEffect(() => {
-    if (!map || Object.keys(riskData).length === 0) return;
+    if (!map) return;
+    const overlay = new GoogleMapsOverlay({ layers: [] });
+    overlay.setMap(map);
+    overlayRef.current = overlay;
+    return () => {
+      overlay.setMap(null);
+      overlay.finalize();
+      overlayRef.current = null;
+    };
+  }, [map]);
 
-    if (overlayRef.current) {
-      overlayRef.current.setMap(null);
-      overlayRef.current.finalize();
-    }
+  // Swap layers in-place via setProps when data changes — NO flicker
+  useEffect(() => {
+    if (!overlayRef.current || Object.keys(riskData).length === 0) return;
 
-    // Merge risk data into county GeoJSON properties
     const enriched = {
       ...countyGeoJson,
       features: (countyGeoJson as any).features.map((f: any) => {
@@ -74,7 +87,7 @@ export function CountyRiskOverlay({ overrides, onCountyClick }: Props) {
       }),
     };
 
-    const overlay = new GoogleMapsOverlay({
+    overlayRef.current.setProps({
       layers: [
         new GeoJsonLayer({
           id: "county-risk-zones",
@@ -87,11 +100,13 @@ export function CountyRiskOverlay({ overrides, onCountyClick }: Props) {
           getLineColor: [255, 255, 255, 180],
           getLineWidth: 1,
           getFillColor: (f: any) => getRiskColor(f.properties.risk_score || 0),
+          // Use refs so click-handler identity changes never trigger overlay rebuild
           onClick: (info: any) => {
-            if (onCountyClick && info.object) {
+            const cb = onClickRef.current;
+            if (cb && info.object) {
               const name = info.object.properties?.name;
-              const risk = riskData[name];
-              if (name && risk) onCountyClick(name, risk);
+              const risk = riskDataRef.current[name];
+              if (name && risk) cb(name, risk);
             }
           },
           updateTriggers: {
@@ -100,18 +115,7 @@ export function CountyRiskOverlay({ overrides, onCountyClick }: Props) {
         }),
       ],
     });
-
-    overlay.setMap(map);
-    overlayRef.current = overlay;
-
-    return () => {
-      if (overlayRef.current) {
-        overlayRef.current.setMap(null);
-        overlayRef.current.finalize();
-        overlayRef.current = null;
-      }
-    };
-  }, [map, riskData, onCountyClick]);
+  }, [riskData]);
 
   return null;
 }

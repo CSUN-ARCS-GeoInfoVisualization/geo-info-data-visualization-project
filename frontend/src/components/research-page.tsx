@@ -181,14 +181,26 @@ function getRiskColor(score: number): [number, number, number, number] {
 function UnifiedResearchOverlay({ features, showHeatmap, zoneGeoJson, zoneRiskData, zoneNameKey, onZoneClick, nifcPerimeters, showPerimeters, onPerimeterClick }: UnifiedOverlayProps) {
   const map = useMap();
   const overlayRef = useRef<GoogleMapsOverlay | null>(null);
+  // Refs so callback identity changes don't tear down the overlay (was a major flicker source)
+  const onZoneClickRef = useRef(onZoneClick);
+  const onPerimeterClickRef = useRef(onPerimeterClick);
+  const zoneRiskDataRef = useRef(zoneRiskData);
+  useEffect(() => { onZoneClickRef.current = onZoneClick; }, [onZoneClick]);
+  useEffect(() => { onPerimeterClickRef.current = onPerimeterClick; }, [onPerimeterClick]);
+  useEffect(() => { zoneRiskDataRef.current = zoneRiskData; }, [zoneRiskData]);
 
+  // Create overlay ONCE per map mount — survives data changes
   useEffect(() => {
     if (!map) return;
+    const overlay = new GoogleMapsOverlay({ layers: [] });
+    overlay.setMap(map);
+    overlayRef.current = overlay;
+    return () => { overlay.setMap(null); overlay.finalize(); overlayRef.current = null; };
+  }, [map]);
 
-    if (overlayRef.current) {
-      overlayRef.current.setMap(null);
-      overlayRef.current.finalize();
-    }
+  // Update layers in-place when data changes
+  useEffect(() => {
+    if (!overlayRef.current) return;
 
     const layers: any[] = [];
 
@@ -232,9 +244,10 @@ function UnifiedResearchOverlay({ features, showHeatmap, zoneGeoJson, zoneRiskDa
           getLineWidth: 1,
           getFillColor: (f: any) => getRiskColor(f.properties.risk_score || 0),
           onClick: (info: any) => {
-            if (onZoneClick && info.object) {
+            const cb = onZoneClickRef.current;
+            if (cb && info.object) {
               const name = info.object.properties?.zone_name || "";
-              onZoneClick(name, {
+              cb(name, {
                 risk_score: info.object.properties?.risk_score || 0,
                 label: info.object.properties?.risk_label || "Low",
               });
@@ -291,7 +304,8 @@ function UnifiedResearchOverlay({ features, showHeatmap, zoneGeoJson, zoneRiskDa
           getFillColor: (f: any) => colorForPct(f.properties?.attr_PercentContained),
           getLineWidth: 3,
           onClick: (info: any) => {
-            if (info.object && onPerimeterClick) onPerimeterClick(info.object.properties);
+            const cb = onPerimeterClickRef.current;
+            if (info.object && cb) cb(info.object.properties);
           },
           updateTriggers: {
             getFillColor: [nifcPerimeters.features.length],
@@ -301,18 +315,8 @@ function UnifiedResearchOverlay({ features, showHeatmap, zoneGeoJson, zoneRiskDa
       );
     }
 
-    const overlay = new GoogleMapsOverlay({ layers });
-    overlay.setMap(map);
-    overlayRef.current = overlay;
-
-    return () => {
-      if (overlayRef.current) {
-        overlayRef.current.setMap(null);
-        overlayRef.current.finalize();
-        overlayRef.current = null;
-      }
-    };
-  }, [map, features, showHeatmap, zoneGeoJson, zoneRiskData, zoneNameKey, onZoneClick, nifcPerimeters, showPerimeters, onPerimeterClick]);
+    overlayRef.current.setProps({ layers });
+  }, [features, showHeatmap, zoneGeoJson, zoneRiskData, zoneNameKey, nifcPerimeters, showPerimeters]);
 
   return null;
 }

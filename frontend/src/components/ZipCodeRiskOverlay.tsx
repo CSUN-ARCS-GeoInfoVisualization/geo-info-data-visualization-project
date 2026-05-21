@@ -29,10 +29,14 @@ let _cachedRisk: Record<string, ZoneRisk> = {};
 export function ZipCodeRiskOverlay({ onZoneClick }: Props) {
   const map = useMap();
   const overlayRef = useRef<GoogleMapsOverlay | null>(null);
+  const riskDataRef = useRef<Record<string, ZoneRisk>>(_cachedRisk);
+  const onClickRef = useRef(onZoneClick);
   const [geoData, setGeoData] = useState<any>(_cachedGeo);
   const [riskData, setRiskData] = useState(_cachedRisk);
 
-  // Load boundaries + risk in parallel
+  useEffect(() => { onClickRef.current = onZoneClick; }, [onZoneClick]);
+  useEffect(() => { riskDataRef.current = riskData; }, [riskData]);
+
   useEffect(() => {
     if (_cachedGeo && Object.keys(_cachedRisk).length > 0) {
       setGeoData(_cachedGeo);
@@ -50,11 +54,18 @@ export function ZipCodeRiskOverlay({ onZoneClick }: Props) {
       .catch((e) => console.warn("ZIP overlay load failed:", e));
   }, []);
 
-  // Render overlay
+  // Create overlay once per map
   useEffect(() => {
-    if (!map || !geoData?.features || Object.keys(riskData).length === 0) return;
-    if (overlayRef.current) { overlayRef.current.setMap(null); overlayRef.current.finalize(); }
+    if (!map) return;
+    const overlay = new GoogleMapsOverlay({ layers: [] });
+    overlay.setMap(map);
+    overlayRef.current = overlay;
+    return () => { overlay.setMap(null); overlay.finalize(); overlayRef.current = null; };
+  }, [map]);
 
+  // Swap layers in-place when data changes
+  useEffect(() => {
+    if (!overlayRef.current || !geoData?.features || Object.keys(riskData).length === 0) return;
     const enriched = {
       ...geoData,
       features: geoData.features.map((f: any) => {
@@ -63,8 +74,7 @@ export function ZipCodeRiskOverlay({ onZoneClick }: Props) {
         return { ...f, properties: { ...f.properties, risk_score: risk.risk_score, risk_label: risk.label } };
       }),
     };
-
-    const overlay = new GoogleMapsOverlay({
+    overlayRef.current.setProps({
       layers: [new GeoJsonLayer({
         id: "zip-risk-zones",
         data: enriched,
@@ -74,10 +84,11 @@ export function ZipCodeRiskOverlay({ onZoneClick }: Props) {
         getLineWidth: 0.5,
         getFillColor: (f: any) => getRiskColor(f.properties.risk_score || 0),
         onClick: (info: any) => {
-          if (onZoneClick && info.object) {
+          const cb = onClickRef.current;
+          if (cb && info.object) {
             const zip = info.object.properties?.zip || "";
-            const r = riskData[zip];
-            onZoneClick(`ZIP ${zip}`, {
+            const r = riskDataRef.current[zip];
+            cb(`ZIP ${zip}`, {
               risk_score: r?.risk_score ?? info.object.properties?.risk_score ?? 0,
               label: r?.label ?? info.object.properties?.risk_label ?? "Low",
               features: r?.features,
@@ -87,10 +98,7 @@ export function ZipCodeRiskOverlay({ onZoneClick }: Props) {
         updateTriggers: { getFillColor: [Object.keys(riskData).length] },
       })],
     });
-    overlay.setMap(map);
-    overlayRef.current = overlay;
-    return () => { if (overlayRef.current) { overlayRef.current.setMap(null); overlayRef.current.finalize(); overlayRef.current = null; } };
-  }, [map, geoData, riskData, onZoneClick]);
+  }, [geoData, riskData]);
 
   return null;
 }
