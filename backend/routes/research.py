@@ -97,11 +97,35 @@ def _build_cache_entry(data: dict, expires_at: float) -> dict:
     return {'data': data, 'body': body, 'etag': etag, 'expires': expires_at}
 
 
+def _normalize_etag(raw: str) -> str:
+    """Strip W/ prefix and any encoding suffix the edge layer may add.
+
+    Flask-Compress / Cloudflare / Render's edge can rewrite our strong ETag
+    into a weak one with a `:br` suffix (Brotli) for content negotiation,
+    breaking direct string comparison on revalidation requests.
+    """
+    s = (raw or '').strip()
+    if s.startswith('W/'):
+        s = s[2:]
+    if len(s) >= 2 and s[0] == '"' and s[-1] == '"':
+        inner = s[1:-1]
+        if ':' in inner:
+            inner = inner.rsplit(':', 1)[0]
+        return inner
+    return s
+
+
 def _serve_from_entry(entry: dict):
-    """Return a Flask Response from a pre-serialized cache entry, honoring If-None-Match."""
-    inm = request.headers.get('If-None-Match', '')
-    if inm and inm == entry.get('etag', ''):
-        return Response(status=304, headers={'ETag': entry['etag'], 'Cache-Control': 'public, max-age=60'})
+    """Return a Flask Response from a pre-serialized cache entry, honoring If-None-Match.
+
+    Uses weak ETag matching so 304 still fires after the edge layer munges the header.
+    """
+    inm_raw = request.headers.get('If-None-Match', '')
+    if inm_raw and _normalize_etag(inm_raw) == _normalize_etag(entry.get('etag', '')):
+        resp = Response(status=304)
+        resp.headers['ETag'] = entry['etag']
+        resp.headers['Cache-Control'] = 'public, max-age=60'
+        return resp
     resp = Response(entry['body'], mimetype='application/json')
     resp.headers['ETag'] = entry['etag']
     resp.headers['Cache-Control'] = 'public, max-age=60, stale-while-revalidate=600'
