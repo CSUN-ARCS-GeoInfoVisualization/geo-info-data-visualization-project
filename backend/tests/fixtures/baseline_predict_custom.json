@@ -1,0 +1,57 @@
+{
+  "HighSierraColdMountain": {
+    "label": "Low",
+    "risk_score": 0.06284271284271283,
+    "_input": {
+      "evi": 0.05,
+      "air_temp_encoded": 13200,
+      "wind": 6,
+      "humidity": 30,
+      "elevation": 2000
+    }
+  },
+  "CoastalHumidLowland": {
+    "label": "High",
+    "risk_score": 0.5055396825396826,
+    "_input": {
+      "evi": 0.45,
+      "air_temp_encoded": 14400,
+      "wind": 4,
+      "humidity": 70,
+      "elevation": 50
+    }
+  },
+  "ImperialDesertHot": {
+    "label": "Medium",
+    "risk_score": 0.26722354497354517,
+    "_input": {
+      "evi": 0.1,
+      "air_temp_encoded": 15300,
+      "wind": 8,
+      "humidity": 20,
+      "elevation": -20
+    }
+  },
+  "CentralValleyDryHot": {
+    "label": "High",
+    "risk_score": 0.6124814814814815,
+    "_input": {
+      "evi": 0.25,
+      "air_temp_encoded": 15000,
+      "wind": 10,
+      "humidity": 25,
+      "elevation": 100
+    }
+  },
+  "SierraFootHillsMod": {
+    "label": "Medium",
+    "risk_score": 0.33295370370370364,
+    "_input": {
+      "evi": 0.35,
+      "air_temp_encoded": 14600,
+      "wind": 7,
+      "humidity": 40,
+      "elevation": 800
+    }
+  }
+}
