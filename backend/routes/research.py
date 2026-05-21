@@ -193,10 +193,11 @@ def _compute_zone_risk(zone_type: str) -> dict | None:
 
     # Build feature vectors — live weather where available, interpolated fallback
     sampled_names = []
-    sampled_inputs = []  # (evi, air_temp_encoded, wind, humidity, elevation) tuples
+    sampled_inputs = []  # (evi, air_temp_encoded, wind, humidity, elevation, kbdi) tuples
     for name, lat, lon in sampled:
         evi  = get_feature(lat, lon, "evi")
         elev = get_feature(lat, lon, "elevation")
+        kbdi = get_feature(lat, lon, "kbdi")
         wx   = live_weather.get(name)
         if wx:
             air_temp_encoded = wx["air_temp_encoded"]
@@ -207,7 +208,7 @@ def _compute_zone_risk(zone_type: str) -> dict | None:
             wind             = get_feature(lat, lon, "wind")
             humidity         = get_feature(lat, lon, "humidity")
         sampled_names.append(name)
-        sampled_inputs.append((evi, air_temp_encoded, wind, humidity, elev))
+        sampled_inputs.append((evi, air_temp_encoded, wind, humidity, elev, kbdi))
 
     # Single batch prediction call (loads model once, predicts all at once via numpy)
     try:
@@ -217,8 +218,8 @@ def _compute_zone_risk(zone_type: str) -> dict | None:
         batch_results = [{"risk_score": 0, "label": "Low"}] * len(sampled_inputs)
 
     sampled_risk = {
-        name: {**risk, "features": {"evi": evi, "air_temp_encoded": air_temp_encoded, "wind": wind, "humidity": humidity, "elevation": elev}}
-        for name, risk, (evi, air_temp_encoded, wind, humidity, elev) in zip(sampled_names, batch_results, sampled_inputs)
+        name: {**risk, "features": {"evi": evi, "air_temp_encoded": air_temp_encoded, "wind": wind, "humidity": humidity, "elevation": elev, "kbdi": kbdi}}
+        for name, risk, (evi, air_temp_encoded, wind, humidity, elev, kbdi) in zip(sampled_names, batch_results, sampled_inputs)
     }
 
     # Propagate to all zones
@@ -356,7 +357,7 @@ def _fetch_live_weather(lat: float, lon: float) -> dict | None:
 # The IDW logic now lives in data/features.py as the safety-net fallback.
 
 
-def _build_risk_grid(evi_ov, air_temp_encoded_ov, wind_ov, humidity_ov, elev_ov):
+def _build_risk_grid(evi_ov, air_temp_encoded_ov, wind_ov, humidity_ov, elev_ov, kbdi_ov=None):
     """Generate a grid of risk predictions across California."""
     features = []
     # Grid: lat 32.5-42, lon -124 to -114, step ~0.8 degrees = ~150 points
@@ -367,15 +368,16 @@ def _build_risk_grid(evi_ov, air_temp_encoded_ov, wind_ov, humidity_ov, elev_ov)
     while lat <= lat_end:
         lon = lon_start
         while lon <= lon_end:
-            # Use overrides if provided, otherwise interpolate from sample data
+            # Use overrides if provided, otherwise route through get_feature
             evi              = evi_ov if evi_ov is not None else get_feature(lat, lon, "evi")
             air_temp_encoded = air_temp_encoded_ov if air_temp_encoded_ov is not None else get_feature(lat, lon, "air_temp_encoded")
             wind             = wind_ov if wind_ov is not None else get_feature(lat, lon, "wind")
             humidity         = humidity_ov if humidity_ov is not None else get_feature(lat, lon, "humidity")
             elev             = elev_ov if elev_ov is not None else get_feature(lat, lon, "elevation")
+            kbdi             = kbdi_ov if kbdi_ov is not None else get_feature(lat, lon, "kbdi")
 
             try:
-                result = predict_from_features(evi, air_temp_encoded, wind, humidity, elev)
+                result = predict_from_features(evi, air_temp_encoded, wind, humidity, elev, kbdi)
                 features.append({
                     "type": "Feature",
                     "geometry": {"type": "Point", "coordinates": [lon, lat]},
@@ -387,6 +389,7 @@ def _build_risk_grid(evi_ov, air_temp_encoded_ov, wind_ov, humidity_ov, elev_ov)
                         "wind": round(wind, 1),
                         "humidity": round(humidity, 1),
                         "elevation": round(elev, 1),
+                        "kbdi": round(kbdi, 1),
                         "layer": "risk_grid",
                     },
                 })
@@ -426,7 +429,7 @@ _county_cache: dict = {"expires": 0.0, "data": None, "params": None}
 
 
 def _compute_county_risk(evi_ov=None, air_temp_encoded_ov=None, wind_ov=None,
-                         humidity_ov=None, elev_ov=None) -> dict:
+                         humidity_ov=None, elev_ov=None, kbdi_ov=None) -> dict:
     """Heavy path for /risk-by-county. Honors per-feature overrides."""
     # Fetch live weather in parallel for all counties (skip if all weather fields are overridden).
     # Same timeout-safe pattern as risk-by-zone: never let a stalled Open-Meteo call 500 the route.
@@ -455,12 +458,13 @@ def _compute_county_risk(evi_ov=None, air_temp_encoded_ov=None, wind_ov=None,
     for name, lat, lon in CA_COUNTY_CENTROIDS:
         evi  = evi_ov if evi_ov is not None else get_feature(lat, lon, "evi")
         elev = elev_ov if elev_ov is not None else get_feature(lat, lon, "elevation")
+        kbdi = kbdi_ov if kbdi_ov is not None else get_feature(lat, lon, "kbdi")
         wx   = live_weather.get(name)
         air_temp_encoded = air_temp_encoded_ov if air_temp_encoded_ov is not None else (wx["air_temp_encoded"] if wx else get_feature(lat, lon, "air_temp_encoded"))
         wind             = wind_ov             if wind_ov             is not None else (wx["wind"]             if wx else get_feature(lat, lon, "wind"))
         humidity         = humidity_ov         if humidity_ov         is not None else (wx["humidity"]         if wx else get_feature(lat, lon, "humidity"))
         names.append(name)
-        inputs.append((evi, air_temp_encoded, wind, humidity, elev))
+        inputs.append((evi, air_temp_encoded, wind, humidity, elev, kbdi))
     try:
         batch = predict_batch_features(inputs)
     except Exception:
@@ -468,12 +472,12 @@ def _compute_county_risk(evi_ov=None, air_temp_encoded_ov=None, wind_ov=None,
     results = {
         name: {
             **risk,
-            "features": {"evi": evi, "air_temp_encoded": air_temp_encoded, "wind": wind, "humidity": humidity, "elevation": elev},
+            "features": {"evi": evi, "air_temp_encoded": air_temp_encoded, "wind": wind, "humidity": humidity, "elevation": elev, "kbdi": kbdi},
         }
-        for name, risk, (evi, air_temp_encoded, wind, humidity, elev) in zip(names, batch, inputs)
+        for name, risk, (evi, air_temp_encoded, wind, humidity, elev, kbdi) in zip(names, batch, inputs)
     }
 
-    return {"counties": results, "overrides": {"evi": evi_ov, "air_temp_encoded": air_temp_encoded_ov, "wind": wind_ov, "humidity": humidity_ov, "elevation": elev_ov}}
+    return {"counties": results, "overrides": {"evi": evi_ov, "air_temp_encoded": air_temp_encoded_ov, "wind": wind_ov, "humidity": humidity_ov, "elevation": elev_ov, "kbdi": kbdi_ov}}
 
 
 @research_bp.route('/risk-by-county', methods=['GET'])
@@ -488,15 +492,17 @@ def risk_by_county():
     wind_ov             = request.args.get('wind')
     humidity_ov         = request.args.get('humidity')
     elev_ov             = request.args.get('elevation')
+    kbdi_ov             = request.args.get('kbdi')
 
     evi_ov              = float(evi_ov) if evi_ov is not None else None
     air_temp_encoded_ov = float(air_temp_encoded_ov) if air_temp_encoded_ov is not None else None
     wind_ov             = float(wind_ov) if wind_ov is not None else None
     humidity_ov         = float(humidity_ov) if humidity_ov is not None else None
     elev_ov             = float(elev_ov) if elev_ov is not None else None
+    kbdi_ov             = float(kbdi_ov) if kbdi_ov is not None else None
 
-    params_key = (evi_ov, air_temp_encoded_ov, wind_ov, humidity_ov, elev_ov)
-    is_default = params_key == (None, None, None, None, None)
+    params_key = (evi_ov, air_temp_encoded_ov, wind_ov, humidity_ov, elev_ov, kbdi_ov)
+    is_default = params_key == (None, None, None, None, None, None)
     now = time.time()
 
     if is_default:
@@ -521,7 +527,7 @@ def risk_by_county():
             and _county_cache["expires"] > now
             and _county_cache["params"] == params_key):
         return jsonify(_county_cache["data"])
-    data = _compute_county_risk(evi_ov, air_temp_encoded_ov, wind_ov, humidity_ov, elev_ov)
+    data = _compute_county_risk(evi_ov, air_temp_encoded_ov, wind_ov, humidity_ov, elev_ov, kbdi_ov)
     _county_cache["data"] = data
     _county_cache["expires"] = now + _GRID_CACHE_TTL
     _county_cache["params"] = params_key
@@ -540,14 +546,16 @@ def risk_grid():
     wind_ov             = request.args.get('wind')
     humidity_ov         = request.args.get('humidity')
     elev_ov             = request.args.get('elevation')
+    kbdi_ov             = request.args.get('kbdi')
 
     evi_ov              = float(evi_ov) if evi_ov is not None else None
     air_temp_encoded_ov = float(air_temp_encoded_ov) if air_temp_encoded_ov is not None else None
     wind_ov             = float(wind_ov) if wind_ov is not None else None
     humidity_ov         = float(humidity_ov) if humidity_ov is not None else None
     elev_ov             = float(elev_ov) if elev_ov is not None else None
+    kbdi_ov             = float(kbdi_ov) if kbdi_ov is not None else None
 
-    params_key = (evi_ov, air_temp_encoded_ov, wind_ov, humidity_ov, elev_ov)
+    params_key = (evi_ov, air_temp_encoded_ov, wind_ov, humidity_ov, elev_ov, kbdi_ov)
 
     now = time.time()
     if (_grid_cache["data"] is not None
@@ -555,7 +563,7 @@ def risk_grid():
             and _grid_cache["params"] == params_key):
         features = _grid_cache["data"]
     else:
-        features = _build_risk_grid(evi_ov, air_temp_encoded_ov, wind_ov, humidity_ov, elev_ov)
+        features = _build_risk_grid(evi_ov, air_temp_encoded_ov, wind_ov, humidity_ov, elev_ov, kbdi_ov)
         _grid_cache["data"] = features
         _grid_cache["expires"] = now + _GRID_CACHE_TTL
         _grid_cache["params"] = params_key
@@ -568,6 +576,7 @@ def risk_grid():
             "overrides": {
                 "evi": evi_ov, "air_temp_encoded": air_temp_encoded_ov,
                 "wind": wind_ov, "humidity": humidity_ov, "elevation": elev_ov,
+                "kbdi": kbdi_ov,
             },
         },
     })
