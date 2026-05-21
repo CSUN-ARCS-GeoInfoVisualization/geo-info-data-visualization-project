@@ -192,19 +192,22 @@ def _compute_zone_risk(zone_type: str) -> dict | None:
         executor.shutdown(wait=False)
 
     # Parallel-fetch EVI / elevation / KBDI for every centroid so a batch of
-    # cold cache misses doesn't blow gunicorn's request timeout.
+    # cold cache misses doesn't blow gunicorn's request timeout. Worker
+    # threads need Flask app context to use db.session — pass it explicitly.
     static_features: dict[str, dict] = {}
+    app_obj = current_app._get_current_object()
     feat_executor = ThreadPoolExecutor(max_workers=_WEATHER_WORKERS)
     try:
         def _load_static(lat_lon):
             lat_, lon_ = lat_lon
-            return {
-                "evi":  get_feature(lat_, lon_, "evi"),
-                "elev": get_feature(lat_, lon_, "elevation"),
-                "kbdi": get_feature(lat_, lon_, "kbdi"),
-            }
+            with app_obj.app_context():
+                return {
+                    "evi":  get_feature(lat_, lon_, "evi"),
+                    "elev": get_feature(lat_, lon_, "elevation"),
+                    "kbdi": get_feature(lat_, lon_, "kbdi"),
+                }
         futures = {feat_executor.submit(_load_static, (lat, lon)): name for name, lat, lon in sampled}
-        for fut in as_completed(futures, timeout=25):
+        for fut in as_completed(futures, timeout=60):
             try:
                 static_features[futures[fut]] = fut.result()
             except Exception:
@@ -472,22 +475,24 @@ def _compute_county_risk(evi_ov=None, air_temp_encoded_ov=None, wind_ov=None,
         finally:
             executor.shutdown(wait=False)
 
-    # Parallel-fetch EVI/elevation/KBDI across all 58 county centroids so a
-    # batch of cold-cache misses can't blow gunicorn's request timeout.
+    # Parallel-fetch EVI/elevation/KBDI across all 58 county centroids. Worker
+    # threads need Flask app context for db.session — pass it explicitly.
     static_features: dict[str, dict] = {}
     need_static = (evi_ov is None) or (elev_ov is None) or (kbdi_ov is None)
     if need_static:
+        app_obj = current_app._get_current_object()
         cf_exec = ThreadPoolExecutor(max_workers=_WEATHER_WORKERS)
         try:
             def _load_static(args):
                 lat_, lon_ = args
-                return {
-                    "evi":  evi_ov  if evi_ov  is not None else get_feature(lat_, lon_, "evi"),
-                    "elev": elev_ov if elev_ov is not None else get_feature(lat_, lon_, "elevation"),
-                    "kbdi": kbdi_ov if kbdi_ov is not None else get_feature(lat_, lon_, "kbdi"),
-                }
+                with app_obj.app_context():
+                    return {
+                        "evi":  evi_ov  if evi_ov  is not None else get_feature(lat_, lon_, "evi"),
+                        "elev": elev_ov if elev_ov is not None else get_feature(lat_, lon_, "elevation"),
+                        "kbdi": kbdi_ov if kbdi_ov is not None else get_feature(lat_, lon_, "kbdi"),
+                    }
             futures = {cf_exec.submit(_load_static, (lat, lon)): name for name, lat, lon in CA_COUNTY_CENTROIDS}
-            for fut in as_completed(futures, timeout=25):
+            for fut in as_completed(futures, timeout=60):
                 try:
                     static_features[futures[fut]] = fut.result()
                 except Exception:
