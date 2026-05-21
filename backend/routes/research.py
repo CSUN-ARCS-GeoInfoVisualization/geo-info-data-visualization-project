@@ -291,12 +291,18 @@ def risk_by_zone(zone_type):
             _spawn_background_refresh(current_app._get_current_object(), cache_key, lambda: _compute_zone_risk(zone_type))
         return jsonify(db_cached['data'])
 
-    # No cache anywhere — compute synchronously this once, persist for next time.
-    data = _compute_zone_risk(zone_type)
-    if data is None:
-        return jsonify({'error': 'Boundary data not found'}), 404
-    _zone_risk_cache[cache_key] = {'data': data, 'expires': now + _GRID_CACHE_TTL}
-    _save_cache_to_db(cache_key, data)
+    # No cache anywhere — single-flight compute so concurrent requests for the
+    # same zone_type share one computation instead of stampeding.
+    lock = _lock_for(cache_key)
+    with lock:
+        cached = _zone_risk_cache.get(cache_key)
+        if cached and cached['expires'] > now:
+            return jsonify(cached['data'])
+        data = _compute_zone_risk(zone_type)
+        if data is None:
+            return jsonify({'error': 'Boundary data not found'}), 404
+        _zone_risk_cache[cache_key] = {'data': data, 'expires': now + _GRID_CACHE_TTL}
+        _save_cache_to_db(cache_key, data)
     return jsonify(data)
 
 
@@ -588,9 +594,18 @@ def risk_by_county():
             if age > _GRID_CACHE_TTL:
                 _spawn_background_refresh(current_app._get_current_object(), cache_key, _compute_county_risk)
             return jsonify(db_cached['data'])
-        data = _compute_county_risk()
-        _zone_risk_cache[cache_key] = {'data': data, 'expires': now + _GRID_CACHE_TTL}
-        _save_cache_to_db(cache_key, data)
+        # Single-flight: only ONE concurrent request per worker runs the heavy
+        # compute. Others wait for the lock and then re-read the cache that
+        # the winning request populated. Prevents the cache-stampede pattern
+        # where 6 parallel requests all run the full 80s pipeline.
+        lock = _lock_for(cache_key)
+        with lock:
+            cached = _zone_risk_cache.get(cache_key)
+            if cached and cached['expires'] > now:
+                return jsonify(cached['data'])
+            data = _compute_county_risk()
+            _zone_risk_cache[cache_key] = {'data': data, 'expires': now + _GRID_CACHE_TTL}
+            _save_cache_to_db(cache_key, data)
         return jsonify(data)
 
     # Override path — keep the legacy params-keyed in-memory cache, no DB persistence.
