@@ -75,10 +75,9 @@ def _warm_zone_risk_cache_on_boot(app):
             import time as _time
             now = _time.time()
             for row in ZoneRiskCache.query.all():
-                research_module._zone_risk_cache[row.cache_key] = {
-                    'data': row.payload,
-                    'expires': now + research_module._GRID_CACHE_TTL,
-                }
+                research_module._zone_risk_cache[row.cache_key] = research_module._build_cache_entry(
+                    row.payload, now + research_module._GRID_CACHE_TTL,
+                )
             app.logger.info(
                 'zone_risk_cache warmed: %d keys', len(research_module._zone_risk_cache)
             )

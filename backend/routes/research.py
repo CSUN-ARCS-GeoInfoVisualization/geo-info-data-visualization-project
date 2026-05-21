@@ -8,8 +8,10 @@ from datetime import datetime, timedelta, timezone
 
 import threading
 
+import hashlib
+import json as _json
 import requests
-from flask import Blueprint, current_app, jsonify, request
+from flask import Blueprint, Response, current_app, jsonify, request
 from flask_jwt_extended import jwt_required, get_jwt
 
 from ml.inference import predict_from_features, predict_batch_features
@@ -81,6 +83,29 @@ def _lock_for(cache_key: str) -> threading.Lock:
             lock = threading.Lock()
             _zone_recompute_locks[cache_key] = lock
         return lock
+
+
+def _build_cache_entry(data: dict, expires_at: float) -> dict:
+    """Pre-serialize the payload so cache-hit requests skip jsonify().
+
+    Stores {data, body, etag, expires} so cache-hit responses are a memcpy +
+    304 check instead of re-serializing 1.8MB of JSON every call. The biggest
+    single win for census-tracts under concurrent load.
+    """
+    body = _json.dumps(data, separators=(',', ':')).encode('utf-8')
+    etag = '"' + hashlib.md5(body).hexdigest() + '"'
+    return {'data': data, 'body': body, 'etag': etag, 'expires': expires_at}
+
+
+def _serve_from_entry(entry: dict):
+    """Return a Flask Response from a pre-serialized cache entry, honoring If-None-Match."""
+    inm = request.headers.get('If-None-Match', '')
+    if inm and inm == entry.get('etag', ''):
+        return Response(status=304, headers={'ETag': entry['etag'], 'Cache-Control': 'public, max-age=60'})
+    resp = Response(entry['body'], mimetype='application/json')
+    resp.headers['ETag'] = entry['etag']
+    resp.headers['Cache-Control'] = 'public, max-age=60, stale-while-revalidate=600'
+    return resp
 
 
 def _load_cache_from_db(cache_key: str) -> dict | None:
@@ -279,17 +304,17 @@ def risk_by_zone(zone_type):
     cache_key = zone_type
     cached = _zone_risk_cache.get(cache_key)
     if cached and cached['expires'] > now:
-        return jsonify(cached['data'])
+        return _serve_from_entry(cached)
 
     # In-memory cold (process restart, redeploy) — try Postgres before doing the heavy compute.
     db_cached = _load_cache_from_db(cache_key)
     if db_cached:
         age = now - db_cached['computed_at']
-        _zone_risk_cache[cache_key] = {'data': db_cached['data'], 'expires': now + _GRID_CACHE_TTL}
+        entry = _build_cache_entry(db_cached['data'], now + _GRID_CACHE_TTL)
+        _zone_risk_cache[cache_key] = entry
         if age > _GRID_CACHE_TTL:
-            # Stale on disk: serve immediately, refresh in background.
             _spawn_background_refresh(current_app._get_current_object(), cache_key, lambda: _compute_zone_risk(zone_type))
-        return jsonify(db_cached['data'])
+        return _serve_from_entry(entry)
 
     # No cache anywhere — single-flight compute so concurrent requests for the
     # same zone_type share one computation instead of stampeding.
@@ -297,13 +322,14 @@ def risk_by_zone(zone_type):
     with lock:
         cached = _zone_risk_cache.get(cache_key)
         if cached and cached['expires'] > now:
-            return jsonify(cached['data'])
+            return _serve_from_entry(cached)
         data = _compute_zone_risk(zone_type)
         if data is None:
             return jsonify({'error': 'Boundary data not found'}), 404
-        _zone_risk_cache[cache_key] = {'data': data, 'expires': now + _GRID_CACHE_TTL}
+        entry = _build_cache_entry(data, now + _GRID_CACHE_TTL)
+        _zone_risk_cache[cache_key] = entry
         _save_cache_to_db(cache_key, data)
-    return jsonify(data)
+    return _serve_from_entry(entry)
 
 
 def _require_researcher_or_admin():
@@ -586,27 +612,26 @@ def risk_by_county():
         cache_key = 'counties'
         cached = _zone_risk_cache.get(cache_key)
         if cached and cached['expires'] > now:
-            return jsonify(cached['data'])
+            return _serve_from_entry(cached)
         db_cached = _load_cache_from_db(cache_key)
         if db_cached:
             age = now - db_cached['computed_at']
-            _zone_risk_cache[cache_key] = {'data': db_cached['data'], 'expires': now + _GRID_CACHE_TTL}
+            entry = _build_cache_entry(db_cached['data'], now + _GRID_CACHE_TTL)
+            _zone_risk_cache[cache_key] = entry
             if age > _GRID_CACHE_TTL:
                 _spawn_background_refresh(current_app._get_current_object(), cache_key, _compute_county_risk)
-            return jsonify(db_cached['data'])
-        # Single-flight: only ONE concurrent request per worker runs the heavy
-        # compute. Others wait for the lock and then re-read the cache that
-        # the winning request populated. Prevents the cache-stampede pattern
-        # where 6 parallel requests all run the full 80s pipeline.
+            return _serve_from_entry(entry)
+        # Single-flight to prevent cache stampede.
         lock = _lock_for(cache_key)
         with lock:
             cached = _zone_risk_cache.get(cache_key)
             if cached and cached['expires'] > now:
-                return jsonify(cached['data'])
+                return _serve_from_entry(cached)
             data = _compute_county_risk()
-            _zone_risk_cache[cache_key] = {'data': data, 'expires': now + _GRID_CACHE_TTL}
+            entry = _build_cache_entry(data, now + _GRID_CACHE_TTL)
+            _zone_risk_cache[cache_key] = entry
             _save_cache_to_db(cache_key, data)
-        return jsonify(data)
+        return _serve_from_entry(entry)
 
     # Override path — keep the legacy params-keyed in-memory cache, no DB persistence.
     if (_county_cache["data"] is not None
@@ -666,3 +691,72 @@ def risk_grid():
             },
         },
     })
+
+
+@research_bp.route('/admin/prewarm-tiles', methods=['POST'])
+def prewarm_tiles():
+    """Backfill feature_cache_elevation/_evi/_kbdi for a 0.05° CA grid.
+
+    Called by .github/workflows/daily-prewarm.yml. Keeps the per-tile caches
+    populated even if zone_risk_cache is wiped, so cold zone-risk computes
+    never hit live USGS/GEE/NASA-POWER for tiles that have a cached value.
+
+    Parallelizes across tiles. Each tile triggers cache-aware lookups in
+    data.live_elevation / live_evi_gee / live_kbdi_cached — write-through
+    happens automatically.
+    """
+    import time as _time
+    start = _time.time()
+    app_obj = current_app._get_current_object()
+
+    # 0.05° grid → ~4000 tiles over CA. Lower than the 0.01° tile key so
+    # adjacent tiles share cache hits, and small enough to finish under cron
+    # budget (~10-15 min worst case for a fully cold grid).
+    lat_start, lat_end, lat_step = 32.5, 42.0, 0.05
+    lon_start, lon_end, lon_step = -124.0, -114.0, 0.05
+    points = []
+    lat = lat_start
+    while lat <= lat_end:
+        lon = lon_start
+        while lon <= lon_end:
+            points.append((round(lat, 2), round(lon, 2)))
+            lon += lon_step
+        lat += lat_step
+
+    wrote = 0
+    failed = 0
+    feat_executor = ThreadPoolExecutor(max_workers=24)
+    try:
+        def _warm(args):
+            lat_, lon_ = args
+            with app_obj.app_context():
+                try:
+                    get_feature(lat_, lon_, "elevation")
+                    get_feature(lat_, lon_, "evi")
+                    get_feature(lat_, lon_, "kbdi")
+                    return True
+                except Exception:
+                    return False
+        futures = [feat_executor.submit(_warm, p) for p in points]
+        try:
+            for fut in as_completed(futures, timeout=850):
+                try:
+                    if fut.result():
+                        wrote += 1
+                    else:
+                        failed += 1
+                except Exception:
+                    failed += 1
+        except (TimeoutError, FuturesTimeoutError):
+            logger.warning("prewarm tile cache: timed out after %d/%d tiles",
+                           wrote + failed, len(points))
+            for fut in futures:
+                if not fut.done():
+                    fut.cancel()
+    finally:
+        feat_executor.shutdown(wait=False)
+
+    elapsed = round(_time.time() - start, 1)
+    logger.info("prewarm-tiles: wrote=%d failed=%d total=%d elapsed=%ss",
+                wrote, failed, len(points), elapsed)
+    return jsonify({"wrote": wrote, "failed": failed, "total": len(points), "elapsed_s": elapsed})
