@@ -148,3 +148,26 @@ class ZoneRiskCache(db.Model):
     cache_key = db.Column(db.String(64), primary_key=True)  # 'counties', 'zip-codes', 'census-tracts', 'neighborhoods'
     payload = db.Column(db.JSON, nullable=False)
     computed_at = db.Column(db.DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+
+
+class FeatureCacheElevation(db.Model):
+    """Per-tile elevation cache. Tile keys are lat/lon rounded to 0.01° (~1.1 km)."""
+    __tablename__ = 'feature_cache_elevation'
+
+    tile_lat = db.Column(db.Numeric(7, 4), primary_key=True)
+    tile_lon = db.Column(db.Numeric(8, 4), primary_key=True)
+    elevation_m = db.Column(db.Float, nullable=False)
+    source = db.Column(db.String(32), nullable=False, default='usgs_3dep')
+    fetched_at = db.Column(db.DateTime(timezone=True), server_default=func.now())
+
+
+class FeatureCacheEvi(db.Model):
+    """Per-tile MODIS EVI cache. Composite_date refreshed every 16 days."""
+    __tablename__ = 'feature_cache_evi'
+
+    tile_lat = db.Column(db.Numeric(7, 4), primary_key=True)
+    tile_lon = db.Column(db.Numeric(8, 4), primary_key=True)
+    evi = db.Column(db.Float, nullable=False)
+    source = db.Column(db.String(32), nullable=False)
+    composite_date = db.Column(db.Date, nullable=False, index=True)
+    fetched_at = db.Column(db.DateTime(timezone=True), server_default=func.now())
