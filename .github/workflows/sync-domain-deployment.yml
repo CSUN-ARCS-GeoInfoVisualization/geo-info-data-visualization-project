@@ -1,8 +1,13 @@
 name: Sync domain-deployment to main
 
-# Netlify's production branch is `domain-deployment`. This workflow keeps it
-# in lockstep with `main` so every merge/push to main automatically triggers
-# a Netlify production deploy — no manual merge required.
+# Netlify's production branch is `domain-deployment`; Render also deploys from
+# it. This workflow keeps it in lockstep with `main` so every push to main
+# auto-deploys, with no manual merge required.
+#
+# Strategy: try fast-forward first. If domain-deployment has divergent commits
+# (e.g. doc-only adds), fall back to a non-FF merge under IdoCohen560 so the
+# workflow self-heals without overwriting production. Only real code conflicts
+# block the workflow — those need a human.
 
 on:
   push:
@@ -25,11 +30,25 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Fast-forward domain-deployment to main
+      - name: Sync domain-deployment to main (FF, fallback to merge)
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          # Safe fast-forward: only succeeds if domain-deployment is a strict
-          # ancestor of main. If it has diverged, the push fails and a human
-          # resolves it — we never force-push production.
-          git push origin "${GITHUB_SHA}:refs/heads/domain-deployment"
+          git config user.name "IdoCohen560"
+          git config user.email "ido.the.cohen@gmail.com"
+          # 1) Try the safe fast-forward path first.
+          if git push origin "${GITHUB_SHA}:refs/heads/domain-deployment" 2>/dev/null; then
+            echo "Fast-forward succeeded"
+            exit 0
+          fi
+          # 2) Diverged — attempt a non-FF merge that preserves both sides.
+          echo "Fast-forward refused; domain-deployment has divergent commits. Attempting merge."
+          git fetch origin domain-deployment
+          git checkout -B domain-deployment origin/domain-deployment
+          if git merge --no-ff "${GITHUB_SHA}" -m "auto-merge main into domain-deployment (sync workflow)"; then
+            git push origin domain-deployment
+            echo "Auto-merge committed under IdoCohen560"
+            exit 0
+          fi
+          # 3) Real conflict — abort and surface for human resolution.
+          git merge --abort || true
+          echo "Real conflict on file content. Human resolution required."
+          exit 1
