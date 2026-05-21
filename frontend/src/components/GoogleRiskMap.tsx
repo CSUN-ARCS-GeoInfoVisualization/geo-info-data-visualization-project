@@ -228,6 +228,7 @@ interface SelectedZone {
   risk_score: number;
   label: string;
   features?: { evi: number; air_temp_encoded: number; wind: number; humidity?: number; elevation: number; kbdi?: number };
+  data_quality?: "live" | "default";
   level: string;
 }
 
@@ -343,6 +344,9 @@ export function GoogleRiskMap({
                 {selectedZone.label}
               </span>
               <span style={{ color: '#374151', fontWeight: 600 }}>{(selectedZone.risk_score * 100).toFixed(0)}% risk</span>
+              {selectedZone.data_quality === 'default' && (
+                <span title="Some features fell back to interpolated defaults; cache is warming" style={{ background: '#fef3c7', color: '#92400e', padding: '2px 6px', borderRadius: 6, fontSize: 10, fontWeight: 600 }}>approx</span>
+              )}
             </div>
             {selectedZone.features ? (
               <>

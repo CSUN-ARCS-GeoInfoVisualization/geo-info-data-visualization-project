@@ -226,7 +226,9 @@ def _compute_zone_risk(zone_type: str) -> dict | None:
 
     sampled_names = []
     sampled_inputs = []  # (evi, air_temp_encoded, wind, humidity, elevation, kbdi) tuples
+    sampled_quality = []  # 'live' | 'default' per centroid
     for name, lat, lon in sampled:
+        sf_present = name in static_features
         sf = static_features.get(name, {"evi": 0.0, "elev": 0.0, "kbdi": 200.0})
         evi, elev, kbdi = sf["evi"], sf["elev"], sf["kbdi"]
         wx = live_weather.get(name)
@@ -238,6 +240,9 @@ def _compute_zone_risk(zone_type: str) -> dict | None:
             air_temp_encoded = get_feature(lat, lon, "air_temp_encoded")
             wind             = get_feature(lat, lon, "wind")
             humidity         = get_feature(lat, lon, "humidity")
+        # 'live' means all 3 static + weather came from real sources.
+        # 'default' means the parallel feature future didn't finish OR weather fell back.
+        sampled_quality.append("live" if (sf_present and wx) else "default")
         sampled_names.append(name)
         sampled_inputs.append((evi, air_temp_encoded, wind, humidity, elev, kbdi))
 
@@ -249,8 +254,8 @@ def _compute_zone_risk(zone_type: str) -> dict | None:
         batch_results = [{"risk_score": 0, "label": "Low"}] * len(sampled_inputs)
 
     sampled_risk = {
-        name: {**risk, "features": {"evi": evi, "air_temp_encoded": air_temp_encoded, "wind": wind, "humidity": humidity, "elevation": elev, "kbdi": kbdi}}
-        for name, risk, (evi, air_temp_encoded, wind, humidity, elev, kbdi) in zip(sampled_names, batch_results, sampled_inputs)
+        name: {**risk, "features": {"evi": evi, "air_temp_encoded": air_temp_encoded, "wind": wind, "humidity": humidity, "elevation": elev, "kbdi": kbdi}, "data_quality": q}
+        for name, risk, (evi, air_temp_encoded, wind, humidity, elev, kbdi), q in zip(sampled_names, batch_results, sampled_inputs, sampled_quality)
     }
 
     # Propagate to all zones
@@ -518,13 +523,16 @@ def _compute_county_risk(evi_ov=None, air_temp_encoded_ov=None, wind_ov=None,
 
     names = []
     inputs = []
+    quality = []  # 'live' | 'default' per county
     for name, lat, lon in CA_COUNTY_CENTROIDS:
+        sf_present = name in static_features
         sf = static_features.get(name, {"evi": evi_ov or 0.0, "elev": elev_ov or 0.0, "kbdi": kbdi_ov if kbdi_ov is not None else 200.0})
         evi, elev, kbdi = sf["evi"], sf["elev"], sf["kbdi"]
         wx   = live_weather.get(name)
         air_temp_encoded = air_temp_encoded_ov if air_temp_encoded_ov is not None else (wx["air_temp_encoded"] if wx else get_feature(lat, lon, "air_temp_encoded"))
         wind             = wind_ov             if wind_ov             is not None else (wx["wind"]             if wx else get_feature(lat, lon, "wind"))
         humidity         = humidity_ov         if humidity_ov         is not None else (wx["humidity"]         if wx else get_feature(lat, lon, "humidity"))
+        quality.append("live" if (sf_present and wx) else "default")
         names.append(name)
         inputs.append((evi, air_temp_encoded, wind, humidity, elev, kbdi))
     try:
@@ -535,8 +543,9 @@ def _compute_county_risk(evi_ov=None, air_temp_encoded_ov=None, wind_ov=None,
         name: {
             **risk,
             "features": {"evi": evi, "air_temp_encoded": air_temp_encoded, "wind": wind, "humidity": humidity, "elevation": elev, "kbdi": kbdi},
+            "data_quality": q,
         }
-        for name, risk, (evi, air_temp_encoded, wind, humidity, elev, kbdi) in zip(names, batch, inputs)
+        for name, risk, (evi, air_temp_encoded, wind, humidity, elev, kbdi), q in zip(names, batch, inputs, quality)
     }
 
     return {"counties": results, "overrides": {"evi": evi_ov, "air_temp_encoded": air_temp_encoded_ov, "wind": wind_ov, "humidity": humidity_ov, "elevation": elev_ov, "kbdi": kbdi_ov}}
