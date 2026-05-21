@@ -12,9 +12,14 @@ logger = logging.getLogger(__name__)
 from data.live_weather import get_weather
 from data.live_elevation import get_elevation
 from data.live_evi import get_evi
+from data.live_kbdi import get_kbdi
 
 BATCH_MAX_SIZE   = 500
 BATCH_WORKERS    = 8
+
+# Used only when the live KBDI fetch fails entirely. ~200 corresponds to
+# moderate dryness, a defensible mid-range default for CA fire season.
+_KBDI_FALLBACK = 200.0
 
 predict_bp = Blueprint('predict', __name__)
 
@@ -95,12 +100,20 @@ def _run(lat: float, lon: float) -> dict:
             evi = loc["evi"]
             evi_source = "fallback"
 
+    try:
+        kbdi = get_kbdi(lat, lon)
+        kbdi_source = "live"
+    except Exception:
+        kbdi = _KBDI_FALLBACK
+        kbdi_source = "fallback"
+
     result = predict_from_features(
         evi=evi,
         air_temp_encoded=air_temp_encoded,
         wind=wind,
         humidity=humidity,
         elevation=elevation,
+        kbdi=kbdi,
     )
     payload = {
         "prediction": {
@@ -128,6 +141,8 @@ def _run(lat: float, lon: float) -> dict:
             "humidity_source": weather_source,
             "elevation": result["elevation"],
             "elevation_source": elevation_source,
+            "kbdi": result["kbdi"],
+            "kbdi_source": kbdi_source,
         },
     }
     _PREDICT_CACHE[cache_key] = {"data": payload, "expires": now + _PREDICT_TTL}
@@ -227,9 +242,10 @@ def predict_custom():
         wind             = float(data['wind'])
         humidity         = float(data['humidity'])
         elevation        = float(data['elevation'])
+        kbdi             = float(data['kbdi'])
     except (KeyError, TypeError, ValueError):
-        return jsonify({'error': 'evi, air_temp_encoded, wind, humidity, elevation are required numbers'}), 400
-    result = predict_from_features(evi=evi, air_temp_encoded=air_temp_encoded, wind=wind, humidity=humidity, elevation=elevation)
+        return jsonify({'error': 'evi, air_temp_encoded, wind, humidity, elevation, kbdi are required numbers'}), 400
+    result = predict_from_features(evi=evi, air_temp_encoded=air_temp_encoded, wind=wind, humidity=humidity, elevation=elevation, kbdi=kbdi)
     zone_name = data.get('zone_name')
     resp = {'risk_score': result['risk_score'], 'label': result['label']}
     if zone_name is not None:
