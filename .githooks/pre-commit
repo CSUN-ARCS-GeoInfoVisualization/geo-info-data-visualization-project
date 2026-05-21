@@ -1,0 +1,43 @@
+#!/usr/bin/env bash
+# Pre-commit secret scanner.
+# Blocks commits containing JWT-shaped strings, GCP service-account private keys,
+# Render API keys, AWS keys, or common live-secret prefixes.
+set -e
+
+staged_diff=$(git diff --cached -U0 --no-color)
+[ -z "$staged_diff" ] && exit 0
+
+found=""
+matches() {
+  echo "$staged_diff" | grep -aE "$1" >/dev/null
+}
+
+# JWT: header.payload.signature — header always starts eyJ (base64 of {"...).
+if matches 'eyJ[A-Za-z0-9_=-]+\.eyJ[A-Za-z0-9_=-]+\.[A-Za-z0-9_=.+/-]+'; then
+  found="${found}
+- JWT-shaped token detected"
+fi
+if matches '"private_key": "-----BEGIN'; then
+  found="${found}
+- GCP service-account private key detected"
+fi
+if matches 'rnd_[A-Za-z0-9]{20,}'; then
+  found="${found}
+- Render API key detected"
+fi
+if matches 'AKIA[0-9A-Z]{16}'; then
+  found="${found}
+- AWS access key detected"
+fi
+if matches 'sk-(live|test|proj)_[A-Za-z0-9]{20,}'; then
+  found="${found}
+- OpenAI/Stripe-style live secret detected"
+fi
+
+if [ -n "$found" ]; then
+  printf '\033[1;31mpre-commit: secret pattern in staged diff:\033[0m%s\n\n' "$found"
+  echo "Reject. Move the secret to Render env vars or ~/.firescope-secrets."
+  echo "If false positive, bypass: git commit --no-verify"
+  exit 1
+fi
+exit 0
