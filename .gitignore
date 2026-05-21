@@ -30,6 +30,7 @@ instance/
 # IDE
 .idea/
 *.iml
+.claude/
 
 # Migrations cache (if any)
 migrations/__pycache__/

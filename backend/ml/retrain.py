@@ -27,9 +27,19 @@ import matplotlib
 matplotlib.use("Agg")  # non-interactive backend for server environments
 import matplotlib.pyplot as plt
 import seaborn as sns
+
+# SHAP is dev-only (in requirements-dev.txt, NOT requirements.txt) so production
+# Render deploys never install it. The training script degrades gracefully if
+# someone runs it without the dev requirements.
+try:
+    import shap
+    _SHAP_AVAILABLE = True
+except ImportError:
+    _SHAP_AVAILABLE = False
+from sklearn.calibration import CalibratedClassifierCV, calibration_curve
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.preprocessing import StandardScaler
-from sklearn.model_selection import StratifiedKFold, cross_val_predict
+from sklearn.model_selection import StratifiedGroupKFold, StratifiedKFold, cross_val_predict
 from sklearn.metrics import (
     accuracy_score,
     precision_score,
@@ -42,13 +52,16 @@ from sklearn.metrics import (
 )
 
 _DIR        = os.path.dirname(os.path.abspath(__file__))
-_DATA_PATH  = os.path.join(_DIR, "training_data", "california_2020.csv")
+# Prefer the KBDI-enriched dataset when present; fall back to the original.
+_DATA_PATH_KBDI = os.path.join(_DIR, "training_data", "california_2020_kbdi.csv")
+_DATA_PATH_BASE = os.path.join(_DIR, "training_data", "california_2020.csv")
+_DATA_PATH = _DATA_PATH_KBDI if os.path.exists(_DATA_PATH_KBDI) else _DATA_PATH_BASE
 _MODELS_DIR = os.path.join(_DIR, "models")
 _CHARTS_DIR = os.path.join(_DIR, "charts")
 _MODEL_OUT  = os.path.join(_MODELS_DIR, "wildfire_model_predictive.pkl")
 _SCALER_OUT = os.path.join(_MODELS_DIR, "wildfire_scaler_predictive.pkl")
 
-FEATURE_COLS = ["evi", "air_temp_encoded", "wind", "humidity", "elevation"]
+FEATURE_COLS = ["evi", "air_temp_encoded", "wind", "humidity", "elevation", "kbdi"]
 LABEL_COL    = "fire"
 
 RF_PARAMS = dict(
@@ -63,7 +76,9 @@ RF_PARAMS = dict(
 )
 
 
-def load_data() -> tuple[np.ndarray, np.ndarray]:
+def load_data() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Load training rows. Returns (X, y, latlon) where latlon is the per-row
+    lat/lon used to compute spatial-block group IDs for spatial CV."""
     import csv
     rows = []
     with open(_DATA_PATH, newline="") as f:
@@ -72,13 +87,17 @@ def load_data() -> tuple[np.ndarray, np.ndarray]:
             try:
                 features = [float(row[c]) for c in FEATURE_COLS]
                 label    = int(row[LABEL_COL])
-                rows.append(features + [label])
+                lat      = float(row["lat"])
+                lon      = float(row["lon"])
+                rows.append(features + [label, lat, lon])
             except (KeyError, ValueError):
                 continue
 
-    arr    = np.array(rows)
-    X_all  = arr[:, :-1]
-    y_all  = arr[:, -1].astype(int)
+    arr     = np.array(rows)
+    n_feat  = len(FEATURE_COLS)
+    X_all   = arr[:, :n_feat]
+    y_all   = arr[:, n_feat].astype(int)
+    latlon_all = arr[:, n_feat + 1:]
 
     # Enforce a balanced 50/50 split by downsampling the majority class.
     # This prevents imbalanced checkpoint merges from skewing metrics.
@@ -94,7 +113,20 @@ def load_data() -> tuple[np.ndarray, np.ndarray]:
         print(f"  NOTE: dataset was imbalanced ({len(fire_idx)} fire, {len(nofire_idx)} no-fire). "
               f"Downsampled to {n} per class.")
 
-    return X_all[sel], y_all[sel]
+    return X_all[sel], y_all[sel], latlon_all[sel]
+
+
+def spatial_group_ids(latlon: np.ndarray, cell_deg: float = 0.5) -> np.ndarray:
+    """Bin lat/lon into ~55 km cells (at California latitudes) and return one
+    integer group ID per row. Used as the `groups` argument to
+    StratifiedGroupKFold so all rows inside the same cell stay in the same
+    fold -- preventing the model from being tested on points it effectively
+    saw during training via spatial autocorrelation."""
+    lat_bin = np.floor(latlon[:, 0] / cell_deg).astype(np.int64)
+    lon_bin = np.floor(latlon[:, 1] / cell_deg).astype(np.int64)
+    # 10_000 is larger than any realistic lon-bin range, so the combined
+    # value is unique per (lat_bin, lon_bin) pair without collisions.
+    return lat_bin * 10_000 + lon_bin
 
 
 def print_section(title: str):
@@ -118,7 +150,7 @@ def retrain():
         print("ERROR: dataset not found. Run build_dataset.py first.")
         sys.exit(1)
 
-    X, y = load_data()
+    X, y, latlon = load_data()
     n_samples = len(y)
     n_fire    = int((y == 1).sum())
     n_nofire  = int((y == 0).sum())
@@ -155,8 +187,8 @@ def retrain():
     eval_model = RandomForestClassifier(**RF_PARAMS)
 
     print("  Running CV (this takes a few minutes)...")
-    y_pred  = cross_val_predict(eval_model, X_scaled, y, cv=cv, method="predict",       n_jobs=-1)
-    y_proba = cross_val_predict(eval_model, X_scaled, y, cv=cv, method="predict_proba", n_jobs=-1)
+    y_pred  = cross_val_predict(eval_model, X_scaled, y, cv=cv, method="predict",       n_jobs=1)
+    y_proba = cross_val_predict(eval_model, X_scaled, y, cv=cv, method="predict_proba", n_jobs=1)
 
     acc  = accuracy_score(y, y_pred)
     prec = precision_score(y, y_pred, zero_division=0)
@@ -181,15 +213,100 @@ def retrain():
     print("\n  Classification report:")
     print(classification_report(y, y_pred, target_names=["No Fire", "Fire"]))
 
-    # ── Train final model on full dataset ──────────────────────────────
-    print_section("TRAINING FINAL MODEL")
-    model = RandomForestClassifier(**RF_PARAMS)
-    model.fit(X_scaled, y)
-    print(f"  Trained RandomForest on {n_samples:,} samples.")
+    # ── Spatial-block cross-validation ─────────────────────────────────
+    # Random CV above mixes nearby points across folds, so spatial
+    # autocorrelation lets the model "see" each test row's neighbors during
+    # training. The number above is the optimistic best case.
+    #
+    # Spatial CV groups all rows in the same ~55 km cell into one fold, so
+    # the model is tested on regions it never saw. The drop versus random CV
+    # quantifies how much of the apparent skill came from spatial leakage.
+    print_section("SPATIAL-BLOCK CROSS-VALIDATION (~55 km cells)")
+    groups   = spatial_group_ids(latlon)
+    n_groups = len(set(groups))
+    n_splits_s = min(10, n_groups)
+    print(f"  {n_groups} unique spatial cells; {n_splits_s} folds")
 
-    # ── Feature importances ────────────────────────────────────────────
+    cv_s = StratifiedGroupKFold(n_splits=n_splits_s, shuffle=True, random_state=42)
+    splits = list(cv_s.split(X_scaled, y, groups=groups))
+
+    print("  Running spatial CV...")
+    y_pred_s  = cross_val_predict(eval_model, X_scaled, y, cv=splits, method="predict",       n_jobs=1)
+    y_proba_s = cross_val_predict(eval_model, X_scaled, y, cv=splits, method="predict_proba", n_jobs=1)
+
+    acc_s  = accuracy_score(y, y_pred_s)
+    prec_s = precision_score(y, y_pred_s, zero_division=0)
+    rec_s  = recall_score(y, y_pred_s, zero_division=0)
+    f1_s   = f1_score(y, y_pred_s, zero_division=0)
+    auc_s  = roc_auc_score(y, y_proba_s[:, 1])
+    cm_s   = confusion_matrix(y, y_pred_s)
+    tn_s, fp_s, fn_s, tp_s = cm_s.ravel()
+
+    print(f"\n  Accuracy    : {acc_s:.4f}  ({acc_s * 100:.2f}%)")
+    print(f"  Precision   : {prec_s:.4f}")
+    print(f"  Recall      : {rec_s:.4f}")
+    print(f"  F1 Score    : {f1_s:.4f}")
+    print(f"  ROC-AUC     : {auc_s:.4f}")
+    print(f"  Specificity : {tn_s / (tn_s + fp_s):.4f}")
+
+    print("\n  Random vs spatial CV comparison:")
+    print(f"  {'Metric':<12} {'Random CV':>10} {'Spatial CV':>12} {'diff':>8}")
+    print(f"  {'-' * 44}")
+    for name, r, s in [
+        ("Accuracy",  acc,  acc_s),
+        ("ROC-AUC",   auc,  auc_s),
+        ("Recall",    rec,  rec_s),
+        ("Precision", prec, prec_s),
+        ("F1",        f1,   f1_s),
+    ]:
+        print(f"  {name:<12} {r:>10.4f} {s:>12.4f} {s - r:>+8.4f}")
+
+    # ── Calibrated held-out predictions for the calibration curve ─────
+    # RandomForest predict_proba returns raw vote counts, not true
+    # probabilities. Wrapping in CalibratedClassifierCV with sigmoid
+    # (Platt scaling) maps those scores onto empirical fire frequencies,
+    # so the Low/Medium/High/Extreme thresholds in inference.py mean
+    # what they say. Sigmoid is the right choice for ~1k samples;
+    # isotonic would overfit at this scale.
+    print_section("CALIBRATED SPATIAL-BLOCK CV (for calibration curve)")
+    cal_eval = CalibratedClassifierCV(
+        estimator=RandomForestClassifier(**RF_PARAMS),
+        method="sigmoid",
+        cv=5,
+        ensemble=False,
+    )
+    print("  Running calibrated spatial CV (slower -- nested CV)...")
+    y_proba_cal = cross_val_predict(
+        cal_eval, X_scaled, y, cv=splits, method="predict_proba", n_jobs=1,
+    )
+    auc_cal = roc_auc_score(y, y_proba_cal[:, 1])
+    print(f"  ROC-AUC (calibrated, spatial CV): {auc_cal:.4f}")
+
+    # ── Train final model on full dataset (uncalibrated, for importances) ─
+    print_section("TRAINING FINAL MODEL")
+    base_rf = RandomForestClassifier(**RF_PARAMS)
+    base_rf.fit(X_scaled, y)
+    print(f"  Trained base RandomForest on {n_samples:,} samples.")
+
+    # Wrap in calibration for the production model. cv=5 with ensemble=False
+    # uses 5-fold internal CV to fit the sigmoid mapping, then refits the
+    # base estimator on the full dataset. Result is a single calibrated
+    # model whose predict_proba returns calibrated probabilities.
+    model = CalibratedClassifierCV(
+        estimator=RandomForestClassifier(**RF_PARAMS),
+        method="sigmoid",
+        cv=5,
+        ensemble=False,
+    )
+    model.fit(X_scaled, y)
+    print(f"  Wrapped in CalibratedClassifierCV (sigmoid, cv=5).")
+
+    # ── Feature importances (from the uncalibrated base RF) ────────────
+    # The CalibratedClassifierCV wrapper doesn't expose feature_importances_
+    # directly; we read them from the separately-fit base RF, which uses
+    # the same hyperparams + random_state.
     print_section("FEATURE IMPORTANCES")
-    importances = model.feature_importances_
+    importances = base_rf.feature_importances_
     for name, imp in sorted(zip(FEATURE_COLS, importances), key=lambda x: -x[1]):
         bar = "#" * int(imp * 40)
         print(f"  {name:<12} {imp:.4f}  {bar}")
@@ -219,14 +336,106 @@ def retrain():
     # ── Charts ─────────────────────────────────────────────────────────
     print_section("GENERATING CHARTS")
     os.makedirs(_CHARTS_DIR, exist_ok=True)
-    _generate_charts(X, y, y_pred, y_proba, model, acc, prec, rec, f1, auc, cm)
-    _generate_summary(acc, prec, rec, f1, auc, cm, model.feature_importances_, n_samples, n_fire, n_nofire)
+    _generate_charts(X, y, y_pred, y_proba, base_rf, acc, prec, rec, f1, auc, cm)
+    _generate_calibration_chart(y, y_proba_s[:, 1], y_proba_cal[:, 1], auc_s, auc_cal)
+
+    if _SHAP_AVAILABLE:
+        print_section("GENERATING SHAP CHARTS")
+        shap_importances = _generate_shap_charts(base_rf, X_scaled, X, FEATURE_COLS)
+    else:
+        print("  shap not installed; skipping SHAP charts. "
+              "Install dev deps with: pip install -r requirements-dev.txt")
+        shap_importances = None
+
+    _generate_summary(acc, prec, rec, f1, auc, cm, importances, n_samples, n_fire, n_nofire,
+                      shap_importances=shap_importances)
     print(f"  Charts saved -> {_CHARTS_DIR}")
 
     print("\nRetrain complete.\n")
 
 
-def _generate_summary(acc, prec, rec, f1, auc, cm, importances, n_samples, n_fire, n_nofire):
+def _generate_shap_charts(base_rf, X_scaled, X_raw, feature_names):
+    """Generate SHAP attribution charts for the uncalibrated base RandomForest.
+
+    Uses TreeExplainer (exact, fast) on the *uncalibrated* base RF because
+    SHAP doesn't natively support CalibratedClassifierCV. The base RF has
+    identical feature ordering and was fit on the same scaled data, so the
+    attributions are valid for interpreting which features drive the model
+    -- they just won't sum to the *calibrated* probability.
+
+    SHAP values are computed in scaled feature space (because that's what
+    the model sees), but axes/colors use the raw values for human-readable
+    plots.
+
+    Returns mean(|SHAP|) per feature so _generate_summary can build a
+    Gini-vs-SHAP comparison table.
+    """
+    explainer = shap.TreeExplainer(base_rf)
+    raw = explainer.shap_values(X_scaled)
+
+    # Binary classifier shape changed across SHAP versions:
+    #   >=0.45  -> 3D ndarray (n_samples, n_features, n_classes)
+    #   <0.45   -> list of 2 arrays [neg_class, pos_class]
+    # We always want the positive ("fire") class.
+    if isinstance(raw, list):
+        shap_vals = raw[1]
+    elif raw.ndim == 3:
+        shap_vals = raw[:, :, 1]
+    else:
+        shap_vals = raw
+
+    # 1. Bar -- global mean(|SHAP|) per feature
+    plt.figure(figsize=(7, 5))
+    shap.summary_plot(
+        shap_vals, X_raw, feature_names=feature_names,
+        plot_type="bar", show=False,
+    )
+    plt.title("SHAP Feature Importance (mean |SHAP|)")
+    plt.tight_layout()
+    plt.savefig(os.path.join(_CHARTS_DIR, "shap_summary_bar.png"),
+                dpi=150, bbox_inches="tight")
+    plt.close()
+
+    # 2. Beeswarm -- per-row SHAP distribution + signed direction
+    plt.figure(figsize=(8, 6))
+    shap.summary_plot(
+        shap_vals, X_raw, feature_names=feature_names,
+        show=False,
+    )
+    plt.title("SHAP Beeswarm — feature impact + value direction")
+    plt.tight_layout()
+    plt.savefig(os.path.join(_CHARTS_DIR, "shap_beeswarm.png"),
+                dpi=150, bbox_inches="tight")
+    plt.close()
+
+    # 3. Dependence plots for the top 3 features (by mean |SHAP|)
+    mean_abs = np.mean(np.abs(shap_vals), axis=0)
+    top3_idx = np.argsort(mean_abs)[-3:][::-1]  # top-3, descending
+
+    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+    for ax, idx in zip(axes, top3_idx):
+        feat_name = feature_names[idx]
+        shap.dependence_plot(
+            int(idx), shap_vals, X_raw,
+            feature_names=feature_names,
+            interaction_index="auto",
+            ax=ax, show=False,
+        )
+        ax.set_title(f"SHAP dependence: {feat_name}")
+    fig.suptitle(
+        "Top-3 feature dependence plots (color = strongest interacting feature)",
+        y=1.02,
+    )
+    fig.tight_layout()
+    fig.savefig(os.path.join(_CHARTS_DIR, "shap_dependence_top3.png"),
+                dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+    return mean_abs
+
+
+def _generate_summary(acc, prec, rec, f1, auc, cm, importances, n_samples, n_fire, n_nofire,
+                      shap_importances=None):
     tn, fp, fn, tp = cm.ravel()
     spec = tn / (tn + fp)
     miss_rate = fn / (fn + tp)
@@ -284,10 +493,60 @@ def _generate_summary(acc, prec, rec, f1, auc, cm, importances, n_samples, n_fir
         "evi":              "Spring EVI (May 1 composite) — vegetation density as pre-season fuel load",
         "wind":             "Wind speed in m/s — drives fire spread rate and direction",
         "elevation":        "Terrain elevation in meters — affects vegetation type and wind exposure",
+        "kbdi":             "Keetch-Byram Drought Index (0–800) — cumulative deep-soil moisture deficit over the prior 30 days; the operational drought index used by US fire weather offices",
     }
     for name, imp in sorted(zip(FEATURE_COLS, importances), key=lambda x: -x[1]):
         bar = "#" * int(imp * 20)
         lines.append(f"| **{name}** | {imp:.3f} `{bar}` | {descriptions.get(name, '')} |")
+
+    if shap_importances is not None:
+        # Build Gini-vs-SHAP comparison table.
+        # Disagreements between the two are the most interesting rows: Gini
+        # measures how often a feature is split on; SHAP measures how much it
+        # actually moves a prediction (and accounts for feature interactions).
+        gini_rank = {n: i + 1 for i, (n, _) in enumerate(
+            sorted(zip(FEATURE_COLS, importances), key=lambda x: -x[1])
+        )}
+        shap_rank = {n: i + 1 for i, (n, _) in enumerate(
+            sorted(zip(FEATURE_COLS, shap_importances), key=lambda x: -x[1])
+        )}
+
+        lines += [
+            "",
+            "---",
+            "",
+            "## SHAP Feature Attributions",
+            "",
+            "Computed with `shap.TreeExplainer` on the uncalibrated base RandomForest.",
+            "Mean(|SHAP|) measures how much each feature actually moves a prediction,",
+            "averaged across the training set — a richer signal than Gini importance",
+            "because it accounts for feature interactions and (in the beeswarm) shows",
+            "signed direction.",
+            "",
+            "| Feature | Gini Importance | Mean \\|SHAP\\| | Gini Rank | SHAP Rank | Shift |",
+            "|---------|-----------------|---------------|-----------|-----------|-------|",
+        ]
+        for i, name in enumerate(FEATURE_COLS):
+            gi = importances[i]
+            si = shap_importances[i]
+            gr = gini_rank[name]
+            sr = shap_rank[name]
+            shift = gr - sr
+            if shift > 0:
+                shift_str = f"+{shift}"
+            elif shift < 0:
+                shift_str = str(shift)
+            else:
+                shift_str = "—"
+            lines.append(
+                f"| **{name}** | {gi:.3f} | {si:.3f} | {gr} | {sr} | {shift_str} |"
+            )
+        lines += [
+            "",
+            "Positive shift means SHAP ranks the feature higher than Gini does.",
+            "Where the two columns disagree, trust SHAP for *prediction-time impact*",
+            "and Gini for *training-time split frequency*.",
+        ]
 
     lines += [
         "",
@@ -318,7 +577,14 @@ def _generate_summary(acc, prec, rec, f1, auc, cm, importances, n_samples, n_fir
         "| `roc_curve.png` | ROC curve showing model discrimination ability |",
         "| `metrics_bar.png` | Bar chart of all 5 performance metrics |",
         "| `feature_distributions.png` | KDE plots comparing fire vs no-fire for each feature |",
+        "| `calibration_curve.png` | Predicted probability vs observed fire frequency, before/after sigmoid calibration |",
     ]
+    if shap_importances is not None:
+        lines += [
+            "| `shap_summary_bar.png` | SHAP global importance — mean(\\|SHAP\\|) per feature; alternative to Gini |",
+            "| `shap_beeswarm.png` | SHAP per-row distribution — color = feature value, x = SHAP impact (sign = direction) |",
+            "| `shap_dependence_top3.png` | Top-3 features by mean(\\|SHAP\\|), each plotted against its SHAP value and colored by the strongest interacting feature |",
+        ]
 
     path = os.path.join(_CHARTS_DIR, "RESULTS.md")
     with open(path, "w", encoding="utf-8") as f:
@@ -382,6 +648,37 @@ def _generate_charts(X, y, y_pred, y_proba, model, acc, prec, rec, f1, auc, cm):
     fig.suptitle("Feature Distributions: Fire vs No Fire", y=1.02)
     fig.tight_layout()
     fig.savefig(os.path.join(_CHARTS_DIR, "feature_distributions.png"), dpi=150, bbox_inches="tight")
+    plt.close(fig)
+
+
+def _generate_calibration_chart(y, proba_uncal, proba_cal, auc_uncal, auc_cal):
+    """
+    Calibration curve comparing the bare RandomForest's `predict_proba`
+    output against the sigmoid-calibrated wrapper. Bin predicted
+    probabilities and plot the empirical fraction of fires in each bin.
+    A perfectly calibrated model lies on the diagonal -- below the diagonal
+    means overconfident, above means underconfident.
+    """
+    sns.set_theme(style="whitegrid", palette="muted")
+    n_bins = 10
+
+    pt_uncal, pp_uncal = calibration_curve(y, proba_uncal, n_bins=n_bins, strategy="quantile")
+    pt_cal,   pp_cal   = calibration_curve(y, proba_cal,   n_bins=n_bins, strategy="quantile")
+
+    fig, ax = plt.subplots(figsize=(6.5, 6))
+    ax.plot([0, 1], [0, 1], "k--", lw=1, label="Perfect calibration")
+    ax.plot(pp_uncal, pt_uncal, "o-", color="#C44E52", lw=2,
+            label=f"Uncalibrated RF (AUC={auc_uncal:.3f})")
+    ax.plot(pp_cal,   pt_cal,   "o-", color="#4C72B0", lw=2,
+            label=f"Sigmoid-calibrated (AUC={auc_cal:.3f})")
+    ax.set_xlabel("Mean predicted probability (in each bin)")
+    ax.set_ylabel("Fraction of fires (in each bin)")
+    ax.set_title("Calibration Curve\n(Held-out spatial CV; closer to diagonal = better calibrated)")
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.legend(loc="upper left", fontsize=9)
+    fig.tight_layout()
+    fig.savefig(os.path.join(_CHARTS_DIR, "calibration_curve.png"), dpi=150)
     plt.close(fig)
 
 

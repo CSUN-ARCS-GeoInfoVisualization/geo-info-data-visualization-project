@@ -343,6 +343,7 @@ function ResearchMapView() {
   const [lstSlider, setLstSlider] = useState(14000);
   const [windSlider, setWindSlider] = useState(7);
   const [elevSlider, setElevSlider] = useState(500);
+  const [kbdiSlider, setKbdiSlider] = useState(200); // Keetch-Byram Drought Index, 0-800
   // Extended tracking parameters — the current ML model only consumes EVI/LST/
   // wind/elevation, but the UI exposes the full feature set that the upcoming
   // retrain (option 3 — ActiveFireSnapshot) will consume: Date, Latitude,
@@ -449,6 +450,7 @@ function ResearchMapView() {
                   wind: ov.wind,
                   humidity: (ov as any).humidity ?? 50,
                   elevation: ov.elevation,
+                  kbdi: (ov as any).kbdi ?? 200,
                   zone_name: name,
                 };
                 const r = await apiFetch("/predict-custom", {
@@ -484,7 +486,7 @@ function ResearchMapView() {
     setZoneOverrides((prev) => ({
       ...prev,
       [selectedZone]: {
-        evi: eviSlider, lst: lstSlider, wind: windSlider, elevation: elevSlider,
+        evi: eviSlider, lst: lstSlider, wind: windSlider, elevation: elevSlider, kbdi: kbdiSlider,
         ...prev[selectedZone],
         [field]: val,
       },
@@ -531,6 +533,7 @@ function ResearchMapView() {
                     setLstSlider(ov.lst);
                     setWindSlider(ov.wind);
                     setElevSlider(ov.elevation);
+                    if (typeof ov.kbdi === "number") setKbdiSlider(ov.kbdi);
                   }
                 }}
                 nifcPerimeters={nifcPerimeters}
@@ -700,6 +703,10 @@ function ResearchMapView() {
                       <div>
                         <label className="text-xs font-medium flex justify-between">⛰️ Elevation <span className="text-muted-foreground">{elevSlider}m</span></label>
                         <input type="range" min={0} max={3000} step={50} value={elevSlider} onChange={(e) => { const v = Number(e.target.value); setElevSlider(v); updateZoneOverride("elevation", v); }} disabled={!useOverrides || !selectedZone} className="w-full mt-1 accent-gray-500 disabled:opacity-40" />
+                      </div>
+                      <div>
+                        <label className="text-xs font-medium flex justify-between" title="Keetch-Byram Drought Index: 0 = saturated soil, 800 = severe drought">🥵 Drought (KBDI) <span className="text-muted-foreground">{kbdiSlider}</span></label>
+                        <input type="range" min={0} max={800} step={10} value={kbdiSlider} onChange={(e) => { const v = Number(e.target.value); setKbdiSlider(v); updateZoneOverride("kbdi", v); }} disabled={!useOverrides || !selectedZone} className="w-full mt-1 accent-amber-600 disabled:opacity-40" />
                       </div>
                       <div>
                         <label className="text-xs font-medium flex justify-between">🔥 TA (Thermal Anomalies) <span className="text-muted-foreground">{taSlider}</span></label>
