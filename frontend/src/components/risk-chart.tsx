@@ -140,6 +140,32 @@ export function RiskChart({ title, type = "line", lat = 34.0522, lon = -118.2437
             </LineChart>
           )}
         </ResponsiveContainer>
+
+        <div className="mt-4 space-y-2 text-xs text-muted-foreground leading-relaxed">
+          <p>
+            <span className="font-medium text-foreground">How this is calculated.</span>{" "}
+            A baseline risk for this location is produced by FireScope's calibrated machine-learning
+            model (random forest, six inputs: vegetation greenness, temperature, wind, humidity,
+            elevation, and the Keetch-Byram drought index). That baseline is then nudged up or down
+            for each of the next 7 days using the local Open-Meteo weather forecast — hotter, drier,
+            and windier days push the line higher.
+          </p>
+          <p>
+            <span className="font-medium text-foreground">Why it's on a 0–5 scale.</span>{" "}
+            The model emits a probability between 0 and 1. The chart stretches that to 0–5 so the
+            line has room to move and small day-to-day shifts in the forecast are visible. This is
+            a display scale only — it isn't tied to the Low / Medium / High / Extreme labels used
+            on the risk maps.
+          </p>
+          <p>
+            <span className="font-medium text-foreground">Reading the line.</span>{" "}
+            A flat or low line (≲ 2) means the location's underlying conditions are mild and the
+            week's weather isn't expected to make things worse. A line trending upward (≳ 3) means
+            the forecast is loading on heat, low humidity, or wind on top of an already dry,
+            high-vegetation, or drought-stressed location — the days at the top of the curve are
+            the days to watch.
+          </p>
+        </div>
       </CardContent>
     </Card>
   );
