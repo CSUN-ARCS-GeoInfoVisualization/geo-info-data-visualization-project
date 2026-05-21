@@ -191,14 +191,33 @@ def _compute_zone_risk(zone_type: str) -> dict | None:
     finally:
         executor.shutdown(wait=False)
 
-    # Build feature vectors — live weather where available, interpolated fallback
+    # Parallel-fetch EVI / elevation / KBDI for every centroid so a batch of
+    # cold cache misses doesn't blow gunicorn's request timeout.
+    static_features: dict[str, dict] = {}
+    feat_executor = ThreadPoolExecutor(max_workers=_WEATHER_WORKERS)
+    try:
+        def _load_static(lat_lon):
+            lat_, lon_ = lat_lon
+            return {
+                "evi":  get_feature(lat_, lon_, "evi"),
+                "elev": get_feature(lat_, lon_, "elevation"),
+                "kbdi": get_feature(lat_, lon_, "kbdi"),
+            }
+        futures = {feat_executor.submit(_load_static, (lat, lon)): name for name, lat, lon in sampled}
+        for fut in as_completed(futures, timeout=25):
+            try:
+                static_features[futures[fut]] = fut.result()
+            except Exception:
+                static_features[futures[fut]] = {"evi": 0.0, "elev": 0.0, "kbdi": 200.0}
+    finally:
+        feat_executor.shutdown(wait=False)
+
     sampled_names = []
     sampled_inputs = []  # (evi, air_temp_encoded, wind, humidity, elevation, kbdi) tuples
     for name, lat, lon in sampled:
-        evi  = get_feature(lat, lon, "evi")
-        elev = get_feature(lat, lon, "elevation")
-        kbdi = get_feature(lat, lon, "kbdi")
-        wx   = live_weather.get(name)
+        sf = static_features.get(name, {"evi": 0.0, "elev": 0.0, "kbdi": 200.0})
+        evi, elev, kbdi = sf["evi"], sf["elev"], sf["kbdi"]
+        wx = live_weather.get(name)
         if wx:
             air_temp_encoded = wx["air_temp_encoded"]
             wind             = wx["wind"]
@@ -453,12 +472,34 @@ def _compute_county_risk(evi_ov=None, air_temp_encoded_ov=None, wind_ov=None,
         finally:
             executor.shutdown(wait=False)
 
+    # Parallel-fetch EVI/elevation/KBDI across all 58 county centroids so a
+    # batch of cold-cache misses can't blow gunicorn's request timeout.
+    static_features: dict[str, dict] = {}
+    need_static = (evi_ov is None) or (elev_ov is None) or (kbdi_ov is None)
+    if need_static:
+        cf_exec = ThreadPoolExecutor(max_workers=_WEATHER_WORKERS)
+        try:
+            def _load_static(args):
+                lat_, lon_ = args
+                return {
+                    "evi":  evi_ov  if evi_ov  is not None else get_feature(lat_, lon_, "evi"),
+                    "elev": elev_ov if elev_ov is not None else get_feature(lat_, lon_, "elevation"),
+                    "kbdi": kbdi_ov if kbdi_ov is not None else get_feature(lat_, lon_, "kbdi"),
+                }
+            futures = {cf_exec.submit(_load_static, (lat, lon)): name for name, lat, lon in CA_COUNTY_CENTROIDS}
+            for fut in as_completed(futures, timeout=25):
+                try:
+                    static_features[futures[fut]] = fut.result()
+                except Exception:
+                    static_features[futures[fut]] = {"evi": 0.0, "elev": 0.0, "kbdi": 200.0}
+        finally:
+            cf_exec.shutdown(wait=False)
+
     names = []
     inputs = []
     for name, lat, lon in CA_COUNTY_CENTROIDS:
-        evi  = evi_ov if evi_ov is not None else get_feature(lat, lon, "evi")
-        elev = elev_ov if elev_ov is not None else get_feature(lat, lon, "elevation")
-        kbdi = kbdi_ov if kbdi_ov is not None else get_feature(lat, lon, "kbdi")
+        sf = static_features.get(name, {"evi": evi_ov or 0.0, "elev": elev_ov or 0.0, "kbdi": kbdi_ov if kbdi_ov is not None else 200.0})
+        evi, elev, kbdi = sf["evi"], sf["elev"], sf["kbdi"]
         wx   = live_weather.get(name)
         air_temp_encoded = air_temp_encoded_ov if air_temp_encoded_ov is not None else (wx["air_temp_encoded"] if wx else get_feature(lat, lon, "air_temp_encoded"))
         wind             = wind_ov             if wind_ov             is not None else (wx["wind"]             if wx else get_feature(lat, lon, "wind"))
