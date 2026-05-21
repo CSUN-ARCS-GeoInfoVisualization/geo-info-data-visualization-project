@@ -29,8 +29,13 @@ let _cachedRisk: Record<string, ZoneRisk> = {};
 export function CensusTractRiskOverlay({ onZoneClick }: Props) {
   const map = useMap();
   const overlayRef = useRef<GoogleMapsOverlay | null>(null);
+  const riskDataRef = useRef<Record<string, ZoneRisk>>(_cachedRisk);
+  const onClickRef = useRef(onZoneClick);
   const [geoData, setGeoData] = useState<any>(_cachedGeo);
   const [riskData, setRiskData] = useState(_cachedRisk);
+
+  useEffect(() => { onClickRef.current = onZoneClick; }, [onZoneClick]);
+  useEffect(() => { riskDataRef.current = riskData; }, [riskData]);
 
   useEffect(() => {
     if (_cachedGeo && Object.keys(_cachedRisk).length > 0) {
@@ -48,9 +53,15 @@ export function CensusTractRiskOverlay({ onZoneClick }: Props) {
   }, []);
 
   useEffect(() => {
-    if (!map || !geoData?.features || Object.keys(riskData).length === 0) return;
-    if (overlayRef.current) { overlayRef.current.setMap(null); overlayRef.current.finalize(); }
+    if (!map) return;
+    const overlay = new GoogleMapsOverlay({ layers: [] });
+    overlay.setMap(map);
+    overlayRef.current = overlay;
+    return () => { overlay.setMap(null); overlay.finalize(); overlayRef.current = null; };
+  }, [map]);
 
+  useEffect(() => {
+    if (!overlayRef.current || !geoData?.features || Object.keys(riskData).length === 0) return;
     const enriched = {
       ...geoData,
       features: geoData.features.map((f: any) => {
@@ -59,8 +70,7 @@ export function CensusTractRiskOverlay({ onZoneClick }: Props) {
         return { ...f, properties: { ...f.properties, risk_score: risk.risk_score, risk_label: risk.label } };
       }),
     };
-
-    const overlay = new GoogleMapsOverlay({
+    overlayRef.current.setProps({
       layers: [new GeoJsonLayer({
         id: "tract-risk-zones",
         data: enriched,
@@ -70,10 +80,11 @@ export function CensusTractRiskOverlay({ onZoneClick }: Props) {
         getLineWidth: 0.3,
         getFillColor: (f: any) => getRiskColor(f.properties.risk_score || 0),
         onClick: (info: any) => {
-          if (onZoneClick && info.object) {
+          const cb = onClickRef.current;
+          if (cb && info.object) {
             const tract = info.object.properties?.tract || "";
-            const r = riskData[tract];
-            onZoneClick(`Tract ${tract}`, {
+            const r = riskDataRef.current[tract];
+            cb(`Tract ${tract}`, {
               risk_score: r?.risk_score ?? info.object.properties?.risk_score ?? 0,
               label: r?.label ?? info.object.properties?.risk_label ?? "Low",
               features: r?.features,
@@ -83,9 +94,7 @@ export function CensusTractRiskOverlay({ onZoneClick }: Props) {
         updateTriggers: { getFillColor: [Object.keys(riskData).length] },
       })],
     });
-    overlay.setMap(map); overlayRef.current = overlay;
-    return () => { if (overlayRef.current) { overlayRef.current.setMap(null); overlayRef.current.finalize(); overlayRef.current = null; } };
-  }, [map, geoData, riskData, onZoneClick]);
+  }, [geoData, riskData]);
 
   return null;
 }
