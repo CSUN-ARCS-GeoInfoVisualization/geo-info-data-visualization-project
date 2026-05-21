@@ -180,7 +180,9 @@ def _spawn_background_refresh(app, cache_key: str, recompute_fn) -> None:
             with app.app_context():
                 fresh = recompute_fn()
                 if fresh is not None:
-                    _zone_risk_cache[cache_key] = {"data": fresh, "expires": time.time() + _GRID_CACHE_TTL}
+                    _zone_risk_cache[cache_key] = _build_cache_entry(
+                        fresh, time.time() + _GRID_CACHE_TTL
+                    )
                     _save_cache_to_db(cache_key, fresh)
         except Exception as e:
             logger.warning("background refresh failed for %s: %s", cache_key, e)
