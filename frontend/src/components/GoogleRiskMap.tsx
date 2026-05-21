@@ -358,7 +358,7 @@ export function GoogleRiskMap({
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
                     <span><strong>🌡️ Air Temperature:</strong><br /><span style={{ color: '#6b7280', fontSize: 11 }}>Hotter air dries fuel</span></span>
-                    <span style={{ fontVariantNumeric: 'tabular-nums' }}>{Number.isFinite(selectedZone.features.air_temp_encoded) ? (((selectedZone.features.air_temp_encoded as number) * 0.02) - 273.15).toFixed(1) + '°C' : '—'}</span>
+                    <span style={{ fontVariantNumeric: 'tabular-nums' }}>{Number.isFinite(selectedZone.features.air_temp_encoded) ? ((((selectedZone.features.air_temp_encoded as number) * 0.02) - 273.15) * 9 / 5 + 32).toFixed(1) + '°F' : '—'}</span>
                   </div>
                   <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
                     <span><strong>💨 Wind Speed:</strong><br /><span style={{ color: '#6b7280', fontSize: 11 }}>Faster wind spreads fire</span></span>

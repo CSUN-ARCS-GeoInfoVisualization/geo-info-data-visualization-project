@@ -499,6 +499,7 @@ function ResearchMapView() {
 
   // Convert LST encoded value to Celsius for display
   const lstCelsius = Math.round((lstSlider * 0.02 - 273.15) * 10) / 10;
+  const lstFahrenheit = Math.round((lstCelsius * 9 / 5 + 32) * 10) / 10;
 
   return (
     <div className="space-y-6">
@@ -697,7 +698,7 @@ function ResearchMapView() {
                         <input type="range" min={0} max={5000} step={100} value={eviSlider} onChange={(e) => { const v = Number(e.target.value); setEviSlider(v); updateZoneOverride("evi", v); }} disabled={!useOverrides || !selectedZone} className="w-full mt-1 accent-green-500 disabled:opacity-40" />
                       </div>
                       <div>
-                        <label className="text-xs font-medium flex justify-between">🌡️ Temperature <span className="text-muted-foreground">{lstCelsius}°C</span></label>
+                        <label className="text-xs font-medium flex justify-between">🌡️ Temperature <span className="text-muted-foreground">{lstFahrenheit}°F</span></label>
                         <input type="range" min={13000} max={15500} step={50} value={lstSlider} onChange={(e) => { const v = Number(e.target.value); setLstSlider(v); updateZoneOverride("lst", v); }} disabled={!useOverrides || !selectedZone} className="w-full mt-1 accent-orange-500 disabled:opacity-40" />
                       </div>
                       <div>
