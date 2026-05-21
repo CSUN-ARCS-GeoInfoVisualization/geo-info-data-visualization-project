@@ -23,13 +23,21 @@ Behavior:
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
 import threading
 import time as _time
 from typing import Callable
 
 from flask import Response, request
+
+try:
+    import orjson as _orjson
+    def _dumps(obj) -> bytes:
+        return _orjson.dumps(obj)  # 5-10× faster than stdlib json
+except ImportError:
+    import json
+    def _dumps(obj) -> bytes:
+        return json.dumps(obj, separators=(',', ':')).encode('utf-8')
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +70,7 @@ def _normalize_etag(raw: str) -> str:
 
 
 def _make_entry(data, ttl_seconds: int, content_type: str = 'application/json') -> dict:
-    body = json.dumps(data, separators=(',', ':')).encode('utf-8')
+    body = _dumps(data)
     etag = hashlib.md5(body).hexdigest()
     return {
         'body': body,
@@ -72,16 +80,17 @@ def _make_entry(data, ttl_seconds: int, content_type: str = 'application/json') 
     }
 
 
-def _respond(entry: dict) -> Response:
+def _respond(entry: dict, cache_control: str | None = None) -> Response:
+    cc = cache_control or 'public, max-age=60, stale-while-revalidate=600'
     inm_raw = request.headers.get('If-None-Match', '')
     if inm_raw and _normalize_etag(inm_raw) == _normalize_etag(entry['etag']):
         resp = Response(status=304)
         resp.headers['ETag'] = entry['etag']
-        resp.headers['Cache-Control'] = 'public, max-age=60'
+        resp.headers['Cache-Control'] = cc
         return resp
     resp = Response(entry['body'], mimetype=entry.get('content_type', 'application/json'))
     resp.headers['ETag'] = entry['etag']
-    resp.headers['Cache-Control'] = 'public, max-age=60, stale-while-revalidate=600'
+    resp.headers['Cache-Control'] = cc
     return resp
 
 
@@ -142,6 +151,7 @@ def serve_cached(
     *,
     db_freshness_seconds: int | None = None,
     content_type: str = 'application/json',
+    cache_control: str | None = None,
 ) -> Response:
     """Serve a JSON response via the 3-tier cache.
 
@@ -158,7 +168,7 @@ def serve_cached(
     # Tier 0
     cached = _mem.get(cache_key)
     if cached and cached['expires'] > now:
-        return _respond(cached)
+        return _respond(cached, cache_control)
 
     # Tier 1
     db_entry = _load_from_db(cache_key)
@@ -175,12 +185,12 @@ def serve_cached(
         # Re-check both layers — another request may have populated while we waited
         cached = _mem.get(cache_key)
         if cached and cached['expires'] > now:
-            return _respond(cached)
+            return _respond(cached, cache_control)
         data = compute_fn()
         entry = _make_entry(data, ttl_seconds, content_type)
         _mem[cache_key] = entry
         _save_to_db(cache_key, entry)
-    return _respond(entry)
+    return _respond(entry, cache_control)
 
 
 def invalidate(cache_key: str) -> None:

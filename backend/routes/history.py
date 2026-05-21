@@ -163,12 +163,13 @@ def history_perimeters():
         return data
 
     from services.cache import serve_cached
-    # Historical perimeters are immutable — DB freshness can be very long.
+    # Historical perimeters are immutable; tell browsers to keep them forever.
     return serve_cached(
         cache_key=cache_key,
-        ttl_seconds=1800,                 # 30min in-memory
+        ttl_seconds=1800,
         compute_fn=_compute,
-        db_freshness_seconds=30 * 86400,  # 30 days DB freshness (historical data doesn't change)
+        db_freshness_seconds=30 * 86400,
+        cache_control='public, max-age=86400, stale-while-revalidate=604800, immutable',
     )
 
 
@@ -234,7 +235,8 @@ def history_dins():
     from services.cache import serve_cached
     return serve_cached(
         cache_key=cache_key,
-        ttl_seconds=3600,                 # 1h in-memory
+        ttl_seconds=3600,
         compute_fn=_compute,
-        db_freshness_seconds=30 * 86400,  # historical damage data — long DB freshness
+        db_freshness_seconds=30 * 86400,
+        cache_control='public, max-age=86400, stale-while-revalidate=604800, immutable',
     )
