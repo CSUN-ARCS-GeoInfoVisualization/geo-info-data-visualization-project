@@ -89,7 +89,7 @@ def get_shelters():
     from services.cache import serve_cached
     return serve_cached(
         cache_key='shelters_ca',
-        ttl_seconds=CACHE_TTL,           # 6h in-memory
+        ttl_seconds=300,                 # 5min in-memory
         compute_fn=_compute_shelters,
-        db_freshness_seconds=86400,      # 24h DB freshness — shelter inventory is slow-moving
+        db_freshness_seconds=600,        # 10min DB freshness per request
     )
