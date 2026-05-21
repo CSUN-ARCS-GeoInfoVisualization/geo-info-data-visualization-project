@@ -66,14 +66,17 @@ export function RiskChart({ title, type = "line", lat = 34.0522, lon = -118.2437
 
             // Use the ML base risk if we got it; otherwise fall back to a
             // weather-only heuristic so the chart still renders during outages.
+            // The model emits a probability in [0,1] — ×10 puts it on the
+            // familiar 0–10 "rate it" scale that the y-axis renders.
             let risk = baseRisk !== null
-              ? baseRisk * 5
-              : Math.max(0, Math.min(5,
-                  ((temp - 60) / 20 + (30 - hum) / 30 + wind / 40) * 2));
+              ? baseRisk * 10
+              : Math.max(0, Math.min(10,
+                  ((temp - 60) / 20 + (30 - hum) / 30 + wind / 40) * 4));
 
-            // Per-day adjustment from local weather variation
+            // Per-day adjustment from local weather variation.
+            // Coefficient is sized for the 0–10 range (was 0.5 on the old 0–5 range).
             const weatherFactor = ((temp - 70) / 30 + (50 - hum) / 50 + wind / 50);
-            const adjustedRisk = Math.max(0, Math.min(5, risk + weatherFactor * 0.5));
+            const adjustedRisk = Math.max(0, Math.min(10, risk + weatherFactor));
 
             days.push({
               day: DAYS[date.getDay()],
@@ -123,7 +126,7 @@ export function RiskChart({ title, type = "line", lat = 34.0522, lon = -118.2437
             <AreaChart data={data}>
               <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
               <XAxis dataKey="day" className="text-xs" tick={{ fontSize: 12 }} />
-              <YAxis domain={[0, 5]} className="text-xs" tick={{ fontSize: 12 }} />
+              <YAxis domain={[0, 10]} className="text-xs" tick={{ fontSize: 12 }} />
               <Tooltip content={<CustomTooltip />} />
               <Area type="monotone" dataKey="risk" stroke="#ef4444" fill="#fecaca" strokeWidth={2} />
             </AreaChart>
@@ -131,7 +134,7 @@ export function RiskChart({ title, type = "line", lat = 34.0522, lon = -118.2437
             <LineChart data={data}>
               <CartesianGrid strokeDasharray="3 3" className="stroke-muted" />
               <XAxis dataKey="day" className="text-xs" tick={{ fontSize: 12 }} />
-              <YAxis domain={[0, 5]} className="text-xs" tick={{ fontSize: 12 }} />
+              <YAxis domain={[0, 10]} className="text-xs" tick={{ fontSize: 12 }} />
               <Tooltip content={<CustomTooltip />} />
               <Line type="monotone" dataKey="risk" stroke="#ef4444" strokeWidth={3}
                 dot={{ fill: "#ef4444", strokeWidth: 2, r: 4 }}
@@ -151,16 +154,16 @@ export function RiskChart({ title, type = "line", lat = 34.0522, lon = -118.2437
             and windier days push the line higher.
           </p>
           <p>
-            <span className="font-medium text-foreground">Why it's on a 0–5 scale.</span>{" "}
-            The model emits a probability between 0 and 1. The chart stretches that to 0–5 so the
-            line has room to move and small day-to-day shifts in the forecast are visible. This is
-            a display scale only — it isn't tied to the Low / Medium / High / Extreme labels used
-            on the risk maps.
+            <span className="font-medium text-foreground">Why it's on a 0–10 scale.</span>{" "}
+            The model emits a probability between 0 and 1. The chart multiplies by 10 so the line
+            reads on the familiar 0–10 "rate it" scale and small day-to-day shifts in the forecast
+            are easy to see. This is a display scale only — it isn't tied to the Low / Medium /
+            High / Extreme labels used on the risk maps.
           </p>
           <p>
             <span className="font-medium text-foreground">Reading the line.</span>{" "}
-            A flat or low line (≲ 2) means the location's underlying conditions are mild and the
-            week's weather isn't expected to make things worse. A line trending upward (≳ 3) means
+            A flat or low line (≲ 4) means the location's underlying conditions are mild and the
+            week's weather isn't expected to make things worse. A line trending upward (≳ 6) means
             the forecast is loading on heat, low humidity, or wind on top of an already dry,
             high-vegetation, or drought-stressed location — the days at the top of the curve are
             the days to watch.
