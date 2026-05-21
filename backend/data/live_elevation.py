@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 _USGS_URL = "https://epqs.nationalmap.gov/v1/json"
 _OPEN_ELEVATION_URL = "https://api.open-elevation.com/api/v1/lookup"
-_TIMEOUT = 8
+_TIMEOUT = 3  # tight so batch calls fail fast and fall through to IDW
 
 
 def _tile(lat: float, lon: float) -> tuple[Decimal, Decimal]:
