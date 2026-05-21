@@ -194,7 +194,7 @@ interface SelectedZone {
   name: string;
   risk_score: number;
   label: string;
-  features?: { evi: number; lst: number; wind: number; elevation: number };
+  features?: { evi: number; air_temp_encoded: number; wind: number; humidity?: number; elevation: number; kbdi?: number };
   level: string;
 }
 
@@ -407,16 +407,24 @@ export function RiskMap() {
                             <span style={{ fontVariantNumeric: 'tabular-nums' }}>{selectedZone.features.evi?.toFixed(3)}</span>
                           </div>
                           <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
-                            <span><strong>🌡️ LST:</strong></span>
-                            <span style={{ fontVariantNumeric: 'tabular-nums' }}>{((selectedZone.features.lst * 0.02) - 273.15).toFixed(1)}°C</span>
+                            <span><strong>🌡️ Air Temp:</strong></span>
+                            <span style={{ fontVariantNumeric: 'tabular-nums' }}>{Number.isFinite(selectedZone.features.air_temp_encoded) ? (((selectedZone.features.air_temp_encoded as number) * 0.02) - 273.15).toFixed(1) + '°C' : '—'}</span>
                           </div>
                           <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
                             <span><strong>💨 Wind:</strong></span>
-                            <span style={{ fontVariantNumeric: 'tabular-nums' }}>{selectedZone.features.wind?.toFixed(1)} m/s</span>
+                            <span style={{ fontVariantNumeric: 'tabular-nums' }}>{selectedZone.features.wind?.toFixed(1) ?? '—'} m/s</span>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                            <span><strong>💧 Humidity:</strong></span>
+                            <span style={{ fontVariantNumeric: 'tabular-nums' }}>{selectedZone.features.humidity?.toFixed(0) ?? '—'}%</span>
                           </div>
                           <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
                             <span><strong>⛰️ Elevation:</strong></span>
                             <span style={{ fontVariantNumeric: 'tabular-nums' }}>{Math.round(selectedZone.features.elevation ?? 0)} m</span>
+                          </div>
+                          <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12 }}>
+                            <span><strong>🥵 KBDI:</strong></span>
+                            <span style={{ fontVariantNumeric: 'tabular-nums' }}>{selectedZone.features.kbdi?.toFixed(0) ?? '—'}</span>
                           </div>
                         </div>
                       ) : (
