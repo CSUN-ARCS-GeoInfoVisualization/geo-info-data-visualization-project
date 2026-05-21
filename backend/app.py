@@ -126,6 +126,17 @@ def create_app(config_class=Config):
     # live Open-Meteo recompute path.
     _warm_zone_risk_cache_on_boot(app)
 
+    # Hydrate the universal endpoint_cache from Postgres on boot so first
+    # requests for fire-perimeters / evac-zones / shelters / history are
+    # served from memory in <50ms instead of going to ArcGIS upstreams.
+    try:
+        with app.app_context():
+            from services.cache import warm_from_db_on_boot
+            n = warm_from_db_on_boot()
+            app.logger.info('endpoint_cache warmed: %d rows', n)
+    except Exception as e:
+        app.logger.warning('endpoint_cache warm failed: %s', e)
+
     # Initialize email service if RESEND_API_KEY is configured
     if os.getenv('RESEND_API_KEY'):
         try:

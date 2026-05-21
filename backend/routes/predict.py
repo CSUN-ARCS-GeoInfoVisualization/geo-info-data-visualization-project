@@ -416,27 +416,13 @@ def _fetch_containment_by_name() -> dict:
     return lookup
 
 
-_PERIMETER_CACHE: dict = {"data": None, "expires": 0.0}
-_PERIMETER_TTL = 180  # NIFC perimeters refresh ~hourly upstream; 3 min keeps maps near-live
-
-
-@predict_bp.route('/fire-perimeters', methods=['GET'])
-def nifc_fire_perimeters():
-    """Proxy NIFC WFIGS fire perimeters (California only) and enrich missing
-    containment percentages from CAL FIRE + WFIGS Incident Locations so the
-    4-tier color coding can actually kick in."""
-    import time as _time
-    now = _time.time()
-    if _PERIMETER_CACHE["data"] is not None and _PERIMETER_CACHE["expires"] > now:
-        resp = jsonify(_PERIMETER_CACHE["data"])
-        resp.headers['Cache-Control'] = 'public, max-age=180, stale-while-revalidate=600'
-        return resp
+def _compute_nifc_perimeters() -> dict:
+    """Heavy path: hit WFIGS + enrich containment. Used by serve_cached."""
     try:
         r = http_requests.get(
             'https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services/'
             'WFIGS_Interagency_Perimeters_YearToDate/FeatureServer/0/query',
             params={
-                # California only + drop fully-contained fires at the source
                 'where': "attr_POOState='US-CA' AND (attr_PercentContained IS NULL OR attr_PercentContained < 100)",
                 'outFields': 'poly_IncidentName,poly_GISAcres,poly_FeatureCategory,attr_PercentContained,attr_FireDiscoveryDateTime',
                 'f': 'geojson',
@@ -448,12 +434,11 @@ def nifc_fire_perimeters():
         data = r.json()
     except Exception as e:
         logger.warning('NIFC perimeters proxy failed: %s', e)
-        return jsonify({'type': 'FeatureCollection', 'features': []}), 200
+        return {'type': 'FeatureCollection', 'features': []}
 
     try:
         lookup = _fetch_containment_by_name()
         kept = []
-        existing_names: set = set()
         for feat in (data or {}).get('features', []) or []:
             props = feat.get('properties') or {}
             if props.get('attr_PercentContained') is None:
@@ -461,45 +446,33 @@ def nifc_fire_perimeters():
                 if nm in lookup:
                     props['attr_PercentContained'] = lookup[nm]
                     feat['properties'] = props
-            # Re-apply the <100 filter after enrichment
             pct = props.get('attr_PercentContained')
             if pct is not None and float(pct) >= 100:
                 continue
             kept.append(feat)
-            nm = _norm_fire_name(props.get('poly_IncidentName'))
-            if nm:
-                existing_names.add(nm)
         data['features'] = kept
     except Exception as e:
         logger.warning('Containment enrichment failed: %s', e)
-        existing_names = set()
+    return data
 
-    _PERIMETER_CACHE["data"] = data
-    _PERIMETER_CACHE["expires"] = now + _PERIMETER_TTL
-    resp = jsonify(data)
-    resp.headers['Cache-Control'] = 'public, max-age=180, stale-while-revalidate=600'
-    return resp
+
+@predict_bp.route('/fire-perimeters', methods=['GET'])
+def nifc_fire_perimeters():
+    """Proxy NIFC WFIGS fire perimeters with 3-tier cache (memory > Postgres > live)."""
+    from services.cache import serve_cached
+    return serve_cached(
+        cache_key='fire_perimeters',
+        ttl_seconds=180,
+        compute_fn=_compute_nifc_perimeters,
+        db_freshness_seconds=900,  # serve up-to-15-min-old DB rows even past in-memory expiry
+    )
 
 
 _EVAC_ZONE_CACHE: dict = {"data": None, "expires": 0.0}
 _EVAC_ZONE_TTL = 60  # Cal OES pipeline refreshes ~10 min upstream; 60s keeps UI fresh
 
 
-@predict_bp.route('/evacuation-zones', methods=['GET'])
-def evacuation_zones():
-    """Statewide California active evacuation zones from the Cal OES /
-    Genasys-aggregated CA_EVACUATIONS_PROD feature service.
-
-    Same source Watch Duty consumes. Layer is filtered upstream to ACTIVE
-    zones only — cleared zones drop out (no 'All Clear' status appears).
-    """
-    import time as _time
-    now = _time.time()
-    if _EVAC_ZONE_CACHE["data"] is not None and _EVAC_ZONE_CACHE["expires"] > now:
-        resp = jsonify(_EVAC_ZONE_CACHE["data"])
-        resp.headers['Cache-Control'] = 'public, max-age=60, stale-while-revalidate=300'
-        return resp
-
+def _compute_evac_zones() -> dict:
     try:
         r = http_requests.get(
             'https://services3.arcgis.com/uknczv4rpevve42E/arcgis/rest/services/'
@@ -515,13 +488,19 @@ def evacuation_zones():
             headers={'User-Agent': 'FireScopeProxy/1.0'},
         )
         r.raise_for_status()
-        data = r.json() or {'type': 'FeatureCollection', 'features': []}
+        return r.json() or {'type': 'FeatureCollection', 'features': []}
     except Exception as e:
         logger.warning('Cal OES evacuation zones proxy failed: %s', e)
-        return jsonify({'type': 'FeatureCollection', 'features': []}), 200
+        return {'type': 'FeatureCollection', 'features': []}
 
-    _EVAC_ZONE_CACHE["data"] = data
-    _EVAC_ZONE_CACHE["expires"] = now + _EVAC_ZONE_TTL
-    resp = jsonify(data)
-    resp.headers['Cache-Control'] = 'public, max-age=60, stale-while-revalidate=300'
-    return resp
+
+@predict_bp.route('/evacuation-zones', methods=['GET'])
+def evacuation_zones():
+    """Statewide California active evacuation zones — 3-tier cache."""
+    from services.cache import serve_cached
+    return serve_cached(
+        cache_key='evac_zones',
+        ttl_seconds=60,
+        compute_fn=_compute_evac_zones,
+        db_freshness_seconds=600,
+    )

@@ -43,6 +43,31 @@ jobs:
           cat /tmp/tiles.json
           [ "$http" = "200" ] || exit 1
 
+      - name: Pre-warm site-wide endpoint_cache (fires / evac / shelters / history)
+        env:
+          API_BASE: https://firescope-api.onrender.com/api
+        run: |
+          set -e
+          current_year=$(date +%Y)
+          urls=(
+            "$API_BASE/fire-perimeters"
+            "$API_BASE/evacuation-zones"
+            "$API_BASE/shelters"
+            "$API_BASE/history/perimeters/years"
+            "$API_BASE/history/perimeters?year=$current_year"
+            "$API_BASE/history/perimeters?year=$((current_year - 1))"
+            "$API_BASE/history/dins?year=$current_year"
+            "$API_BASE/history/dins?year=$((current_year - 1))"
+          )
+          for url in "${urls[@]}"; do
+            start=$(date +%s)
+            http=$(curl -s -o /tmp/_warm.bin -w '%{http_code}' --max-time 120 "$url")
+            size=$(wc -c < /tmp/_warm.bin)
+            echo "  [$http  ${size}B  $(($(date +%s) - start))s]  $url"
+            # 4xx is OK for some optional ones; only fail on 5xx
+            [ "$http" -lt 500 ] || exit 1
+          done
+
       - name: Pre-warm 4 zone endpoints
         env:
           API_BASE: https://firescope-api.onrender.com/api/research
