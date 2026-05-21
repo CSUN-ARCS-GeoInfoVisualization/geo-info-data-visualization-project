@@ -31,17 +31,19 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - name: Pre-warm per-tile feature caches (0.05° CA grid)
+      - name: Pre-warm per-tile feature caches (best-effort)
+        continue-on-error: true   # tile prewarm is best-effort; zone prewarm is the critical path
         env:
           API_BASE: https://firescope-api.onrender.com/api
         run: |
-          set -e
           echo "Triggering tile-cache backfill..."
           start=$(date +%s)
-          http=$(curl -s -X POST -o /tmp/tiles.json -w '%{http_code}' --max-time 900 "$API_BASE/research/admin/prewarm-tiles")
+          http=$(curl -s -X POST -o /tmp/tiles.json -w '%{http_code}' --max-time 85 "$API_BASE/research/admin/prewarm-tiles")
           echo "tile prewarm: HTTP=$http elapsed=$(($(date +%s) - start))s"
-          cat /tmp/tiles.json
-          [ "$http" = "200" ] || exit 1
+          cat /tmp/tiles.json || true
+          if [ "$http" != "200" ]; then
+            echo "::warning::tile prewarm returned $http — continuing (cache will warm progressively from user requests)"
+          fi
 
       - name: Pre-warm site-wide endpoint_cache (fires / evac / shelters / history)
         env:

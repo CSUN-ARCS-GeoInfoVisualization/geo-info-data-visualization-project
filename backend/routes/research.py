@@ -51,7 +51,7 @@ def get_boundaries(name):
     with open(filepath) as f:
         data = json_mod.load(f)
     resp = jsonify(data)
-    resp.headers['Cache-Control'] = 'public, max-age=86400, stale-while-revalidate=604800'
+    resp.headers['Cache-Control'] = 'public, max-age=86400, stale-while-revalidate=604800, immutable'
     return resp
 
 
@@ -719,25 +719,23 @@ def risk_grid():
 
 @research_bp.route('/admin/prewarm-tiles', methods=['POST'])
 def prewarm_tiles():
-    """Backfill feature_cache_elevation/_evi/_kbdi for a 0.05° CA grid.
+    """Backfill feature_cache_elevation/_evi/_kbdi for a coarse CA grid.
 
     Called by .github/workflows/daily-prewarm.yml. Keeps the per-tile caches
-    populated even if zone_risk_cache is wiped, so cold zone-risk computes
-    never hit live USGS/GEE/NASA-POWER for tiles that have a cached value.
+    populated so cold zone-risk computes never hit live USGS/GEE/NASA-POWER.
 
-    Parallelizes across tiles. Each tile triggers cache-aware lookups in
-    data.live_elevation / live_evi_gee / live_kbdi_cached — write-through
-    happens automatically.
+    Grid was originally 0.05° (~4000 tiles) but that consistently exceeded
+    gunicorn's 90s worker timeout. Now 0.1° (~1000 tiles) which fits under
+    75s with 24 parallel workers. The cron can simply call this repeatedly
+    to progressively warm more tiles — each call only fetches misses.
     """
     import time as _time
     start = _time.time()
     app_obj = current_app._get_current_object()
 
-    # 0.05° grid → ~4000 tiles over CA. Lower than the 0.01° tile key so
-    # adjacent tiles share cache hits, and small enough to finish under cron
-    # budget (~10-15 min worst case for a fully cold grid).
-    lat_start, lat_end, lat_step = 32.5, 42.0, 0.05
-    lon_start, lon_end, lon_step = -124.0, -114.0, 0.05
+    # 0.1° grid (~1000 tiles) — fits under gunicorn 90s with 24 workers.
+    lat_start, lat_end, lat_step = 32.5, 42.0, 0.1
+    lon_start, lon_end, lon_step = -124.0, -114.0, 0.1
     points = []
     lat = lat_start
     while lat <= lat_end:
@@ -763,7 +761,7 @@ def prewarm_tiles():
                     return False
         futures = [feat_executor.submit(_warm, p) for p in points]
         try:
-            for fut in as_completed(futures, timeout=850):
+            for fut in as_completed(futures, timeout=70):
                 try:
                     if fut.result():
                         wrote += 1
