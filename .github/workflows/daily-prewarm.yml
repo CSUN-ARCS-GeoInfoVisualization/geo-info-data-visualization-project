@@ -51,6 +51,10 @@ jobs:
         run: |
           set -e
           current_year=$(date +%Y)
+          # Historical fire data (history/perimeters?year=, history/dins?year=)
+          # is intentionally NOT here. That data is immutable and lives in
+          # endpoint_cache forever after the one-time backfill-history.yml run.
+          # Re-warming it daily wastes upstream quota for zero gain.
           urls=(
             "$API_BASE/fire-perimeters"
             "$API_BASE/evacuation-zones"
@@ -58,10 +62,6 @@ jobs:
             "$API_BASE/news"
             "$API_BASE/calfire/incidents?inactive=false"
             "$API_BASE/history/perimeters/years"
-            "$API_BASE/history/perimeters?year=$current_year"
-            "$API_BASE/history/perimeters?year=$((current_year - 1))"
-            "$API_BASE/history/dins?year=$current_year"
-            "$API_BASE/history/dins?year=$((current_year - 1))"
             "$API_BASE/research/boundaries/zip-codes"
             "$API_BASE/research/boundaries/neighborhoods"
             "$API_BASE/research/boundaries/census-tracts"
