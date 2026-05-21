@@ -15,6 +15,7 @@ from flask_jwt_extended import jwt_required, get_jwt
 from ml.inference import predict_from_features, predict_batch_features
 from data.sample_locations import SAMPLE_LOCATIONS
 from data.live_weather import get_weather
+from data.features import get_feature
 from models import db, ZoneRiskCache
 
 research_bp = Blueprint('research', __name__)
@@ -194,17 +195,17 @@ def _compute_zone_risk(zone_type: str) -> dict | None:
     sampled_names = []
     sampled_inputs = []  # (evi, air_temp_encoded, wind, humidity, elevation) tuples
     for name, lat, lon in sampled:
-        evi  = _interpolate_feature(lat, lon, "evi")
-        elev = _interpolate_feature(lat, lon, "elevation")
+        evi  = get_feature(lat, lon, "evi")
+        elev = get_feature(lat, lon, "elevation")
         wx   = live_weather.get(name)
         if wx:
             air_temp_encoded = wx["air_temp_encoded"]
             wind             = wx["wind"]
             humidity         = wx["humidity"]
         else:
-            air_temp_encoded = _interpolate_feature(lat, lon, "air_temp_encoded")
-            wind             = _interpolate_feature(lat, lon, "wind")
-            humidity         = _interpolate_feature(lat, lon, "humidity")
+            air_temp_encoded = get_feature(lat, lon, "air_temp_encoded")
+            wind             = get_feature(lat, lon, "wind")
+            humidity         = get_feature(lat, lon, "humidity")
         sampled_names.append(name)
         sampled_inputs.append((evi, air_temp_encoded, wind, humidity, elev))
 
@@ -351,18 +352,8 @@ def _fetch_live_weather(lat: float, lon: float) -> dict | None:
         return None
 
 
-def _interpolate_feature(lat: float, lon: float, feature_key: str) -> float:
-    """Interpolate a feature value from the nearest sample locations (inverse-distance weighted)."""
-    total_weight = 0.0
-    weighted_sum = 0.0
-    for loc in SAMPLE_LOCATIONS:
-        dist = ((lat - loc["lat"]) ** 2 + (lon - loc["lon"]) ** 2) ** 0.5
-        if dist < 0.001:
-            return loc[feature_key]
-        w = 1.0 / (dist ** 2)
-        weighted_sum += w * loc[feature_key]
-        total_weight += w
-    return weighted_sum / total_weight if total_weight > 0 else 0
+# Former _interpolate_feature replaced by data.features.get_feature (imported above).
+# The IDW logic now lives in data/features.py as the safety-net fallback.
 
 
 def _build_risk_grid(evi_ov, air_temp_encoded_ov, wind_ov, humidity_ov, elev_ov):
@@ -377,11 +368,11 @@ def _build_risk_grid(evi_ov, air_temp_encoded_ov, wind_ov, humidity_ov, elev_ov)
         lon = lon_start
         while lon <= lon_end:
             # Use overrides if provided, otherwise interpolate from sample data
-            evi              = evi_ov if evi_ov is not None else _interpolate_feature(lat, lon, "evi")
-            air_temp_encoded = air_temp_encoded_ov if air_temp_encoded_ov is not None else _interpolate_feature(lat, lon, "air_temp_encoded")
-            wind             = wind_ov if wind_ov is not None else _interpolate_feature(lat, lon, "wind")
-            humidity         = humidity_ov if humidity_ov is not None else _interpolate_feature(lat, lon, "humidity")
-            elev             = elev_ov if elev_ov is not None else _interpolate_feature(lat, lon, "elevation")
+            evi              = evi_ov if evi_ov is not None else get_feature(lat, lon, "evi")
+            air_temp_encoded = air_temp_encoded_ov if air_temp_encoded_ov is not None else get_feature(lat, lon, "air_temp_encoded")
+            wind             = wind_ov if wind_ov is not None else get_feature(lat, lon, "wind")
+            humidity         = humidity_ov if humidity_ov is not None else get_feature(lat, lon, "humidity")
+            elev             = elev_ov if elev_ov is not None else get_feature(lat, lon, "elevation")
 
             try:
                 result = predict_from_features(evi, air_temp_encoded, wind, humidity, elev)
@@ -462,12 +453,12 @@ def _compute_county_risk(evi_ov=None, air_temp_encoded_ov=None, wind_ov=None,
     names = []
     inputs = []
     for name, lat, lon in CA_COUNTY_CENTROIDS:
-        evi  = evi_ov if evi_ov is not None else _interpolate_feature(lat, lon, "evi")
-        elev = elev_ov if elev_ov is not None else _interpolate_feature(lat, lon, "elevation")
+        evi  = evi_ov if evi_ov is not None else get_feature(lat, lon, "evi")
+        elev = elev_ov if elev_ov is not None else get_feature(lat, lon, "elevation")
         wx   = live_weather.get(name)
-        air_temp_encoded = air_temp_encoded_ov if air_temp_encoded_ov is not None else (wx["air_temp_encoded"] if wx else _interpolate_feature(lat, lon, "air_temp_encoded"))
-        wind             = wind_ov             if wind_ov             is not None else (wx["wind"]             if wx else _interpolate_feature(lat, lon, "wind"))
-        humidity         = humidity_ov         if humidity_ov         is not None else (wx["humidity"]         if wx else _interpolate_feature(lat, lon, "humidity"))
+        air_temp_encoded = air_temp_encoded_ov if air_temp_encoded_ov is not None else (wx["air_temp_encoded"] if wx else get_feature(lat, lon, "air_temp_encoded"))
+        wind             = wind_ov             if wind_ov             is not None else (wx["wind"]             if wx else get_feature(lat, lon, "wind"))
+        humidity         = humidity_ov         if humidity_ov         is not None else (wx["humidity"]         if wx else get_feature(lat, lon, "humidity"))
         names.append(name)
         inputs.append((evi, air_temp_encoded, wind, humidity, elev))
     try:
