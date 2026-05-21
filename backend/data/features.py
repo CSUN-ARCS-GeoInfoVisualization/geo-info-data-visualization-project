@@ -66,10 +66,10 @@ def get_feature(lat: float, lon: float, key: str) -> float:
 
         if key == "kbdi":
             try:
-                from data.live_kbdi import get_kbdi  # only present on v2/v2-rebased
-                return float(get_kbdi(lat, lon))
+                from data.live_kbdi_cached import get_kbdi_cached
+                return float(get_kbdi_cached(lat, lon))
             except ImportError:
-                logger.debug("live_kbdi not available — falling back to IDW for kbdi")
+                logger.debug("live_kbdi_cached not available — falling back to IDW for kbdi")
                 return _idw(lat, lon, "kbdi")
     except Exception as e:
         logger.warning("live %s lookup failed at %s,%s: %s — falling back to IDW", key, lat, lon, e)

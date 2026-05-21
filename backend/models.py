@@ -171,3 +171,14 @@ class FeatureCacheEvi(db.Model):
     source = db.Column(db.String(32), nullable=False)
     composite_date = db.Column(db.Date, nullable=False, index=True)
     fetched_at = db.Column(db.DateTime(timezone=True), server_default=func.now())
+
+
+class FeatureCacheKbdi(db.Model):
+    """Per-tile Keetch-Byram Drought Index cache. 24h TTL (KBDI changes daily)."""
+    __tablename__ = 'feature_cache_kbdi'
+
+    tile_lat = db.Column(db.Numeric(7, 4), primary_key=True)
+    tile_lon = db.Column(db.Numeric(8, 4), primary_key=True)
+    kbdi = db.Column(db.Float, nullable=False)
+    source = db.Column(db.String(32), nullable=False, default='nasa_power')
+    fetched_at = db.Column(db.DateTime(timezone=True), server_default=func.now(), index=True)
