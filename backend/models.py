@@ -187,14 +187,15 @@ class FeatureCacheKbdi(db.Model):
 class EndpointCache(db.Model):
     """Universal DB-backed response cache.
 
-    One row per cache_key (e.g. 'fire_perimeters', 'history_perimeters:2024',
-    'evac_zones'). Stores the pre-serialized response body bytes + ETag so
-    cache hits across redeploys serve in <50ms regardless of upstream latency.
+    One row per cache_key. Stores both the raw JSON body and a pre-compressed
+    Brotli body so cache hits skip both serialization AND compression. Hits
+    across redeploys serve in <50ms regardless of upstream latency.
     """
     __tablename__ = 'endpoint_cache'
 
-    cache_key = db.Column(db.String(128), primary_key=True)
+    cache_key = db.Column(db.String(256), primary_key=True)
     body = db.Column(db.LargeBinary, nullable=False)
+    body_br = db.Column(db.LargeBinary, nullable=True)  # Brotli pre-compressed
     etag = db.Column(db.String(64), nullable=False)
     content_type = db.Column(db.String(64), nullable=False, default='application/json')
     computed_at = db.Column(db.DateTime(timezone=True), server_default=func.now(), index=True)
