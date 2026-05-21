@@ -119,7 +119,21 @@ def _serve_from_entry(entry: dict):
     """Return a Flask Response from a pre-serialized cache entry, honoring If-None-Match.
 
     Uses weak ETag matching so 304 still fires after the edge layer munges the header.
+
+    Self-heals legacy {data, expires}-shape entries by rebuilding the body/etag
+    in place — and logs once so we can find whatever wrote the old shape.
     """
+    if 'body' not in entry:
+        if 'data' in entry:
+            logger.warning(
+                "legacy cache entry shape — rebuilding body/etag (keys=%s); "
+                "find the writer and add _build_cache_entry()", list(entry.keys())
+            )
+            built = _build_cache_entry(entry['data'], entry.get('expires', time.time() + _GRID_CACHE_TTL))
+            entry['body'] = built['body']
+            entry['etag'] = built['etag']
+        else:
+            raise RuntimeError(f"cache entry missing both 'body' and 'data': keys={list(entry.keys())}")
     inm_raw = request.headers.get('If-None-Match', '')
     if inm_raw and _normalize_etag(inm_raw) == _normalize_etag(entry.get('etag', '')):
         resp = Response(status=304)
