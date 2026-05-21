@@ -458,18 +458,6 @@ def nifc_fire_perimeters():
         logger.warning('Containment enrichment failed: %s', e)
         existing_names = set()
 
-    # Merge in CAL FIRE incidents from the alerts/news feed that aren't already
-    # represented as WFIGS perimeters. These surface as circle polygons so every
-    # map consuming /fire-perimeters (dashboard, risk map, evac routes, research)
-    # shows the same incidents users read about in the news tab.
-    try:
-        news_feats = _fetch_news_incident_features(existing_names)
-        if news_feats:
-            data.setdefault('features', []).extend(news_feats)
-            logger.info('fire-perimeters: appended %d news-sourced incident circles', len(news_feats))
-    except Exception as e:
-        logger.warning('News-incident merge failed: %s', e)
-
     _PERIMETER_CACHE["data"] = data
     _PERIMETER_CACHE["expires"] = now + _PERIMETER_TTL
     resp = jsonify(data)
