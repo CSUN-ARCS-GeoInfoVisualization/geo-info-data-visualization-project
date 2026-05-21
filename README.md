@@ -1,7 +1,7 @@
 # FireScope
 
 **Live site:** https://firescope.netlify.app
-**Latest stable:** [`v2.3-stable`](https://github.com/CSUN-ARCS-GeoInfoVisualization/geo-info-data-visualization-project/releases/tag/v2.3-stable) — see [`docs/SESSION_HANDOFF.md`](docs/SESSION_HANDOFF.md) to pick up where the team left off.
+**Latest stable:** [`v2.7-stable`](https://github.com/CSUN-ARCS-GeoInfoVisualization/geo-info-data-visualization-project/releases/tag/v2.7-stable) — site-wide performance overhaul. 16 endpoints under 1 s, 11 under 500 ms. See [`docs/SESSION_HANDOFF.md`](docs/SESSION_HANDOFF.md) to pick up where the team left off.
 
 California wildfire risk visualization and prediction platform. Senior research project at California State University, Northridge (2025–2026).
 
@@ -10,7 +10,7 @@ California wildfire risk visualization and prediction platform. Senior research 
 FireScope aggregates open-source wildfire data from government agencies, satellite systems, and news providers into a single interactive dashboard for California. It combines:
 
 - **Geospatial ingestion** — CAL FIRE, NIFC WFIGS, NASA FIRMS, NASA MODIS EVI, Open-Meteo, FEMA NSS
-- **Machine-learning risk prediction** — scikit-learn classifier over 5 live features (EVI, air temperature, wind, humidity, elevation)
+- **Machine-learning risk prediction** — calibrated scikit-learn random forest over 6 live features (EVI, air temperature, wind, humidity, elevation, KBDI drought index). Sigmoid-calibrated with spatial-block cross-validation; per-feature SHAP attribution in `backend/ml/RESULTS.md`
 - **Map-based visualization** — deck.gl + Google Maps with risk zones, active fire perimeters, historical perimeters (1950–present), evacuation routes, and emergency shelters
 - **Alerts and notifications** — user-defined risk thresholds with email delivery
 
@@ -25,7 +25,7 @@ FireScope aggregates open-source wildfire data from government agencies, satelli
 ## Features
 
 - **Dashboard** — Split view: risk-zone map (county / ZIP / tract / neighborhood) + active-fire perimeter map with 4-tier containment coloring
-- **Research page** — Slider-driven per-zone overrides (EVI, temperature, wind, humidity, elevation) with live risk recomputation
+- **Research page** — Slider-driven per-zone overrides (EVI, temperature, wind, humidity, elevation, **KBDI** 0–800) with live risk recomputation. Air temperature is displayed in Fahrenheit across every zone popup and slider.
 - **History page** — 22k+ CAL FIRE perimeters back to 1878, year selector, fire search dropdown, click-to-inspect info card with decoded CAUSE codes, and per-year **CAL FIRE DINS structure damage** (2013→present) overlaid on each year's perimeters with a per-fire damage breakdown (Destroyed / Major / Minor / Affected / No Damage) so users immediately see whether a fire was a 0-structure wildland burn or a catastrophic urban-interface event. Year-aggregate card surfaces totals (e.g., "22,701 destroyed across 35 fires" for 2018)
 - **Shelters & Evacuation** — 8,014 California pre-staged emergency shelters (CalOES mirror of the FEMA NSS dataset) with click-to-route both inside the FireScope map (Google DirectionsService polyline) and via "Open in Google Maps" turn-by-turn. Live statewide active **evacuation orders / warnings / advisories / shelter-in-place** zones from the Cal OES `CA_EVACUATIONS_PROD` aggregation (the same source Watch Duty consumes — pulls Genasys PROTECT zones plus county sheriffs). Always-visible centroid pins, "Show on map" zoom-to-fit banner, 60 s auto-refresh.
 - **Active Fires** — NIFC year-to-date perimeters with CAL FIRE + WFIGS containment enrichment
@@ -164,15 +164,16 @@ See the in-app **Settings → About** page (`/settings`) for the full list with 
 
 ## Machine-Learning Model
 
-scikit-learn classifier predicting wildfire risk from 5 live inputs:
+Sigmoid-calibrated random forest predicting wildfire risk from 6 live inputs:
 
-1. `evi` — Enhanced Vegetation Index (MODIS MOD13Q1)
+1. `evi` — Enhanced Vegetation Index (MODIS MOD13Q1, GEE-sourced with USGS-backed IDW safety net)
 2. `air_temp_encoded` — `(°C + 273.15) / 0.02`
 3. `wind` — wind speed (m/s)
 4. `humidity` — relative humidity (%)
-5. `elevation` — meters above sea level
+5. `elevation` — meters above sea level (USGS 3DEP, per-tile DB cache, forever-cached)
+6. `kbdi` — Keetch-Byram Drought Index (NASA POWER, per-tile DB cache, 24 h TTL)
 
-Output: `risk_score` (0–1) + `label` (Low / Medium / High / Extreme). The frontend collapses these into a 3-tier risk-zone palette (green / yellow / red) on the Dashboard, Risk Map, and Research views. Per-zone overrides via `POST /api/predict-custom`.
+Output: `risk_score` (0–1) + `label` (Low / Medium / High / Extreme). Trained with spatial-block cross-validation and sigmoid calibration to keep probabilities honest under regional drift; SHAP attribution lives in `backend/ml/RESULTS.md` and the v2.5→v2.6 fingerprint comparison in `backend/ml/CALIBRATION_REPORT.md`. The frontend collapses the four labels into a 3-tier zone palette (green / yellow / red) on the Dashboard, Risk Map, and Research views. Per-zone overrides via `POST /api/predict-custom`.
 
 ## Workflow Guidelines
 

@@ -1,119 +1,105 @@
 # FireScope — Session Handoff
 
-**Stable tag:** `v2.3-stable` (commit `cb22a5f`, 2026-05-09)
+**Stable tag:** `v2.7-stable` (commit `b7de089`, 2026-05-21)
 **Live URL:** https://firescope.netlify.app
 **API:** https://firescope-api.onrender.com/api
+**GitHub Release:** https://github.com/CSUN-ARCS-GeoInfoVisualization/geo-info-data-visualization-project/releases/tag/v2.7-stable
 
 This document is the single source of truth for picking up FireScope work in a fresh session. Read this first, then `README.md`, then jump in.
 
 ---
 
-## What v2.3-stable adds (on top of v2.2)
+## What v2.7-stable adds (on top of v2.6)
 
-### Real per-year DINS structure damage on the History page
+### Site-wide performance overhaul
 
-1. **Source migration** off a stale 30k-row trimmed static GeoJSON (which had been stripped of every year/fire-ID field, so it could not be filtered) and off the previous backend upstream `services3 CALFIRE_Damage_INSpection_DINS_data` (retired by CAL FIRE — returns "Invalid URL"). New backend now hits CAL FIRE's authoritative **`POSTFIRE_MASTER_DATA_SHARE`** feature service on `services1.arcgis.com/jUJYIo9tSA7EHvfZ` — **132,000+ structures statewide, 2013→present**.
-2. **`/api/history/dins?year=YYYY`** — year query param is REQUIRED. Filters by `INCIDENTSTARTDATE` bracketed to the calendar year. Pages through ArcGIS's 2,000-row hard cap up to 40k features (handles 2018 = 28k, 2025 = 32k worst-case). 1 h per-year cache.
-3. **Frontend overlay** refetches on year change, replaces points immediately, and surfaces a live structure count in the toggle label ("*— 28,403 structures in 2018*" or "*(coverage starts 2013)*" for older years).
-4. **Per-fire damage breakdown** in the fire-info card. Click any perimeter and see one of three states:
-   - "*Structure damage (DINS): X structures inspected • destroyed/major/minor/affected breakdown*" for fires that damaged buildings
-   - "*No structures damaged — wildland fire.*" (the most common case — 73% of California fires in a typical year)
-   - "*DINS coverage starts 2013.*" for older fires where DINS literally didn't exist
-5. **Year-aggregate damage** in the no-fire-selected card: "*X destroyed across N fires; Y total inspected*" with a footer line explaining damage typically concentrates in 1–3 urban-interface fires.
-6. **Coverage period explicitly noted** in the History page Data Information card, the History page DINS legend, and the Settings → About page.
+The single largest perf work in the project's history. After v2.7 every zone-risk endpoint returns in < 1 s, and 11 of 16 public endpoints clear 500 ms.
 
-### About-page provenance honesty pass
+1. **Universal `endpoint_cache`** — DB-backed (Postgres) 3-tier cache (memory → Postgres → live), single-flight compute, ETag/304, and pre-compressed **Brotli** bodies. Survives Render redeploys, so a cold container still serves cached payloads at the first request instead of recomputing the 60–150 s zone-risk pipeline. Applied to 7 public endpoints (`fire-perimeters`, `evacuation-zones`, `shelters`, `calfire/incidents`, `news`, history endpoints, and the 4 zone-risk endpoints via the older `_zone_risk_cache` integration).
+2. **Permanently warmed historical data** — `backfill-history.yml` is a one-time `workflow_dispatch` action that hydrates every year of `history/perimeters` and `history/dins` into `endpoint_cache`. The daily cron no longer wastes upstream quota re-warming immutable historical years (only fire-perimeters / evacuation-zones / shelters / news now get daily re-warmed).
+3. **Single-flight compute** — concurrent requests for the same zone now share one computation instead of stampeding the slow path.
+4. **Self-healing legacy cache entries** — `_serve_from_entry` detects the older `{data, expires}` cache format and rebuilds the new `body/etag` form in place (was 500ing on `KeyError: 'body'` for any cache row written before the format migration).
+5. **Weak ETag matching** — survives Cloudflare/Render edge rewriting strong→weak with the `:br` suffix, so 304s actually fire instead of devolving to full 200s.
+6. **orjson + per-endpoint `Cache-Control`** — large GeoJSON payloads serialize 2-3× faster.
 
-- Replaced stale FEMA NSS shelter description with the real **CalOES `CA_Shelter_system`** source (8,014 facilities, 10-char field remap, why we migrated).
-- Added new entry for **Cal OES `CA_EVACUATIONS_PROD`** evacuation-zone source (same Watch Duty pulls from), explaining it carries currently-active zones only.
-- DINS source description now names `POSTFIRE_MASTER_DATA_SHARE` and the 2013→present coverage explicitly.
+### Frontend polish
 
-### Files touched in v2.3
+7. **Air temperature in Fahrenheit** across all zone popups (Dashboard map, Risk Map, Research page sliders). The model still takes Kelvin internally; the UI converts at the display boundary.
+8. **NaN fix in zone popups** (`.lst → .air_temp_encoded`) plus the v2.6 humidity and KBDI rows surface in the popup with correct labels.
+9. **Zone-overlay flicker eliminated** — overlay create/update split + ref-stable click handlers on the Dashboard map.
+
+### Operations
+
+10. **GHA daily pre-warm cron** (`daily-prewarm.yml`, `0 6 * * *` UTC) hits the 4 zone endpoints + tile caches every morning so the first user after the Render cache rolls always gets the warm path.
+11. **CI auto-sync** of `main → domain-deployment` runs on every push to main (`sync-domain-deployment.yml`). Never force-push to `domain-deployment` manually.
+12. **`render.yaml` gunicorn timeout** bumped to 90 s so cold zone recomputes can complete (subsequent requests are served from cache).
+13. **`data_quality` flag** on every zone payload + frontend "approx" badge when IDW fallbacks are in play.
+
+### Files touched in v2.7
 
 ```
 README.md
-docs/SESSION_HANDOFF.md          (this file)
-backend/routes/history.py        (new POSTFIRE_MASTER_DATA_SHARE proxy + paging)
-frontend/src/components/history.tsx  (overlay rewire, fire-info card, legend)
-frontend/src/components/settings-page.tsx  (About-page entries)
+docs/SESSION_HANDOFF.md           (this file)
+backend/models.py                  (endpoint_cache, feature_cache_kbdi tables)
+backend/routes/research.py         (universal cache integration, single-flight, ETag)
+backend/routes/predict.py          (calfire/incidents, fire-perimeters cache)
+backend/routes/history.py          (one-shot backfill route, dins cache-key fix)
+backend/routes/shelters.py         (10min DB / 5min memory freshness)
+backend/routes/news.py             (endpoint_cache)
+backend/ml/inference.py            (6-arg signature)
+frontend/src/components/risk-map.tsx, GoogleRiskMap.tsx, research-page.tsx
+frontend/src/components/dashboard.tsx
+.github/workflows/daily-prewarm.yml, backfill-history.yml
+migrations/versions/...endpoint_cache, feature_cache_kbdi
+render.yaml
 ```
 
-### v2.3 commits
+### Verify the v2.7 stack is healthy
 
-| Commit  | What |
-|---------|------|
-| `ebcfad3` | per-year DINS via CAL FIRE POSTFIRE_MASTER_DATA_SHARE |
-| `0de4987` | per-fire DINS damage breakdown in fire-info card |
-| `a809af6` | DINS coverage period (2013→present) noted in About + History |
-| `cb22a5f` | About-page entries for shelter + evacuation-zone sources (← v2.3-stable) |
+```bash
+# Health
+curl -s https://firescope-api.onrender.com/health
+# → {"status":"ok"}
+
+# All 4 zone endpoints — should each return 200 in <1s when cache is warm
+for path in "research/risk-by-county" "research/risk-by-zone/zip-codes" \
+            "research/risk-by-zone/neighborhoods" "research/risk-by-zone/census-tracts"; do
+  curl -s -o /dev/null -w "$path  HTTP=%{http_code}  %{time_total}s\n" \
+       --max-time 30 "https://firescope-api.onrender.com/api/$path"
+done
+
+# DINS with year (was the cache-key-too-long endpoint pre-v2.7)
+curl -s -o /dev/null -w "dins  HTTP=%{http_code}  size=%{size_download}B  %{time_total}s\n" \
+     "https://firescope-api.onrender.com/api/history/dins?year=2024"
+
+# Daily cron last run
+gh run list --workflow=daily-prewarm.yml --limit 3
+```
 
 ---
 
-## What v2.2-stable shipped
+## Predecessor releases
 
-### Shelters & Evacuation page (was "Evacuation Routes")
+| Tag | Date | Headline |
+|---|---|---|
+| **v2.7-stable** | 2026-05-21 | Site-wide perf overhaul (this section) |
+| **v2.6-v2-merged** | 2026-05-20 | Sania's calibrated KBDI random forest + KBDI slider + SHAP attribution charts + spatial-block CV |
+| **v2.5-inputs-only** | 2026-05-20 | Real EVI (GEE) + real elevation (USGS 3DEP) + per-tile DB cache + IDW safety net for cold-tile fetches |
+| **v2.4-stable** | 2026-05-20 | Self-healing `sync-domain-deployment` workflow + dropped news-sourced fire-perimeter circles (polygon-only) |
+| **v2.3-stable** | 2026-05-09 | Real per-year DINS from CAL FIRE `POSTFIRE_MASTER_DATA_SHARE`, per-fire damage breakdown, About-page provenance honesty pass |
+| **v2.2-stable** | 2026-05-09 | Shelters & Evacuation page rewrite (CalOES source) + active `CA_EVACUATIONS_PROD` zones with always-visible pins |
 
-1. **Reframed as always-on**, not emergency-only. Dropped the hard-coded "Active Evacuation Order: Zone A" alert. Page reads as "find a shelter near you" anytime.
-2. **Shelter data source migrated** off the gutted FEMA NSS layer (10 features nationwide, 0 in CA) to the **CalOES `CA_Shelter_system`** mirror — 8,014 California pre-staged facilities (5,096 dual-purpose / 2,218 evacuation / 699 post-impact). Backend remaps 10-char ArcGIS field names back to the original FEMA NSS schema so the frontend was untouched.
-   - File: `backend/routes/shelters.py`
-   - Endpoint: `GET /api/shelters?state=CA`
-3. **Click-a-shelter routing**: tooltip now has two buttons —
-   - **Route on this map** — green polyline drawn inside FireScope via `google.maps.DirectionsService` + `DirectionsRenderer`
-   - **Open in Google Maps** — turn-by-turn in a new tab (essential because the FireScope map gets visually busy with 8k shelter clusters)
-4. **Live evacuation zones** — new endpoint `GET /api/evacuation-zones` proxies the **Cal OES `CA_EVACUATIONS_PROD`** statewide aggregation feature service. This is the same source Watch Duty consumes; it pulls Genasys PROTECT zones plus county sheriff/EOC feeds. Filtered to active statuses only (Order / Warning / Advisory / Shelter in Place).
-   - File: `backend/routes/predict.py` → `evacuation_zones()` route
-   - 60 s server cache, gzip, GeoJSON in WGS84
-5. **Always-visible centroid pins** for every active zone. Most CA evacuation orders are <1 km polygons (e.g., the current 8 Tulare orders cluster in a ~5 km area near Cutler/Orosi) — at California-wide zoom they would otherwise be sub-pixel.
-6. **Red banner + "Show on map" button** appears whenever CA has any active orders. Click → `map.fitBounds()` to all active zone polygons, capped at zoom 13.
-7. **Two new toggles** in the map header, both default ON: **Evacuation Zones**, **Active Fires**.
-8. **Layer order** in the single `GoogleMapsOverlay`: zone polygons (bottom) → fire perimeters → shelter cluster icons → zone centroid pins (top, never hidden).
-9. **Auto-refresh**: zones refresh every 60 s on the page.
-
-### Files touched
-
-```
-README.md
-docs/SESSION_HANDOFF.md          (this file)
-backend/routes/shelters.py        (rewritten — CalOES source + field remap)
-backend/routes/predict.py         (added evacuation_zones route)
-frontend/src/App.tsx              (nav label rename)
-frontend/src/components/evacuation-routes.tsx  (most of the work)
-```
-
-### Stable commits to know
-
-| Commit  | What |
-|---------|------|
-| `be9d1ae` | shelter page reframe + click-to-route |
-| `8033842` | `/api/evacuation-zones` proxy + zone polygon layer + toggles |
-| `252d718` | shelter source migration off FEMA NSS to CalOES |
-| `6e5e4e0` | zone centroid pins + "Show on map" zoom-to-fit (← v2.2-stable) |
+Older tag annotations (`git tag -l --format='%(refname:short)  %(subject)'`) carry the per-release detail.
 
 ---
 
 ## How to resume
 
-Fresh-session prompt that picks up cleanly:
+Fresh-session prompt:
 
-> "Let's continue working on FireScope at `~/geo_info_data_visualization`. Read `docs/SESSION_HANDOFF.md` for the v2.2-stable state and the queue of next-up tasks, then start on the top item."
+> "Let's continue working on FireScope at `~/geo_info_data_visualization`. Read `docs/SESSION_HANDOFF.md` for the v2.7-stable state and the next-up queue, then start on the top item."
 
-### Verify the stack is healthy
-
-```bash
-# Backend (should return 8014 features, all CA, with facility_usage_code)
-curl -s "https://firescope-api.onrender.com/api/shelters?state=CA" | jq '.features | length'
-
-# Backend (should return active CA orders/warnings)
-curl -s "https://firescope-api.onrender.com/api/evacuation-zones" | jq '.features | length, .features[0].properties.STATUS'
-
-# Frontend bundle is the right one
-curl -s https://firescope.netlify.app/ | grep -oE 'index-[A-Za-z0-9_-]+\.js' | head -1
-
-# CI auto-sync of domain-deployment branch
-gh run list --workflow=sync-domain-deployment.yml --limit 3
-```
-
-### Local dev (one-line)
+### Local dev (one-line each)
 
 ```bash
 # Backend
@@ -125,12 +111,18 @@ cd frontend && VITE_API_URL=http://localhost:5000/api npm run dev
 
 ### Production deploy
 
-Push to `main`. CI syncs to `domain-deployment`, Netlify auto-builds with the prod env vars (`VITE_API_URL`, `VITE_GOOGLE_MAPS_API_KEY` are configured at site level, scope = all contexts). No manual override needed.
+Push to `main`. CI auto-syncs `domain-deployment`, Netlify auto-builds. No manual deploys.
 
-If you ever need to force a fresh build (e.g., to clear Netlify's build cache):
+Force-rebuild Netlify (rare — clears edge cache):
 
 ```bash
 netlify api createSiteBuild --data '{"site_id":"4d02944f-31ae-486b-a273-56dfe3d5016b","clear_cache":true}'
+```
+
+Manual Render redeploy (rare):
+
+```bash
+curl -X POST "https://api.render.com/deploy/srv-d71dltgule4c73cqkbj0?key=IW-X7ztdGiA"
 ```
 
 ---
@@ -138,68 +130,81 @@ netlify api createSiteBuild --data '{"site_id":"4d02944f-31ae-486b-a273-56dfe3d5
 ## Next up — queue (priority order)
 
 ### 1. Per-zone independent overrides (researcher page)
-Originally queued in the prior session memory, still pending.
+Originally queued from v2.2. Now blocked behind a 19-step plan saved local-only — see the project's working notes; do not commit that plan into this repo.
 
-- State: `zoneOverrides: Map<string, {evi, lst, wind, elevation}>`
-- When researcher clicks a zone → sliders show that zone's custom values (or live defaults)
+- State: `zoneOverrides: Map<string, {evi, lst, wind, humidity, elevation, kbdi}>`
+- Researcher clicks a zone → sliders show that zone's saved snapshot (or live defaults)
 - Adjusting sliders only affects the selected zone's risk color
-- Other zones keep their own custom values or live data
-- Multiple zones can have different overrides simultaneously
+- Multiple zones may carry independent overrides simultaneously
 - **Where:** `frontend/src/components/research-page.tsx`
 
 ### 2. FIRMS hotspots as polygon zones (not circles)
-Convert each FIRMS point into a small polygon sized by FRP (fire radiative power) — red shaded boundaries instead of `ScatterplotLayer` dots. Use `GeoJsonLayer` with generated polygons.
+Convert each FIRMS point into a small polygon sized by FRP (fire radiative power). Use `GeoJsonLayer` with generated polygons instead of `ScatterplotLayer` dots.
 
 - **Where:** `frontend/src/components/FIRMSMap.tsx`
 
 ### 3. Surface evacuation zones on the other maps
-Right now zones only render on the Shelters & Evacuation page. Consider an opt-in "Show evacuation zones" toggle on the Dashboard `GoogleRiskMap` and the `risk-map` page so users see active orders without leaving the page they're on.
+Zones currently render only on the Shelters & Evacuation page. Add an opt-in "Show evacuation zones" toggle on the Dashboard `GoogleRiskMap` and `risk-map` so users see active orders without leaving the page.
 
 ### 4. "Find shelters near me" geolocation flow
-Right now you can route TO a shelter you've already found. Add a one-click "Show 10 nearest shelters to my current location" button that:
-- Requests `navigator.geolocation`
-- Computes haversine distance to all 8,014 shelters server-side (or sorts client-side)
-- Highlights the 10 nearest with a different icon / list view
-- Each row has the same Route / Open in Google Maps actions
+One-click "Show 10 nearest shelters to my current location":
+- `navigator.geolocation` → coords
+- Haversine sort over the 8,014 shelters (client-side is fine at this size)
+- Highlight 10 nearest with a different icon / list view
+- Each row keeps the Route / Open-in-Google-Maps actions
 
 ### 5. Persistent route memory
-When a user routes to a shelter and reloads the page, the polyline disappears. Consider persisting the last route target in `localStorage` so it auto-restores.
+Last route target → `localStorage` so reload restores the polyline.
 
-### 6. Delete the dead static `POSTFIRE_MASTER_DATA_trimmed.geojson`
-
-`frontend/public/Data/POSTFIRE_MASTER_DATA_trimmed.geojson` (~8 MB) is no longer referenced anywhere — the History page now fetches DINS from `/api/history/dins?year=YYYY` against the live CAL FIRE service. Removing it shaves ~8 MB off every Netlify deploy artifact and clarifies that the site has no static-snapshot DINS source.
+### 6. Delete dead static `POSTFIRE_MASTER_DATA_trimmed.geojson` (~8 MB)
+`frontend/public/Data/POSTFIRE_MASTER_DATA_trimmed.geojson` is still in the tree but no longer referenced — the History page fetches DINS from `/api/history/dins?year=YYYY`. Removing it shaves 8 MB off every Netlify deploy.
 
 ```bash
+grep -rn POSTFIRE_MASTER_DATA_trimmed frontend/src/ backend/   # verify empty
 git rm frontend/public/Data/POSTFIRE_MASTER_DATA_trimmed.geojson
 ```
 
-Verify nothing references it first: `grep -rn POSTFIRE_MASTER_DATA_trimmed frontend/src/ backend/`.
-
 ### 7. Fix `evacuationZones` mock array (cleanup)
-`frontend/src/components/evacuation-routes.tsx` line ~25 still has a hard-coded `evacuationZones` array (Zone A / Zone B mock data) used inside a commented-out grid. Either delete it or repurpose it for the now-real Cal OES data.
+`frontend/src/components/evacuation-routes.tsx` ~line 25 still has the Zone A / Zone B mock array inside a commented-out grid. Delete or repurpose.
 
 ### 8. Polygon click priority over centroid pin
-At zoom 13+, both the polygon and the centroid pin are pickable. Click currently picks whichever deck.gl considers on top (the pin). Either suppress the pin at high zoom or merge the two click handlers so the same tooltip opens regardless.
+At zoom 13+, both the polygon and the centroid pin are pickable. Either suppress the pin at high zoom or merge the click handlers so the same tooltip opens regardless.
+
+### 9. Email digest real risk scores
+`backend/services/email/sender.py:189` currently stubs `risk_score=0, risk_level="N/A"` per monitored area in daily/weekly digests. Replace with a `get_zone_risk(scope, zone_id)` helper that's the single source of truth used by both digest and Research page. (Tracked in the same local-only plan as item #1 above.)
 
 ---
 
 ## Architecture reminders (don't break these)
 
-- **Single `GoogleMapsOverlay` per map.** Multiple overlays = multiple canvases = click blocking. The Shelters & Evacuation page bundles zone polygons + fire perimeters + shelter icons + zone pins into one overlay for this reason.
-- **ML model** loads once at startup via `_ensure_loaded()` in `backend/ml/inference.py` — never per-prediction.
-- **Push to main, CI auto-syncs `domain-deployment`.** The workflow `sync-domain-deployment.yml` handles this — no manual `git push origin main:domain-deployment --force` anymore.
+- **Single `GoogleMapsOverlay` per map.** Multiple overlays = multiple canvases = click blocking.
+- **ML model** loads once at startup via `_ensure_loaded()` in `backend/ml/inference.py` — never per-prediction. Now a 6-arg signature; do not call with 5.
+- **Push to main, CI auto-syncs `domain-deployment`.** The workflow `sync-domain-deployment.yml` handles this. Never force-push `domain-deployment`.
 - **Shelters page bottom-up layer order:** zone polygons → fire perimeters → shelter clusters → zone centroid pins. Don't reorder without thinking through what gets hidden.
-- **Cal OES feed is "active only".** Cleared zones drop off the upstream layer rather than persisting with an "All Clear" status. Don't try to render historical or cleared zones from this endpoint.
+- **Cal OES feed is "active only".** Cleared zones drop off the upstream rather than persisting with "All Clear".
+- **`endpoint_cache` payload format** is `{body, body_br, etag, content_type, computed_at}`. The older `{data, expires}` shape will be self-healed on first read after v2.7, but new writes must produce the new shape — never write a raw payload into `endpoint_cache` without going through `_build_cache_entry`.
+- **Air temperature display unit** is Fahrenheit in the UI, Kelvin (via `air_temp_encoded = (°C + 273.15) / 0.02`) in the model. Convert at the render boundary, not anywhere else.
 
 ---
 
 ## Useful endpoints reference
 
 | Endpoint | What |
-|----------|------|
-| `GET /api/shelters?state=CA` | 8,014 CA shelters (CalOES mirror), 6 h cache |
+|---|---|
+| `GET /health` | Liveness — `{"status":"ok"}` |
+| `GET /api/shelters?state=CA` | 8,014 CA shelters (CalOES mirror), 10 min DB / 5 min memory cache |
 | `GET /api/evacuation-zones` | Active CA orders/warnings (Cal OES), 60 s cache |
 | `GET /api/fire-perimeters` | NIFC + CAL FIRE active CA fire perimeters, 3 min cache |
-| `GET /api/history/dins?year=YYYY` | CAL FIRE DINS structure damage for a given year (2013→present), 1 h cache |
-| `GET /api/predict-custom` | Per-zone risk recompute with overrides |
-| `GET /api/research/risk-by-zone` | County / ZIP / tract / neighborhood risk scores |
+| `GET /api/calfire/incidents` | CAL FIRE active-incident list, `endpoint_cache`-backed |
+| `GET /api/history/perimeters?year=YYYY` | Per-year CAL FIRE historical perimeters, permanently warmed |
+| `GET /api/history/perimeters/years` | Available year list |
+| `GET /api/history/dins?year=YYYY` | CAL FIRE DINS structure damage 2013→present, permanently warmed |
+| `GET /api/news` | Allowlisted fire news feed, daily-warmed |
+| `POST /api/predict-custom` | Per-zone risk recompute with overrides (6 features) |
+| `POST /api/predict` | Lat/lon risk lookup |
+| `GET /api/research/risk-by-county` | County risk payload (cached) |
+| `GET /api/research/risk-by-zone/<zone>` | `zip-codes` / `neighborhoods` / `census-tracts` risk payloads |
+| `GET /api/research/boundaries/<name>` | Static boundary GeoJSON (no `counties` — counties geometry rides on `risk-by-county`) |
+| `GET /api/research/fire-data` | (Researcher/Admin) FIRMS hotspots |
+| `GET /api/research/risk-grid` | (Researcher/Admin) Grid risk recompute |
+| `POST /api/login` / `POST /api/register` | JWT auth |
