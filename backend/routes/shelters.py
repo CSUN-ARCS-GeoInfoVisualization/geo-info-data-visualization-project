@@ -67,37 +67,29 @@ def _remap(feat: dict) -> dict:
     return feat
 
 
-@shelters_bp.route('/shelters', methods=['GET'])
-def get_shelters():
-    state = request.args.get('state', 'CA').upper()
-    cached = _cache.get(state)
-    if cached and (time.time() - cached[0]) < CACHE_TTL:
-        resp = jsonify(cached[1])
-        resp.headers['Cache-Control'] = 'public, max-age=3600'
-        return resp
-
-    if state != 'CA':
-        # Layer is California-only; return empty for other states rather than 500.
-        empty = {'type': 'FeatureCollection', 'features': []}
-        return jsonify(empty)
-
-    try:
-        # Pull pages in parallel. ~8,014 features → 5 pages of 2,000.
-        offsets = list(range(0, 12000, PAGE_SIZE))
-        with ThreadPoolExecutor(max_workers=5) as pool:
-            pages = list(pool.map(_fetch_page, offsets))
-    except Exception as e:
-        logger.error("CA_Shelter_system fetch failed: %s", e)
-        return jsonify({'error': str(e)}), 502
-
+def _compute_shelters() -> dict:
+    """Fetch all CA shelter pages and remap field names."""
+    offsets = list(range(0, 12000, PAGE_SIZE))
+    with ThreadPoolExecutor(max_workers=5) as pool:
+        pages = list(pool.map(_fetch_page, offsets))
     features = []
     for page in pages:
         for feat in page:
             features.append(_remap(feat))
-
-    data = {'type': 'FeatureCollection', 'features': features}
-    _cache[state] = (time.time(), data)
     logger.info("Loaded %d CA shelters from CalOES mirror", len(features))
-    resp = jsonify(data)
-    resp.headers['Cache-Control'] = 'public, max-age=3600'
-    return resp
+    return {'type': 'FeatureCollection', 'features': features}
+
+
+@shelters_bp.route('/shelters', methods=['GET'])
+def get_shelters():
+    state = request.args.get('state', 'CA').upper()
+    if state != 'CA':
+        return jsonify({'type': 'FeatureCollection', 'features': []})
+
+    from services.cache import serve_cached
+    return serve_cached(
+        cache_key='shelters_ca',
+        ttl_seconds=CACHE_TTL,           # 6h in-memory
+        compute_fn=_compute_shelters,
+        db_freshness_seconds=86400,      # 24h DB freshness — shelter inventory is slow-moving
+    )

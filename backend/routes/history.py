@@ -138,11 +138,25 @@ def history_perimeters():
         'resultRecordCount': 4000,
         'orderByFields': 'GIS_ACRES DESC',
     }
-    cache_key = f"perimeters::{year_from}::{year_to}::{min_acres}"
-    data = _cached_fetch(cache_key, PERIMETERS_URL, params)
-    resp = jsonify(data)
-    resp.headers['Cache-Control'] = 'public, max-age=1800'
-    return resp
+    cache_key = f"history_perimeters:{year_from}:{year_to}:{min_acres}"
+
+    def _compute():
+        try:
+            r = http_requests.get(PERIMETERS_URL, params=params, timeout=30)
+            r.raise_for_status()
+            return r.json()
+        except Exception as e:
+            logger.warning('history perimeters fetch failed (%s): %s', cache_key, e)
+            return {'type': 'FeatureCollection', 'features': []}
+
+    from services.cache import serve_cached
+    # Historical perimeters are immutable — DB freshness can be very long.
+    return serve_cached(
+        cache_key=cache_key,
+        ttl_seconds=1800,                 # 30min in-memory
+        compute_fn=_compute,
+        db_freshness_seconds=30 * 86400,  # 30 days DB freshness (historical data doesn't change)
+    )
 
 
 @history_bp.route('/dins', methods=['GET'])
@@ -167,50 +181,47 @@ def history_dins():
         return jsonify({'type': 'FeatureCollection', 'features': [],
                         'error': 'year query param is required'}), 400
 
-    cache_key = f"dins::{url}::{year}"
-    now = time.time()
-    hit = _cache.get(cache_key)
-    if hit and (now - hit[0]) < CACHE_TTL:
-        resp = jsonify(hit[1])
-        resp.headers['Cache-Control'] = 'public, max-age=3600'
-        return resp
+    cache_key = f"history_dins:{url}:{year}"
 
-    # INCIDENTSTARTDATE is a date field; bracket it to the calendar year.
-    where = (
-        f"INCIDENTSTARTDATE >= DATE '{year}-01-01' AND "
-        f"INCIDENTSTARTDATE < DATE '{year + 1}-01-01'"
+    def _compute():
+        # INCIDENTSTARTDATE is a date field; bracket it to the calendar year.
+        where = (
+            f"INCIDENTSTARTDATE >= DATE '{year}-01-01' AND "
+            f"INCIDENTSTARTDATE < DATE '{year + 1}-01-01'"
+        )
+        base_params = {
+            'where': where,
+            'outFields': 'OBJECTID,DAMAGE,INCIDENTNAME,INCIDENTNUM,INCIDENTSTARTDATE,'
+                         'CITY,COUNTY,STREETNUMBER,STREETNAME,STREETTYPE,'
+                         'LATITUDE,LONGITUDE,STRUCTURETYPE,STRUCTURECATEGORY,YEARBUILT',
+            'outSR': '4326',
+            'f': 'geojson',
+            'resultRecordCount': DINS_PAGE_SIZE,
+        }
+        features = []
+        offset = 0
+        try:
+            for _ in range(20):
+                params = {**base_params, 'resultOffset': offset}
+                r = http_requests.get(url, params=params, timeout=30,
+                                      headers={'User-Agent': 'FireScopeProxy/1.0'})
+                r.raise_for_status()
+                page = r.json() or {}
+                page_feats = page.get('features') or []
+                features.extend(page_feats)
+                if len(page_feats) < DINS_PAGE_SIZE:
+                    break
+                offset += DINS_PAGE_SIZE
+        except Exception as e:
+            logger.warning('DINS proxy failed (year=%s): %s', year, e)
+            return {'type': 'FeatureCollection', 'features': []}
+        logger.info('DINS year=%s loaded %d structures', year, len(features))
+        return {'type': 'FeatureCollection', 'features': features}
+
+    from services.cache import serve_cached
+    return serve_cached(
+        cache_key=cache_key,
+        ttl_seconds=3600,                 # 1h in-memory
+        compute_fn=_compute,
+        db_freshness_seconds=30 * 86400,  # historical damage data — long DB freshness
     )
-    base_params = {
-        'where': where,
-        'outFields': 'OBJECTID,DAMAGE,INCIDENTNAME,INCIDENTNUM,INCIDENTSTARTDATE,'
-                     'CITY,COUNTY,STREETNUMBER,STREETNAME,STREETTYPE,'
-                     'LATITUDE,LONGITUDE,STRUCTURETYPE,STRUCTURECATEGORY,YEARBUILT',
-        'outSR': '4326',
-        'f': 'geojson',
-        'resultRecordCount': DINS_PAGE_SIZE,
-    }
-
-    features = []
-    offset = 0
-    try:
-        for _ in range(20):  # safety cap: 20 pages × 2000 = 40k features per year
-            params = {**base_params, 'resultOffset': offset}
-            r = http_requests.get(url, params=params, timeout=30,
-                                  headers={'User-Agent': 'FireScopeProxy/1.0'})
-            r.raise_for_status()
-            page = r.json() or {}
-            page_feats = page.get('features') or []
-            features.extend(page_feats)
-            if len(page_feats) < DINS_PAGE_SIZE:
-                break
-            offset += DINS_PAGE_SIZE
-    except Exception as e:
-        logger.warning('DINS proxy failed (year=%s): %s', year, e)
-        return jsonify({'type': 'FeatureCollection', 'features': []}), 200
-
-    data = {'type': 'FeatureCollection', 'features': features}
-    _cache[cache_key] = (now, data)
-    logger.info('DINS year=%s loaded %d structures', year, len(features))
-    resp = jsonify(data)
-    resp.headers['Cache-Control'] = 'public, max-age=3600'
-    return resp
