@@ -175,6 +175,23 @@ Sigmoid-calibrated random forest predicting wildfire risk from 6 live inputs:
 
 Output: `risk_score` (0–1) + `label` (Low / Medium / High / Extreme). Trained with spatial-block cross-validation and sigmoid calibration to keep probabilities honest under regional drift; SHAP attribution lives in `backend/ml/RESULTS.md` and the v2.5→v2.6 fingerprint comparison in `backend/ml/CALIBRATION_REPORT.md`. The frontend collapses the four labels into a 3-tier zone palette (green / yellow / red) on the Dashboard, Risk Map, and Research views. Per-zone overrides via `POST /api/predict-custom`.
 
+### Model evolution — what changed in v2.5 → v2.6
+
+| | Previous model (≤ v2.4) | Current model (v2.6 → v2.7) |
+|---|---|---|
+| **Algorithm** | KNN, then an early uncalibrated Random Forest | Random Forest (300 trees, `class_weight=balanced`), wrapped in `CalibratedClassifierCV` with sigmoid / Platt scaling (`cv=5`) |
+| **Features** | 5 inputs (EVI, air temp, wind, humidity, elevation) | 6 inputs — adds **KBDI** (Keetch-Byram Drought Index), a 30-day cumulative soil-moisture-deficit signal that directly captures drought stress the other features miss |
+| **EVI / elevation sourcing at inference** | Nearest-neighbor lookup from a baked-in sample table (so every zone in the same neighborhood got the same value) | Real **MODIS EVI via Google Earth Engine** + real **USGS 3DEP elevation**, each backed by per-tile Postgres caches with IDW fall-back when an upstream is cold or slow |
+| **No-fire negatives** | Random California points with random 2020 dates — the model could shortcut by learning "summer ⇒ fire" because no-fire dates over-represented winter | **Date-restratified** (`restratify_dates.py`) so the no-fire date distribution matches the fire-date distribution. Kills the seasonal shortcut |
+| **Cross-validation** | 10-fold stratified CV only | 10-fold stratified CV **plus spatial-block CV** (~55 km cells via `StratifiedGroupKFold`). Tests on regions never seen during training, so the headline metric isn't inflated by spatial autocorrelation between nearby pixels |
+| **Probability calibration** | Raw RF vote counts — a "0.7" had no empirical meaning | Sigmoid (Platt) calibration so `predict_proba` returns probabilities that match observed fire frequencies. The Low / Medium / High / Extreme cut-points correspond to real empirical bins now, not arbitrary thresholds |
+| **Interpretability** | None | **SHAP attribution** charts per feature (in `backend/ml/charts/`), plus a v2.5↔v2.6 archetype "fingerprint" comparison and a flagged coastal anomaly in `backend/ml/CALIBRATION_REPORT.md` |
+| **Training-set size** | 1,000 California-2020 samples | **1,022 California-2020 samples** (511 FIRMS fire detections + 511 generated no-fire points) — same scale; quality improvements came from method and features, not volume |
+| **Headline metrics** | ~88% accuracy on random CV; spatial CV not reported | **91.7% accuracy, ROC-AUC 0.964** on the new CV regime (numbers from `backend/ml/README.md`) |
+| **Retraining cadence** | Manual `python -m ml.retrain` | Still manual. Continuous retraining is queued for a future release (would need a GHA workflow that ingests new FIRMS detections, runs EVI/weather/elevation/KBDI enrichment, and commits a new `.pkl`) |
+
+**Plain-language summary.** The v2.6 model is the same size of dataset, but the data, the features, and the evaluation are all stricter. Drought is now an explicit input. The no-fire points no longer leak a seasonal shortcut. The probabilities the model emits are empirically calibrated instead of being raw vote counts. And the cross-validation tests on regions the model has never seen, so the reported accuracy is the honest one, not the inflated one. SHAP charts in `backend/ml/charts/` show which features actually drove each prediction.
+
 ## Workflow Guidelines
 
 - Feature branches for new work; keep PRs small and focused.
