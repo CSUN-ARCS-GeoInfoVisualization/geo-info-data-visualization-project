@@ -3,7 +3,7 @@
 import logging
 import os
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
+from concurrent.futures import ThreadPoolExecutor, as_completed, TimeoutError as FuturesTimeoutError
 from datetime import datetime, timedelta, timezone
 
 import threading
@@ -207,11 +207,20 @@ def _compute_zone_risk(zone_type: str) -> dict | None:
                     "kbdi": get_feature(lat_, lon_, "kbdi"),
                 }
         futures = {feat_executor.submit(_load_static, (lat, lon)): name for name, lat, lon in sampled}
-        for fut in as_completed(futures, timeout=60):
-            try:
-                static_features[futures[fut]] = fut.result()
-            except Exception:
-                static_features[futures[fut]] = {"evi": 0.0, "elev": 0.0, "kbdi": 200.0}
+        try:
+            for fut in as_completed(futures, timeout=45):
+                try:
+                    static_features[futures[fut]] = fut.result()
+                except Exception:
+                    static_features[futures[fut]] = {"evi": 0.0, "elev": 0.0, "kbdi": 200.0}
+        except (TimeoutError, FuturesTimeoutError):
+            # Whatever finished, ship. Unfinished centroids will use the in-loop
+            # IDW fallback below — progressive cache warming over future requests.
+            logger.warning("zone feature fetch partial: %d/%d finished within budget",
+                           len(static_features), len(futures))
+            for fut, name in futures.items():
+                if not fut.done():
+                    fut.cancel()
     finally:
         feat_executor.shutdown(wait=False)
 
@@ -492,11 +501,18 @@ def _compute_county_risk(evi_ov=None, air_temp_encoded_ov=None, wind_ov=None,
                         "kbdi": kbdi_ov if kbdi_ov is not None else get_feature(lat_, lon_, "kbdi"),
                     }
             futures = {cf_exec.submit(_load_static, (lat, lon)): name for name, lat, lon in CA_COUNTY_CENTROIDS}
-            for fut in as_completed(futures, timeout=60):
-                try:
-                    static_features[futures[fut]] = fut.result()
-                except Exception:
-                    static_features[futures[fut]] = {"evi": 0.0, "elev": 0.0, "kbdi": 200.0}
+            try:
+                for fut in as_completed(futures, timeout=45):
+                    try:
+                        static_features[futures[fut]] = fut.result()
+                    except Exception:
+                        static_features[futures[fut]] = {"evi": 0.0, "elev": 0.0, "kbdi": 200.0}
+            except (TimeoutError, FuturesTimeoutError):
+                logger.warning("county feature fetch partial: %d/%d finished within budget",
+                               len(static_features), len(futures))
+                for fut, name in futures.items():
+                    if not fut.done():
+                        fut.cancel()
         finally:
             cf_exec.shutdown(wait=False)
 
