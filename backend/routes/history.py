@@ -144,10 +144,23 @@ def history_perimeters():
         try:
             r = http_requests.get(PERIMETERS_URL, params=params, timeout=30)
             r.raise_for_status()
-            return r.json()
+            data = r.json()
         except Exception as e:
             logger.warning('history perimeters fetch failed (%s): %s', cache_key, e)
             return {'type': 'FeatureCollection', 'features': []}
+        # Coord truncation to 5 decimals (~1.1m precision) — drops payload ~30% on
+        # 12MB-class GeoJSONs without any visible loss at state-zoom display.
+        def _trunc(coords):
+            if isinstance(coords, (list, tuple)):
+                if coords and isinstance(coords[0], (int, float)):
+                    return [round(c, 5) if isinstance(c, float) else c for c in coords]
+                return [_trunc(c) for c in coords]
+            return coords
+        for f in data.get('features', []) or []:
+            geom = f.get('geometry') or {}
+            if 'coordinates' in geom:
+                geom['coordinates'] = _trunc(geom['coordinates'])
+        return data
 
     from services.cache import serve_cached
     # Historical perimeters are immutable — DB freshness can be very long.

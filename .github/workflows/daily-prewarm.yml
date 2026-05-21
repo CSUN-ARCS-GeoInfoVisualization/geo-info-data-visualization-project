@@ -53,11 +53,16 @@ jobs:
             "$API_BASE/fire-perimeters"
             "$API_BASE/evacuation-zones"
             "$API_BASE/shelters"
+            "$API_BASE/news"
+            "$API_BASE/calfire/incidents?inactive=false"
             "$API_BASE/history/perimeters/years"
             "$API_BASE/history/perimeters?year=$current_year"
             "$API_BASE/history/perimeters?year=$((current_year - 1))"
             "$API_BASE/history/dins?year=$current_year"
             "$API_BASE/history/dins?year=$((current_year - 1))"
+            "$API_BASE/research/boundaries/zip-codes"
+            "$API_BASE/research/boundaries/neighborhoods"
+            "$API_BASE/research/boundaries/census-tracts"
           )
           for url in "${urls[@]}"; do
             start=$(date +%s)

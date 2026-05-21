@@ -215,10 +215,7 @@ def predict_batch():
     return jsonify({'results': results})
 
 
-@predict_bp.route('/calfire/incidents', methods=['GET'])
-def calfire_incidents():
-    """Proxy CAL FIRE incidents API to avoid browser CORS restrictions."""
-    inactive = request.args.get('inactive', 'false')
+def _compute_calfire(inactive: str):
     try:
         r = http_requests.get(
             f'https://incidents.fire.ca.gov/umbraco/api/IncidentApi/List?inactive={inactive}',
@@ -226,10 +223,23 @@ def calfire_incidents():
             headers={'User-Agent': 'FireScopeProxy/1.0'},
         )
         r.raise_for_status()
-        return jsonify(r.json())
+        return r.json()
     except Exception as e:
         logger.warning('CAL FIRE proxy failed: %s', e)
-        return jsonify([]), 200
+        return []
+
+
+@predict_bp.route('/calfire/incidents', methods=['GET'])
+def calfire_incidents():
+    """Proxy CAL FIRE incidents API — DB-cached so repeat hits are <100ms."""
+    inactive = request.args.get('inactive', 'false').lower()
+    from services.cache import serve_cached
+    return serve_cached(
+        cache_key=f'calfire_incidents:{inactive}',
+        ttl_seconds=300,                 # 5min in-memory
+        compute_fn=lambda: _compute_calfire(inactive),
+        db_freshness_seconds=600,        # 10min DB
+    )
 
 
 @predict_bp.route('/predict-custom', methods=['POST'])

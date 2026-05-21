@@ -61,7 +61,7 @@ def _normalize_etag(raw: str) -> str:
     return s
 
 
-def _make_entry(data: dict, ttl_seconds: int, content_type: str = 'application/json') -> dict:
+def _make_entry(data, ttl_seconds: int, content_type: str = 'application/json') -> dict:
     body = json.dumps(data, separators=(',', ':')).encode('utf-8')
     etag = hashlib.md5(body).hexdigest()
     return {
@@ -138,7 +138,7 @@ def _save_to_db(cache_key: str, entry: dict) -> None:
 def serve_cached(
     cache_key: str,
     ttl_seconds: int,
-    compute_fn: Callable[[], dict],
+    compute_fn: Callable[[], object],
     *,
     db_freshness_seconds: int | None = None,
     content_type: str = 'application/json',
