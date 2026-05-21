@@ -240,3 +240,105 @@ def history_dins():
         db_freshness_seconds=30 * 86400,
         cache_control='public, max-age=86400, stale-while-revalidate=604800, immutable',
     )
+
+
+@history_bp.route('/admin/backfill-years', methods=['POST'])
+def backfill_history_years():
+    """One-time-then-forever backfill of historical perimeters + DINS into endpoint_cache.
+
+    Iterates years in [from_year, to_year] inclusive. For each year, computes
+    and caches both perimeters and DINS (if applicable — DINS starts 2013).
+    Skips years already cached unless force=true. Chunkable so each call fits
+    under gunicorn's 90s worker budget — pass small ranges from the cron.
+
+    Query params:
+      from_year (int, default 1950)
+      to_year   (int, default current year)
+      type      ('perimeters' | 'dins' | 'both', default 'both')
+      force     ('true' to recompute even if cache row exists)
+
+    Returns: {wrote, skipped, failed, total, elapsed_s, years_done}
+    """
+    import time as _time
+    from sqlalchemy import select
+    from models import db, EndpointCache
+
+    now_y = _time.gmtime().tm_year
+    try:
+        y_from = int(request.args.get('from_year') or 1950)
+        y_to   = int(request.args.get('to_year')   or now_y)
+    except Exception:
+        return jsonify({'error': 'from_year and to_year must be integers'}), 400
+    kind  = (request.args.get('type') or 'both').lower()
+    force = (request.args.get('force') or 'false').lower() == 'true'
+    if y_from > y_to:
+        return jsonify({'error': 'from_year must be <= to_year'}), 400
+
+    start = _time.time()
+    wrote = 0
+    skipped = 0
+    failed = 0
+    years_done: list[int] = []
+
+    def _cache_has(key: str) -> bool:
+        try:
+            return db.session.execute(
+                select(EndpointCache.cache_key).where(EndpointCache.cache_key == key)
+            ).first() is not None
+        except Exception:
+            return False
+
+    with current_app.test_request_context():
+        for year in range(y_from, y_to + 1):
+            # Each iteration calls existing route handlers which use serve_cached.
+            # We piggyback on serve_cached's write-through so endpoint_cache fills naturally.
+            try:
+                if kind in ('both', 'perimeters'):
+                    key = f"history_perimeters:{year}:{year}:100"
+                    if force or not _cache_has(key):
+                        with current_app.test_request_context(
+                            path=f"/api/history/perimeters?year={year}",
+                            method='GET',
+                        ):
+                            resp = history_perimeters()
+                            if resp.status_code == 200:
+                                wrote += 1
+                            else:
+                                failed += 1
+                    else:
+                        skipped += 1
+                if kind in ('both', 'dins') and year >= 2013:
+                    key = f"history_dins:{DINS_DEFAULT_URL}:{year}"
+                    if force or not _cache_has(key):
+                        with current_app.test_request_context(
+                            path=f"/api/history/dins?year={year}",
+                            method='GET',
+                        ):
+                            resp = history_dins()
+                            # history_dins returns tuple on bad year — skip
+                            if hasattr(resp, 'status_code') and resp.status_code == 200:
+                                wrote += 1
+                            else:
+                                failed += 1
+                    else:
+                        skipped += 1
+                years_done.append(year)
+            except Exception as e:
+                logger.warning("backfill year %s failed: %s", year, e)
+                failed += 1
+            # Soft cap: stop if approaching gunicorn budget
+            if _time.time() - start > 75:
+                break
+
+    elapsed = round(_time.time() - start, 1)
+    logger.info("backfill: wrote=%d skipped=%d failed=%d done=%s elapsed=%ss",
+                wrote, skipped, failed, years_done, elapsed)
+    return jsonify({
+        'wrote': wrote,
+        'skipped': skipped,
+        'failed': failed,
+        'years_done': years_done,
+        'last_year_processed': years_done[-1] if years_done else None,
+        'requested_range': [y_from, y_to],
+        'elapsed_s': elapsed,
+    })

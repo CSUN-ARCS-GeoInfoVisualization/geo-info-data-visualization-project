@@ -1,0 +1,84 @@
+name: One-time history backfill
+
+# Walks every year [1950 — current] in 5-year chunks, pre-populating
+# endpoint_cache with perimeters + DINS for each. Historical data is
+# immutable, so once a year is in the table, it stays warm forever
+# (no TTL on historical cache rows).
+#
+# Trigger: manual via gh workflow run, or push to main (one-shot).
+# After running once, you never need to touch this again — every
+# historical year will be a sub-second cache hit for all future users.
+
+on:
+  workflow_dispatch:
+    inputs:
+      from_year:
+        description: Earliest year to backfill
+        type: number
+        default: 1950
+      to_year:
+        description: Latest year to backfill
+        type: number
+        default: 2025
+      force:
+        description: Recompute even if cached
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: history-backfill
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - name: Backfill in 5-year chunks
+        env:
+          API_BASE: https://firescope-api.onrender.com/api
+          FROM_YEAR: ${{ inputs.from_year || 1950 }}
+          TO_YEAR:   ${{ inputs.to_year   || 2025 }}
+          FORCE:     ${{ inputs.force     || 'false' }}
+        run: |
+          set -e
+          chunk_size=5
+          start_year=$FROM_YEAR
+          total_wrote=0
+          total_skipped=0
+          total_failed=0
+          while [ $start_year -le $TO_YEAR ]; do
+            end_year=$((start_year + chunk_size - 1))
+            [ $end_year -gt $TO_YEAR ] && end_year=$TO_YEAR
+            echo "===== Chunk $start_year..$end_year ====="
+            t0=$(date +%s)
+            http=$(curl -s -X POST -o /tmp/chunk.json -w '%{http_code}' --max-time 85 \
+              "$API_BASE/history/admin/backfill-years?from_year=${start_year}&to_year=${end_year}&type=both&force=${FORCE}")
+            elapsed=$(( $(date +%s) - t0 ))
+            if [ "$http" != "200" ]; then
+              echo "::error::chunk $start_year..$end_year HTTP=$http"
+              cat /tmp/chunk.json || true
+              exit 1
+            fi
+            wrote=$(python3 -c "import json;print(json.load(open('/tmp/chunk.json')).get('wrote',0))")
+            skipped=$(python3 -c "import json;print(json.load(open('/tmp/chunk.json')).get('skipped',0))")
+            failed=$(python3 -c "import json;print(json.load(open('/tmp/chunk.json')).get('failed',0))")
+            last=$(python3 -c "import json;print(json.load(open('/tmp/chunk.json')).get('last_year_processed',0))")
+            total_wrote=$((total_wrote + wrote))
+            total_skipped=$((total_skipped + skipped))
+            total_failed=$((total_failed + failed))
+            echo "  ${elapsed}s  wrote=$wrote skipped=$skipped failed=$failed last=$last"
+            # Server may stop mid-chunk if it approaches gunicorn budget — resume from last+1
+            if [ -n "$last" ] && [ "$last" != "0" ] && [ "$last" -lt "$end_year" ]; then
+              start_year=$((last + 1))
+            else
+              start_year=$((end_year + 1))
+            fi
+          done
+          echo
+          echo "===== Backfill complete ====="
+          echo "wrote=$total_wrote  skipped=$total_skipped  failed=$total_failed"
+          [ $total_failed -gt 0 ] && exit 1 || true
