@@ -165,24 +165,28 @@ export function SettingsPage({ defaultTab = "profile" }: SettingsPageProps) {
                 <div className="px-6 py-4 border-b bg-muted/30">
                   <h2 className="font-semibold text-base">About FireScope</h2>
                   <p className="text-xs text-muted-foreground mt-0.5">
-                    FireScope aggregates open-source data from government agencies, satellite systems, and news providers to deliver real-time wildfire risk intelligence for California.
+                    FireScope aggregates open-source data from government agencies, satellite systems, and news providers to deliver real-time wildfire risk intelligence for California — visualizations, ML risk prediction, and an opt-in email alerts system.
                   </p>
                 </div>
                 <div className="px-6 py-5 text-sm text-muted-foreground space-y-3">
                   <p>
-                    All data is sourced from publicly available APIs and open datasets. FireScope does not generate fire reports — it visualizes and analyzes data from the sources listed below.
+                    All data is sourced from publicly available APIs and open datasets. FireScope does not generate fire reports — it visualizes and analyzes data from the sources listed below. Risk labels follow the National Fire Danger Rating System (NFDRS) 5-tier scale: Low / Moderate / High / Very High / Extreme.
                   </p>
                   <div className="flex flex-wrap gap-x-6 gap-y-2 text-xs pt-2 border-t">
                     <div>
                       <span className="font-semibold text-foreground">Website: </span>
                       <a
-                        href="https://firescope.netlify.app"
+                        href="https://firescope.dev"
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-blue-600 hover:underline"
                       >
-                        firescope.netlify.app
+                        firescope.dev
                       </a>
+                    </div>
+                    <div>
+                      <span className="font-semibold text-foreground">Alerts: </span>
+                      <a href="mailto:alerts@firescope.dev" className="text-blue-600 hover:underline">alerts@firescope.dev</a>
                     </div>
                     <div>
                       <span className="font-semibold text-foreground">Source: </span>
@@ -326,9 +330,77 @@ export function SettingsPage({ defaultTab = "profile" }: SettingsPageProps) {
                 <div className="divide-y">
                   <AboutItem
                     name="scikit-learn Risk Model (active)"
-                    description="Classifier that predicts wildfire risk from five live inputs: EVI (vegetation), air-temperature-encoded (°C + 273.15) / 0.02, wind speed, relative humidity, and elevation. Drives the 3-tier risk-zone coloring (green / yellow / red) across Dashboard, Risk Map, and Research views. Per-zone overrides are applied through POST /api/predict-custom."
+                    description="Calibrated random-forest classifier (sigmoid-calibrated, spatial-block cross-validated) over 6 live inputs: EVI (vegetation greenness), air temperature, wind speed, relative humidity, elevation, and KBDI drought index. Output is mapped to the canonical 5-tier NFDRS scale (Low / Moderate / High / Very High / Extreme — 20% bands) that drives every polygon color, popup chip, side-panel badge, and alert email subject on the site. Per-zone overrides are applied through POST /api/predict-custom for researcher experiments."
                     badge="ML model"
                     badgeColor="bg-red-100 text-red-700"
+                  />
+                </div>
+              </div>
+
+              {/* Alerts System */}
+              <div className="border rounded-xl bg-white overflow-hidden">
+                <div className="px-6 py-4 border-b bg-muted/30 flex items-center gap-2">
+                  <Brain className="h-4 w-4 text-amber-600" />
+                  <h3 className="font-semibold text-sm">Alerts System</h3>
+                </div>
+                <div className="divide-y">
+                  <AboutItem
+                    name="Resend (transactional email)"
+                    description="All alert emails are sent from alerts@firescope.dev through Resend, with DKIM + SPF + MX records published on the firescope.dev domain (Porkbun DNS). Free tier covers up to 3,000 sends/month — well above our current volume. Subjects and bodies are rendered server-side from backend/routes/internal_alerts.py templates."
+                    badge="Email provider"
+                    badgeColor="bg-amber-100 text-amber-700"
+                  />
+                  <AboutItem
+                    name="High-Risk Zone Alerts (every 30 min)"
+                    description="GitHub Actions workflow .github/workflows/alerts-high-risk.yml hits POST /api/internal/alerts/high-risk on a */30 * * * * schedule. For every opted-in user with high_risk_enabled, the cron scores each saved location across all four zone types (county / ZIP / neighborhood / census tract) and emails when any zone crosses the Very High (60%+) threshold. Body lists every zone's 5-tier label and percentage; state-driven dedup so users only get re-emailed when the picture actually changes."
+                    badge="Cron · 30 min"
+                    badgeColor="bg-red-100 text-red-700"
+                  />
+                  <AboutItem
+                    name="Breaking Fire News Alerts (hourly)"
+                    description="Workflow alerts-breaking-news.yml runs 0 * * * *. For each opted-in user with breaking_news_enabled the cron pulls news_articles where is_breaking=true and published_at > the user's last news send (24h floor), capped at 8 per email. Links route through firescope.dev/?page=news#article-<id> so recipients land on our summary instead of a raw upstream JSON page."
+                    badge="Cron · hourly"
+                    badgeColor="bg-amber-100 text-amber-700"
+                  />
+                  <AboutItem
+                    name="Evacuation & Shelter Alerts (every 10 min)"
+                    description="Workflow alerts-evacuation.yml runs */10 * * * *. Two sub-channels share the same cron: (1) per-zone evac alerts — ray-casting PIP of each saved location against active CalOES zones, county-match fallback so users in the affected county also get notified, body includes the 3 nearest OPEN shelters by haversine; (2) shelter-opened alerts — newly OPEN shelters in the same county as a saved location, batched per cron tick. Per-(user,zone) and per-(user,shelter) dedup so each event fires exactly once."
+                    badge="Cron · 10 min"
+                    badgeColor="bg-orange-100 text-orange-700"
+                  />
+                </div>
+              </div>
+
+              {/* Infrastructure */}
+              <div className="border rounded-xl bg-white overflow-hidden">
+                <div className="px-6 py-4 border-b bg-muted/30 flex items-center gap-2">
+                  <Building2 className="h-4 w-4 text-zinc-500" />
+                  <h3 className="font-semibold text-sm">Infrastructure</h3>
+                </div>
+                <div className="divide-y">
+                  <AboutItem
+                    name="Custom domain — firescope.dev"
+                    description="Domain purchased on Porkbun, DNS points at Netlify (ALIAS apex + CNAME www). HTTPS via Let's Encrypt; .dev is HSTS-preloaded so all traffic is forced over TLS."
+                    badge="Porkbun + Netlify"
+                    badgeColor="bg-zinc-100 text-zinc-700"
+                  />
+                  <AboutItem
+                    name="Frontend — React + Vite + Netlify"
+                    description="React 18 + TypeScript + Vite, deployed to Netlify with auto-build on every push to the domain-deployment branch (auto-synced from main by a GitHub Actions workflow). Map rendering via @vis.gl/react-google-maps + deck.gl v9."
+                    badge="Hosting"
+                    badgeColor="bg-zinc-100 text-zinc-700"
+                  />
+                  <AboutItem
+                    name="Backend — Flask + Render"
+                    description="Flask 3 + SQLAlchemy + gunicorn on Render's Standard plan, fronted by a Postgres database (Basic-256MB) for endpoint caching and user/notification state. preDeployCommand runs flask db upgrade on every deploy; pool sized 20 + 30 overflow + 5-minute recycle to survive cold-cache compute storms."
+                    badge="Hosting"
+                    badgeColor="bg-zinc-100 text-zinc-700"
+                  />
+                  <AboutItem
+                    name="Three-tier cache (memory → Postgres → live)"
+                    description="services/cache.py implements a shared 3-tier cache for every heavy endpoint (risk-by-county, risk-by-zone/*, shelters, evac-zones, fire-perimeters, news, history). Memory expires fast (60s–15min depending on freshness needs), Postgres survives redeploys, live recompute is single-flight so concurrent requests share one upstream call. Brotli pre-compressed bodies + weak ETag matching keep the wire small."
+                    badge="Perf"
+                    badgeColor="bg-zinc-100 text-zinc-700"
                   />
                 </div>
               </div>

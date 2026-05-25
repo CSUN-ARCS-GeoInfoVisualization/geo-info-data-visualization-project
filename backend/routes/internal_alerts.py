@@ -168,8 +168,9 @@ def _send_high_risk_email(to_email: str, contact_name: str, locations_payload: l
 <html><body style="font-family:system-ui,-apple-system,sans-serif;background:#f7f7f8;margin:0;padding:24px">
   <div style="max-width:600px;margin:auto;background:white;border-radius:12px;overflow:hidden;border:1px solid #eee">
     <div style="background:#dc2626;color:white;padding:18px 22px">
-      <div style="display:flex;align-items:center;gap:10px"><img src="https://firescope.dev/firescope-logo.png" alt="FireScope" width="28" height="28" style="display:inline-block;border:0;background:white;border-radius:6px;padding:2px"><div style="font-size:13px;letter-spacing:.08em;opacity:.9">FIRESCOPE • HIGH RISK ALERT</div></div>
-      <div style="font-size:22px;font-weight:700;margin-top:4px">Wildfire risk alert for your saved locations</div>
+      <div style="text-align:center;margin-bottom:8px"><img src="https://firescope.dev/firescope-logo.png" alt="FireScope" width="56" height="56" style="display:block;margin:0 auto;border:0;background:white;border-radius:10px;padding:4px"></div>
+      <div style="font-size:13px;letter-spacing:.08em;opacity:.9;text-align:center">FIRESCOPE • HIGH RISK ALERT</div>
+      <div style="font-size:22px;font-weight:700;margin-top:4px;text-align:center">Wildfire risk alert for your saved locations</div>
     </div>
     <div style="padding:22px">
       <p style="margin:0 0 14px">Hi {html_escape(name)},</p>
@@ -380,8 +381,9 @@ def _send_breaking_news_email(to_email: str, contact_name: str, articles: list) 
 <html><body style="font-family:system-ui,-apple-system,sans-serif;background:#f7f7f8;margin:0;padding:24px">
   <div style="max-width:600px;margin:auto;background:white;border-radius:12px;overflow:hidden;border:1px solid #eee">
     <div style="background:#dc2626;color:white;padding:18px 22px">
-      <div style="display:flex;align-items:center;gap:10px"><img src="https://firescope.dev/firescope-logo.png" alt="FireScope" width="28" height="28" style="display:inline-block;border:0;background:white;border-radius:6px;padding:2px"><div style="font-size:13px;letter-spacing:.08em;opacity:.9">FIRESCOPE • BREAKING FIRE NEWS</div></div>
-      <div style="font-size:22px;font-weight:700;margin-top:4px">{len(articles)} new {'story' if len(articles) == 1 else 'stories'} you should see</div>
+      <div style="text-align:center;margin-bottom:8px"><img src="https://firescope.dev/firescope-logo.png" alt="FireScope" width="56" height="56" style="display:block;margin:0 auto;border:0;background:white;border-radius:10px;padding:4px"></div>
+      <div style="font-size:13px;letter-spacing:.08em;opacity:.9;text-align:center">FIRESCOPE • BREAKING FIRE NEWS</div>
+      <div style="font-size:22px;font-weight:700;margin-top:4px;text-align:center">{len(articles)} new {'story' if len(articles) == 1 else 'stories'} you should see</div>
     </div>
     <div style="padding:22px">
       <p style="margin:0 0 14px">Hi {html_escape(name)},</p>
@@ -649,8 +651,9 @@ def _send_evacuation_email(to_email, contact_name, location_name, zone_props, ne
 <html><body style="font-family:system-ui,-apple-system,sans-serif;background:#f7f7f8;margin:0;padding:24px">
   <div style="max-width:600px;margin:auto;background:white;border-radius:12px;overflow:hidden;border:1px solid #eee">
     <div style="background:{banner_color};color:white;padding:18px 22px">
-      <div style="display:flex;align-items:center;gap:10px"><img src="https://firescope.dev/firescope-logo.png" alt="FireScope" width="28" height="28" style="display:inline-block;border:0;background:white;border-radius:6px;padding:2px"><div style="font-size:13px;letter-spacing:.08em;opacity:.95">FIRESCOPE • {banner_label}</div></div>
-      <div style="font-size:22px;font-weight:700;margin-top:4px">{html_escape(zone_name)} ({html_escape(county)})</div>
+      <div style="text-align:center;margin-bottom:8px"><img src="https://firescope.dev/firescope-logo.png" alt="FireScope" width="56" height="56" style="display:block;margin:0 auto;border:0;background:white;border-radius:10px;padding:4px"></div>
+      <div style="font-size:13px;letter-spacing:.08em;opacity:.95;text-align:center">FIRESCOPE • {banner_label}</div>
+      <div style="font-size:22px;font-weight:700;margin-top:4px;text-align:center">{html_escape(zone_name)} ({html_escape(county)})</div>
       <div style="font-size:13px;margin-top:4px;opacity:.95">{html_escape(event)}</div>
     </div>
     <div style="padding:22px">
@@ -738,8 +741,9 @@ def _send_shelter_opened_email(to_email, contact_name, location_county_pairs, sh
 <html><body style="font-family:system-ui,-apple-system,sans-serif;background:#f7f7f8;margin:0;padding:24px">
   <div style="max-width:600px;margin:auto;background:white;border-radius:12px;overflow:hidden;border:1px solid #eee">
     <div style="background:#16a34a;color:white;padding:18px 22px">
-      <div style="display:flex;align-items:center;gap:10px"><img src="https://firescope.dev/firescope-logo.png" alt="FireScope" width="28" height="28" style="display:inline-block;border:0;background:white;border-radius:6px;padding:2px"><div style="font-size:13px;letter-spacing:.08em;opacity:.95">FIRESCOPE • SHELTER UPDATE</div></div>
-      <div style="font-size:22px;font-weight:700;margin-top:4px">{len(shelters)} open shelter{'s' if len(shelters) != 1 else ''} near you</div>
+      <div style="text-align:center;margin-bottom:8px"><img src="https://firescope.dev/firescope-logo.png" alt="FireScope" width="56" height="56" style="display:block;margin:0 auto;border:0;background:white;border-radius:10px;padding:4px"></div>
+      <div style="font-size:13px;letter-spacing:.08em;opacity:.95;text-align:center">FIRESCOPE • SHELTER UPDATE</div>
+      <div style="font-size:22px;font-weight:700;margin-top:4px;text-align:center">{len(shelters)} open shelter{'s' if len(shelters) != 1 else ''} near you</div>
     </div>
     <div style="padding:22px">
       <p style="margin:0 0 12px">Hi {html_escape(name)},</p>
