@@ -54,6 +54,12 @@ class UserLocation(db.Model):
     address = db.Column(db.String(255), nullable=True)
     lat = db.Column(db.Float, nullable=False)
     lon = db.Column(db.Float, nullable=False)
+    # Pre-resolved zone IDs cached at save time so the alert cron doesn't
+    # do point-in-polygon on every tick. Filled lazily on first risk lookup.
+    county_fips = db.Column(db.String(5), nullable=True)
+    zip_code = db.Column(db.String(10), nullable=True)
+    neighborhood_id = db.Column(db.String(64), nullable=True)
+    census_tract_id = db.Column(db.String(11), nullable=True)
     created_at = db.Column(db.DateTime, server_default=func.now())
 
     user = db.relationship('User')
@@ -76,6 +82,11 @@ class NotificationPreference(db.Model):
     blackout_end = db.Column(db.DateTime, nullable=True)
     last_sent_at = db.Column(db.DateTime, nullable=True)
     unsubscribed_at = db.Column(db.DateTime, nullable=True)
+    # Per-channel toggles. Only high_risk is wired up in slice 1; the other two
+    # are reserved for slices 2/3 (evacuation + breaking news pipelines).
+    breaking_news_enabled = db.Column(db.Boolean, default=False, nullable=False)
+    high_risk_enabled = db.Column(db.Boolean, default=True, nullable=False)
+    evacuation_enabled = db.Column(db.Boolean, default=True, nullable=False)
     created_at = db.Column(db.DateTime, server_default=func.now())
     updated_at = db.Column(db.DateTime, server_default=func.now(), onupdate=func.now())
 
