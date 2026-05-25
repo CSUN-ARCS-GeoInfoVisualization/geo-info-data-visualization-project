@@ -18,18 +18,23 @@ interface DayData {
 
 const DAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
+type ApiZoneKey = "county" | "zip" | "neighborhood" | "census_tract";
+
 interface RiskChartProps {
   title: string;
   type?: "line" | "area";
   lat?: number;
   lon?: number;
   // When provided, baseline risk comes from the saved location's cached
-  // county risk so it matches the map + Dashboard badge. When omitted, falls
+  // zone risk so it matches the map + Dashboard badge. When omitted, falls
   // back to LA County (matches the default "showing data for LA" hint).
   locationId?: number;
+  // Which zone's risk to use as the baseline. Driven by the map's selector
+  // so the chart's day-0 lines up with whichever polygon the user picked.
+  zoneKey?: ApiZoneKey;
 }
 
-export function RiskChart({ title, type = "line", lat = 34.0522, lon = -118.2437, locationId }: RiskChartProps) {
+export function RiskChart({ title, type = "line", lat = 34.0522, lon = -118.2437, locationId, zoneKey = "county" }: RiskChartProps) {
   const [data, setData] = useState<DayData[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -54,10 +59,11 @@ export function RiskChart({ title, type = "line", lat = 34.0522, lon = -118.2437
               const r = await apiFetch(`/me/locations/${locationId}/risk-by-all-zones`);
               if (!r.ok) return null;
               const j = await r.json();
-              const pct = j?.county?.risk_pct;
+              const pct = j?.[zoneKey]?.risk_pct;
               return typeof pct === "number" ? pct / 100 : null;
             }
-            // Default LA case — read straight from the public county cache.
+            // Default LA case — county-only fallback (we don't know which
+            // ZIP/neighborhood/tract the user is "in" without a saved point).
             const r = await apiFetch("/research/risk-by-county");
             if (!r.ok) return null;
             const j = await r.json();
@@ -110,7 +116,7 @@ export function RiskChart({ title, type = "line", lat = 34.0522, lon = -118.2437
       setLoading(false);
     }
     fetchForecast();
-  }, [lat, lon, locationId]);
+  }, [lat, lon, locationId, zoneKey]);
 
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
