@@ -633,8 +633,10 @@ function ResearchMapView() {
                 research page is fire-research focused and the evac legend would
                 be noise). Same component the Shelters & Evac page renders. */}
             {showShelters && (
-              <div className="absolute top-3 right-3 z-[5] pointer-events-auto">
-                <ShelterEvacLegend showEvacZones={false} />
+              <div className="absolute top-3 right-3 z-[5] pointer-events-none">
+                <div className="pointer-events-auto">
+                  <ShelterEvacLegend showEvacZones={false} />
+                </div>
               </div>
             )}
 
@@ -705,35 +707,35 @@ function ResearchMapView() {
             >
               <div className="p-4 space-y-4 text-sm">
                 {/* Researcher-only shelter overlay toggle. Default OFF.
-                    More prominent styling so users notice it. */}
-                <button
-                  type="button"
-                  onClick={() => setShowShelters(v => !v)}
-                  className={`w-full rounded-md border-2 px-3 py-2.5 flex items-center justify-between gap-3 transition-colors ${
-                    showShelters
-                      ? 'border-emerald-500 bg-emerald-50'
-                      : 'border-zinc-300 bg-white hover:border-emerald-400 hover:bg-emerald-50/30'
-                  }`}
-                  aria-pressed={showShelters}
-                >
-                  <div className="min-w-0 text-left">
-                    <div className={`text-xs font-semibold flex items-center gap-1.5 ${showShelters ? 'text-emerald-900' : 'text-zinc-900'}`}>
-                      <span className={`inline-block h-2 w-2 rounded-full ${showShelters ? 'bg-emerald-600 animate-pulse' : 'bg-zinc-400'}`} />
-                      Shelter overlay
-                    </div>
-                    <div className={`text-[11px] mt-0.5 ${showShelters ? 'text-emerald-700' : 'text-zinc-500'}`}>
+                    Literal switch: red when off, green when on, with an
+                    explicit ON/OFF label so the state is unmistakable. */}
+                <div className={`rounded-md border-2 px-3 py-3 flex items-center justify-between gap-3 transition-colors ${
+                  showShelters ? 'border-emerald-500 bg-emerald-50' : 'border-red-300 bg-red-50/50'
+                }`}>
+                  <div className="min-w-0">
+                    <div className="text-sm font-semibold text-zinc-900">Shelter overlay</div>
+                    <div className="text-[11px] text-zinc-600 mt-0.5">
                       {showShelters
-                        ? `${shelters.length || 'Loading…'} CA shelters — zoom for pins`
-                        : 'Show all 8,014 CA shelters'}
+                        ? `Showing ${shelters.length || '…'} shelters across CA`
+                        : 'Click to show all 8,014 CA shelters'}
                     </div>
                   </div>
-                  <span
-                    className={`h-5 w-9 shrink-0 rounded-full transition-colors relative ${showShelters ? 'bg-emerald-600' : 'bg-zinc-300'}`}
-                    aria-hidden="true"
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={showShelters}
+                    onClick={() => setShowShelters(v => !v)}
+                    className={`shrink-0 inline-flex items-center gap-1.5 h-7 w-16 rounded-full px-1 transition-colors ${
+                      showShelters ? 'bg-emerald-600' : 'bg-red-500'
+                    }`}
                   >
-                    <span className={`absolute top-0.5 block h-4 w-4 rounded-full bg-white shadow transition-transform ${showShelters ? 'translate-x-[1.125rem]' : 'translate-x-0.5'}`} />
-                  </span>
-                </button>
+                    {showShelters && <span className="text-[10px] font-bold text-white ml-0.5">ON</span>}
+                    <span className={`block h-5 w-5 rounded-full bg-white shadow transition-transform ${
+                      showShelters ? 'translate-x-0' : 'translate-x-9'
+                    }`} />
+                    {!showShelters && <span className="text-[10px] font-bold text-white mr-0.5">OFF</span>}
+                  </button>
+                </div>
 
                 <div>
                   <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">Map view</div>

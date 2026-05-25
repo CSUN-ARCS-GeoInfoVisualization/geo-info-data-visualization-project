@@ -641,9 +641,14 @@ function FireFacilitiesOverlay({
 
   return (
     <>
-      {/* Floating legend — top-right of the map, shared with Research page. */}
-      <div className="absolute top-3 right-3 z-[5] pointer-events-auto">
-        <ShelterEvacLegend />
+      {/* Floating legend — top-right of the map, shared with Research page.
+          Wrapper is pointer-events-none so map clicks pass through the empty
+          space beside the legend; the legend card itself re-enables pointer
+          events so users can still interact with any links inside it. */}
+      <div className="absolute top-3 right-3 z-[5] pointer-events-none">
+        <div className="pointer-events-auto">
+          <ShelterEvacLegend />
+        </div>
       </div>
 
       {/* Evacuation zone info — centered card with every CalOES field we have. */}
