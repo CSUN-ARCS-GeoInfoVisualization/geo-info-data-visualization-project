@@ -18,6 +18,34 @@ from flask import Blueprint, request, jsonify
 
 from models import db, User, UserLocation, NotificationPreference, AlertActivity
 from routes.predict import _run as predict_at
+from data.zone_resolver import resolve_all
+
+
+_ZONE_LABEL = {"county": "County", "zip": "ZIP", "neighborhood": "Neighborhood", "census_tract": "Census tract"}
+
+
+def _zones_for_location(loc):
+    """Return list of {'kind','zone_name','pct','label'} for the 4 zone types.
+    Skips a zone if resolve fails (out of California, etc)."""
+    from routes.locations import _label_for
+    zones = resolve_all(loc.lat, loc.lon)
+    out = []
+    for key in ("county", "zip", "neighborhood", "census_tract"):
+        z = zones.get(key)
+        if not z:
+            continue
+        try:
+            r = predict_at(z["centroid_lat"], z["centroid_lon"])
+            pct = float(r["prediction"]["risk_probability"])
+        except Exception:
+            continue
+        out.append({
+            "kind": _ZONE_LABEL[key],
+            "zone_name": z["name"],
+            "pct": pct,
+            "label": _label_for(pct),
+        })
+    return out
 
 logger = logging.getLogger(__name__)
 
@@ -83,6 +111,32 @@ def _last_alert_signature(session, user_id):
     return row[0] if row else None
 
 
+def _location_block_html(loc_payload: dict) -> str:
+    """Renders one location's all-4-zones table inside the alert email."""
+    title = html_escape(loc_payload["name"])
+    rows = "".join(
+        f"<tr><td style='padding:6px 10px;border-bottom:1px solid #eee;font-size:12px;color:#555'>{html_escape(z['kind'])}</td>"
+        f"<td style='padding:6px 10px;border-bottom:1px solid #eee;font-size:12px'>{html_escape(z['zone_name'])}</td>"
+        f"<td style='padding:6px 10px;border-bottom:1px solid #eee;font-weight:600;font-size:12px'>{html_escape(z['label'])}</td>"
+        f"<td style='padding:6px 10px;border-bottom:1px solid #eee;text-align:right;font-size:12px'>{z['pct']*100:.0f}%</td></tr>"
+        for z in loc_payload["zones"]
+    )
+    return (
+        f"<div style='margin-top:14px;border:1px solid #eee;border-radius:8px;overflow:hidden'>"
+        f"  <div style='background:#fafafa;padding:10px 12px;font-weight:600;font-size:13px'>{title}</div>"
+        f"  <table style='width:100%;border-collapse:collapse'>"
+        f"    <thead><tr style='background:#fff'>"
+        f"      <th style='padding:6px 10px;text-align:left;font-size:11px;color:#888;text-transform:uppercase'>Zone</th>"
+        f"      <th style='padding:6px 10px;text-align:left;font-size:11px;color:#888;text-transform:uppercase'>Area</th>"
+        f"      <th style='padding:6px 10px;text-align:left;font-size:11px;color:#888;text-transform:uppercase'>Tier</th>"
+        f"      <th style='padding:6px 10px;text-align:right;font-size:11px;color:#888;text-transform:uppercase'>Risk</th>"
+        f"    </tr></thead>"
+        f"    <tbody>{rows}</tbody>"
+        f"  </table>"
+        f"</div>"
+    )
+
+
 def _send_high_risk_email(to_email: str, contact_name: str, locations_payload: list):
     """Direct Resend SDK call. Bypasses the EmailSender/Renderer scaffolding
     in services/email/ because that machinery is wired to a duplicate ORM
@@ -102,32 +156,22 @@ def _send_high_risk_email(to_email: str, contact_name: str, locations_payload: l
     resend.api_key = api_key
 
     name = (contact_name or "").strip() or to_email.split("@", 1)[0]
-    rows_html = "".join(
-        f"<tr><td style='padding:8px 12px;border-bottom:1px solid #eee'>{html_escape(loc['name'])}</td>"
-        f"<td style='padding:8px 12px;border-bottom:1px solid #eee;font-weight:600'>{loc['label']}</td>"
-        f"<td style='padding:8px 12px;border-bottom:1px solid #eee;text-align:right'>{loc['risk']*100:.0f}%</td></tr>"
-        for loc in locations_payload
-    )
+    blocks_html = "".join(_location_block_html(lp) for lp in locations_payload)
     html = f"""<!doctype html>
 <html><body style="font-family:system-ui,-apple-system,sans-serif;background:#f7f7f8;margin:0;padding:24px">
-  <div style="max-width:560px;margin:auto;background:white;border-radius:12px;overflow:hidden;border:1px solid #eee">
+  <div style="max-width:600px;margin:auto;background:white;border-radius:12px;overflow:hidden;border:1px solid #eee">
     <div style="background:#dc2626;color:white;padding:18px 22px">
       <div style="font-size:13px;letter-spacing:.08em;opacity:.9">FIRESCOPE • HIGH RISK ALERT</div>
       <div style="font-size:22px;font-weight:700;margin-top:4px">Elevated wildfire risk near your saved locations</div>
     </div>
     <div style="padding:22px">
       <p style="margin:0 0 14px">Hi {html_escape(name)},</p>
-      <p style="margin:0 0 16px">One or more of your saved locations is currently at <strong>High</strong> risk or above:</p>
-      <table style="width:100%;border-collapse:collapse;font-size:14px">
-        <thead><tr style="background:#fafafa">
-          <th style="padding:10px 12px;text-align:left;border-bottom:1px solid #eee">Location</th>
-          <th style="padding:10px 12px;text-align:left;border-bottom:1px solid #eee">Tier</th>
-          <th style="padding:10px 12px;text-align:right;border-bottom:1px solid #eee">Risk</th>
-        </tr></thead>
-        <tbody>{rows_html}</tbody>
-      </table>
+      <p style="margin:0 0 8px">One or more of your saved locations is at <strong>High</strong> risk or above.
+        Below is the current risk by every zone type — county, ZIP code, neighborhood, and census tract — so
+        you can see which scope is driving the alert.</p>
+      {blocks_html}
       <p style="margin:18px 0 0;font-size:13px;color:#555">
-        Open <a href="https://firescope.dev" style="color:#dc2626">firescope.dev</a> to see live conditions and evacuation info.
+        Open <a href="https://firescope.dev" style="color:#dc2626">firescope.dev</a> for the live map, fire perimeters, and evacuation info.
       </p>
       <p style="margin:14px 0 0;font-size:12px;color:#888">
         You're receiving this because the High Risk channel is on in your alert settings. Manage at firescope.dev → Alerts.
@@ -136,16 +180,27 @@ def _send_high_risk_email(to_email: str, contact_name: str, locations_payload: l
   </div>
 </body></html>"""
 
-    text = f"FireScope — high wildfire risk near your saved locations.\n\n" + "\n".join(
-        f"  • {loc['name']}: {loc['label']} ({loc['risk']*100:.0f}%)" for loc in locations_payload
-    ) + "\n\nLive map: https://firescope.dev\n"
+    def _txt_block(lp):
+        lines = [f"  {lp['name']}:"]
+        for z in lp["zones"]:
+            lines.append(f"    {z['kind']:<14} {z['zone_name']:<24} {z['label']:<12} {z['pct']*100:.0f}%")
+        return "\n".join(lines)
+
+    text = (
+        "FireScope — high wildfire risk near your saved locations.\n\n"
+        + "\n\n".join(_txt_block(lp) for lp in locations_payload)
+        + "\n\nLive map: https://firescope.dev\n"
+    )
 
     try:
+        first_name = locations_payload[0]["name"]
+        more = len(locations_payload) - 1
+        subject = (f"FireScope: High wildfire risk at {first_name}"
+                   + (f" + {more} more" if more else ""))
         resp = resend.Emails.send({
             "from": f"{sender_name} <{sender_email}>",
             "to": [to_email],
-            "subject": f"FireScope: High wildfire risk at {locations_payload[0]['name']}"
-                       + (f" + {len(locations_payload)-1} more" if len(locations_payload) > 1 else ""),
+            "subject": subject,
             "html": html,
             "text": text,
         })
@@ -190,19 +245,24 @@ def run_high_risk_alerts():
         if not locations:
             continue
 
-        # Score every location; collect those at or above the threshold.
+        # Score every location across all 4 zone types; a location is "at risk"
+        # if the MAX of its 4 zones crosses threshold. The email body always
+        # lists all 4 zones (county / zip / neighborhood / census tract) per
+        # at-risk location so the user sees which scope is driving the alert.
         hits = []
         for loc in locations:
-            try:
-                payload = predict_at(loc.lat, loc.lon)
-                pct = float(payload["prediction"]["risk_probability"])
-                label = payload["prediction"]["risk_level"]
-            except Exception as e:
-                logger.warning("predict failed for loc %s: %s", loc.id, e)
+            zones = _zones_for_location(loc)
+            if not zones:
                 errors += 1
                 continue
-            if pct >= HIGH_RISK_THRESHOLD:
-                hits.append({"location_id": loc.id, "name": loc.name, "risk": pct, "label": label})
+            max_pct = max(z["pct"] for z in zones)
+            if max_pct >= HIGH_RISK_THRESHOLD:
+                hits.append({
+                    "location_id": loc.id,
+                    "name": loc.name,
+                    "risk": max_pct,         # used for sort + dedup bucket
+                    "zones": zones,
+                })
 
         if not hits:
             skipped_below += 1
