@@ -647,6 +647,99 @@ def _send_evacuation_email(to_email, contact_name, location_name, zone_props, ne
         return None, str(e)
 
 
+def _shelter_open_signature(shelter_id) -> str:
+    return hashlib.sha256(f"shelter_opened:{shelter_id}".encode("utf-8")).hexdigest()[:32]
+
+
+def _seen_shelter_ids_for_user(session, user_id) -> set:
+    """Every shelter_id we've already alerted this user about."""
+    rows = (
+        session.query(AlertActivity.state_signature)
+        .filter(
+            AlertActivity.user_id == user_id,
+            AlertActivity.delivery_status == "sent",
+            AlertActivity.reason.like("shelter_opened%"),
+        )
+        .all()
+    )
+    return {r[0] for r in rows if r[0]}
+
+
+def _send_shelter_opened_email(to_email, contact_name, location_county_pairs, shelters):
+    """One email per cron-tick listing every newly-opened shelter in counties
+    that contain the user's saved locations."""
+    try:
+        import resend
+    except ImportError:
+        return None, "resend SDK missing"
+    api_key = os.getenv("RESEND_API_KEY", "")
+    sender_email = os.getenv("SENDER_EMAIL", "alerts@firescope.dev")
+    sender_name = os.getenv("SENDER_NAME", "FireScope Alerts")
+    if not api_key:
+        return None, "RESEND_API_KEY not set"
+    resend.api_key = api_key
+
+    name = (contact_name or "").strip() or to_email.split("@", 1)[0]
+    rows = "".join(
+        f"<tr><td style='padding:8px 12px;border-bottom:1px solid #eee;font-weight:600'>{html_escape(s.get('shelter_name',''))}</td>"
+        f"<td style='padding:8px 12px;border-bottom:1px solid #eee;font-size:12px;color:#666'>"
+        f"{html_escape(s.get('address_1',''))}, {html_escape(s.get('city',''))} ({html_escape(str(s.get('county_parish','')).title())} County)</td>"
+        f"<td style='padding:8px 12px;border-bottom:1px solid #eee;text-align:right;font-size:12px'>{s.get('evacuation_capacity') or '—'}</td></tr>"
+        for s in shelters
+    )
+    county_list = ", ".join(sorted({c.title() for _, c in location_county_pairs}))
+    html = f"""<!doctype html>
+<html><body style="font-family:system-ui,-apple-system,sans-serif;background:#f7f7f8;margin:0;padding:24px">
+  <div style="max-width:600px;margin:auto;background:white;border-radius:12px;overflow:hidden;border:1px solid #eee">
+    <div style="background:#16a34a;color:white;padding:18px 22px">
+      <div style="font-size:13px;letter-spacing:.08em;opacity:.95">FIRESCOPE • SHELTER UPDATE</div>
+      <div style="font-size:22px;font-weight:700;margin-top:4px">{len(shelters)} open shelter{'s' if len(shelters) != 1 else ''} near you</div>
+    </div>
+    <div style="padding:22px">
+      <p style="margin:0 0 12px">Hi {html_escape(name)},</p>
+      <p style="margin:0 0 14px;font-size:14px">
+        {len(shelters)} shelter{'s' if len(shelters) != 1 else ''} {'have' if len(shelters) != 1 else 'has'} been reported open in <strong>{html_escape(county_list)}</strong>,
+        which {'contain' if len(set(c for _, c in location_county_pairs)) > 1 else 'contains'} your saved location{'s' if len(set(loc for loc, _ in location_county_pairs)) > 1 else ''}.
+      </p>
+      <table style="width:100%;border-collapse:collapse;font-size:13px">
+        <thead><tr style="background:#fafafa">
+          <th style="padding:8px 12px;text-align:left;font-size:11px;color:#888;text-transform:uppercase">Shelter</th>
+          <th style="padding:8px 12px;text-align:left;font-size:11px;color:#888;text-transform:uppercase">Where</th>
+          <th style="padding:8px 12px;text-align:right;font-size:11px;color:#888;text-transform:uppercase">Capacity</th>
+        </tr></thead>
+        <tbody>{rows}</tbody>
+      </table>
+      <p style="margin:18px 0 0;font-size:13px;color:#555">
+        See the live shelter map at <a href="https://firescope.dev" style="color:#16a34a">firescope.dev</a>.
+      </p>
+      <p style="margin:14px 0 0;font-size:12px;color:#888">
+        You're getting this because the Evacuation channel is on (shelters travel with it). Manage at firescope.dev → Alerts.
+      </p>
+    </div>
+  </div>
+</body></html>"""
+    text = (
+        f"FireScope — {len(shelters)} new open shelter{'s' if len(shelters) != 1 else ''} in {county_list}.\n\n"
+        + "\n".join(
+            f"  - {s.get('shelter_name','')} ({s.get('city','')}, {str(s.get('county_parish','')).title()})"
+            for s in shelters
+        )
+        + "\n\nSee all: https://firescope.dev\n"
+    )
+    try:
+        resp = resend.Emails.send({
+            "from": f"{sender_name} <{sender_email}>",
+            "to": [to_email],
+            "subject": f"FireScope: {len(shelters)} new open shelter{'s' if len(shelters) != 1 else ''} in {county_list}",
+            "html": html,
+            "text": text,
+        })
+        return resp.get("id"), None
+    except Exception as e:
+        logger.warning("resend send (shelter-opened) failed: %s", e)
+        return None, str(e)
+
+
 @internal_alerts_bp.route("/internal/alerts/evacuation", methods=["POST"])
 def run_evacuation_alerts():
     ok, err = _require_internal_token()
@@ -657,20 +750,10 @@ def run_evacuation_alerts():
     now = datetime.utcnow()
 
     zones = _fetch_active_evac_zones()
-    # Short-circuit: if there are no active CalOES zones, nothing can possibly
-    # trigger an alert. Skip the 8000-row shelters fetch entirely — that was
-    # the bulk of the 20s response time on quiet days.
-    if not zones:
-        return jsonify({
-            "scanned_users": 0,
-            "active_zones": 0,
-            "sent": 0,
-            "skipped_dedup": 0,
-            "skipped_no_overlap": 0,
-            "errors": 0,
-            "sent_message_ids": [],
-            "note": "no active evacuation zones — skipped user scan",
-        })
+    # We still fetch shelters even when no zones are active — they drive the
+    # "newly opened shelter in your county" sub-alert which fires independently
+    # of any active evacuation. Shelters cache is 6h on the server so this is
+    # cheap on warm hits.
     shelters = _fetch_open_shelters()
 
     q = (
@@ -687,6 +770,7 @@ def run_evacuation_alerts():
     sent = 0
     skipped_dedup = 0
     skipped_no_overlap = 0
+    shelter_alerts_sent = 0
     errors = 0
     sent_ids = []
 
@@ -695,7 +779,61 @@ def run_evacuation_alerts():
         if pref.paused_until and pref.paused_until > now:
             continue
         locs = session.query(UserLocation).filter(UserLocation.user_id == user.id).all()
-        if not locs or not zones:
+        if not locs:
+            skipped_no_overlap += 1
+            continue
+
+        # ---- Sub-alert: newly-opened shelters in the user's saved-location counties.
+        # Fires independently of any active evac zone — a shelter opening is
+        # itself news-worthy when it's near you (Ido's spec). Per-(user,shelter)
+        # dedup via state_signature so each shelter only fires once.
+        if shelters:
+            user_counties = {  # county_name(lower) -> first matching saved location
+                str(zr["county"]["name"]).lower(): loc
+                for loc in locs
+                for zr in [resolve_all(loc.lat, loc.lon)]
+                if zr.get("county")
+            }
+            already_seen = _seen_shelter_ids_for_user(session, user.id)
+            new_shelters = []
+            seen_pairs = []  # (location, county_name)
+            for s in shelters:
+                county = str(s.get("county_parish", "")).lower()
+                if county not in user_counties:
+                    continue
+                sig = _shelter_open_signature(s.get("shelter_id"))
+                if sig in already_seen:
+                    continue
+                new_shelters.append((s, sig))
+                seen_pairs.append((user_counties[county], county))
+                if len(new_shelters) >= 10:
+                    break  # cap the email body; the rest get picked up on the next tick
+
+            if new_shelters:
+                to_email = (pref.contact_email or user.email or "").strip()
+                if to_email:
+                    msg_id, send_err = _send_shelter_opened_email(
+                        to_email=to_email,
+                        contact_name=getattr(user, "name", None) or "",
+                        location_county_pairs=seen_pairs,
+                        shelters=[s for s, _ in new_shelters],
+                    )
+                    status = "sent" if msg_id else "failed"
+                    # One AlertActivity row per shelter so dedup is per-shelter.
+                    for s, sig in new_shelters:
+                        session.add(AlertActivity(
+                            user_id=user.id,
+                            risk_level=10,
+                            delivery_status=status,
+                            reason=("shelter_opened" if msg_id else f"shelter_opened_err:{(send_err or '')[:18]}"),
+                            state_signature=sig,
+                        ))
+                    if msg_id:
+                        shelter_alerts_sent += 1
+                        sent_ids.append(msg_id)
+
+        if not zones:
+            # No active evac zones — only the shelter sub-alert could have fired above.
             skipped_no_overlap += 1
             continue
 
@@ -762,7 +900,9 @@ def run_evacuation_alerts():
     return jsonify({
         "scanned_users": scanned,
         "active_zones": len(zones),
+        "active_shelters": len(shelters),
         "sent": sent,
+        "shelter_alerts_sent": shelter_alerts_sent,
         "skipped_dedup": skipped_dedup,
         "skipped_no_overlap": skipped_no_overlap,
         "errors": errors,
