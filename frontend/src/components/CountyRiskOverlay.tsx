@@ -19,12 +19,10 @@ interface CountyRiskData {
   [county: string]: CountyRisk;
 }
 
-function getRiskColor(score: number): [number, number, number, number] {
-  // 3-tier risk palette: green / yellow / red
-  if (score >= 0.66) return [220, 38, 38, 150];    // high — red
-  if (score >= 0.33) return [234, 179, 8, 130];    // medium — yellow
-  return [34, 197, 94, 110];                        // low — green
-}
+import { riskRgba } from "../lib/riskTiers";
+
+// 9-tier palette — shared source of truth in lib/riskTiers.ts
+const getRiskColor = riskRgba;
 
 interface Props {
   overrides?: { evi?: number; lst?: number; wind?: number; elevation?: number };

@@ -36,6 +36,7 @@ import { Slider } from "./ui/slider";
 import { Input } from "./ui/input";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "./ui/tooltip";
+import { RISK_TIERS_ASC } from "../lib/riskTiers";
 import { Alert, AlertDescription } from "./ui/alert";
 import { Map as GoogleMap, useMap } from '@vis.gl/react-google-maps';
 import { FirePerimetersOverlay } from './GoogleRiskMap';
@@ -439,27 +440,23 @@ export function RiskMap() {
 
                 </div>
 
-                {/* Map Legend */}
+                {/* Map Legend — Risk Zones now mirror the canonical 9-tier
+                    model from lib/riskTiers.ts (same scale the backend uses). */}
                 <div className="mt-4 bg-gray-50 rounded-lg p-4 space-y-4">
                   <div>
-                    <h4 className="font-semibold text-sm mb-2">Risk Zones</h4>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-sm">
-                      <div className="flex items-center gap-2">
-                        <div className="w-4 h-3 rounded border border-gray-300 opacity-70" style={{ backgroundColor: "#22c55e" }} />
-                        <span>Low Risk</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="w-4 h-3 rounded border border-gray-300 opacity-70" style={{ backgroundColor: "#eab308" }} />
-                        <span>Moderate</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="w-4 h-3 rounded border border-gray-300 opacity-70" style={{ backgroundColor: "#dc2626" }} />
-                        <span>High Risk</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <div className="w-4 h-3 rounded border border-gray-300 opacity-70" style={{ backgroundColor: "#7f1d1d" }} />
-                        <span>Extreme</span>
-                      </div>
+                    <h4 className="font-semibold text-sm mb-2">Risk Zones (9-tier model)</h4>
+                    <div className="grid grid-cols-2 md:grid-cols-3 gap-x-3 gap-y-1.5 text-sm">
+                      {RISK_TIERS_ASC.map((t, i) => {
+                        const upper = i === RISK_TIERS_ASC.length - 1 ? 1.0 : RISK_TIERS_ASC[i + 1].cutoff;
+                        return (
+                          <div key={t.label} className="flex items-center gap-2">
+                            <div className="w-4 h-3 rounded border border-gray-300" style={{ backgroundColor: t.hex }} />
+                            <span><strong>{t.label}</strong>{' '}
+                              <span className="text-xs text-muted-foreground">{(t.cutoff*100).toFixed(0)}–{(upper*100).toFixed(0)}%</span>
+                            </span>
+                          </div>
+                        );
+                      })}
                     </div>
                   </div>
                   <div>

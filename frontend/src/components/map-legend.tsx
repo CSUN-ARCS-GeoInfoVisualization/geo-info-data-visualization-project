@@ -1,8 +1,11 @@
+import { RISK_TIERS_ASC } from "../lib/riskTiers";
+
 /**
  * Shared full map legend. Single source of truth for the
  * "Shelter Cluster + Emergency Shelter Types + Active Evacuation Zones +
- * Active Fires" key. Rendered below the map on every page that displays
- * these layers so the icons, colors, and copy stay identical across pages.
+ * Risk Zones (9-tier) + Active Fires" key. Rendered below the map on every
+ * page that displays these layers so the icons, colors, and copy stay
+ * identical across pages.
  *
  * Extracted from the original inline block in evacuation-routes.tsx so the
  * research page (and any future page) renders the exact same UI.
@@ -90,17 +93,30 @@ export function MapLegend({ showHowTo = true, showCluster = true }: MapLegendPro
         </p>
       </div>
 
-      {/* Risk Zone tiers — matches dashboard's GoogleRiskMap polygon coloring */}
+      {/* Risk Zone — full 9-tier ladder. Same lib/riskTiers.ts that
+          paints the polygons + drives badges + populates the alert email. */}
       <div className="mt-4 pt-4 border-t border-gray-200">
-        <div className="text-base font-semibold text-muted-foreground mb-2">Risk Zones (model tier)</div>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
-          <div className="flex items-center gap-2"><span className="inline-block w-4 h-3 rounded border border-gray-300" style={{ backgroundColor: 'rgba(34,197,94,0.55)' }} /> Low</div>
-          <div className="flex items-center gap-2"><span className="inline-block w-4 h-3 rounded border border-gray-300" style={{ backgroundColor: 'rgba(234,179,8,0.65)' }} /> Medium</div>
-          <div className="flex items-center gap-2"><span className="inline-block w-4 h-3 rounded border border-gray-300" style={{ backgroundColor: 'rgba(220,38,38,0.65)' }} /> High</div>
-          <div className="flex items-center gap-2"><span className="inline-block w-4 h-3 rounded border border-gray-300" style={{ backgroundColor: 'rgba(153,27,27,0.75)' }} /> Extreme</div>
+        <div className="text-base font-semibold text-muted-foreground mb-2">Risk Zones (9-tier model)</div>
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-x-3 gap-y-1.5 text-sm">
+          {RISK_TIERS_ASC.map((t, i) => {
+            const upper = i === RISK_TIERS_ASC.length - 1 ? 1.0 : RISK_TIERS_ASC[i + 1].cutoff;
+            return (
+              <div key={t.label} className="flex items-center gap-2">
+                <span
+                  className="inline-block w-4 h-3 rounded border border-gray-300"
+                  style={{ backgroundColor: t.hex }}
+                />
+                <span><strong>{t.label}</strong>{' '}
+                  <span className="text-xs text-muted-foreground">
+                    {(t.cutoff * 100).toFixed(0)}–{(upper * 100).toFixed(0)}%
+                  </span>
+                </span>
+              </div>
+            );
+          })}
         </div>
         <p className="text-xs text-muted-foreground mt-2">
-          ML-predicted risk per zone (county / ZIP / neighborhood / census tract). Shown on the dashboard map and on the research map's "Risk zone" or "Mixed" view. Click a zone polygon to see the model inputs that drove the score.
+          ML-predicted risk per zone (county / ZIP / neighborhood / census tract). Shown on the dashboard map and the research map's "Risk zone" / "Mixed" view. Click any zone polygon to see the model inputs that drove the score.
         </p>
       </div>
 
