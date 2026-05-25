@@ -178,7 +178,7 @@ interface UnifiedOverlayProps {
   onShelterClick?: (shelter: any) => void;
 }
 
-// 9-tier shared palette — lib/riskTiers.ts
+// 5-tier shared palette — lib/riskTiers.ts
 import { riskRgba as getRiskColor } from "../lib/riskTiers";
 
 function UnifiedResearchOverlay({ features, showHeatmap, zoneGeoJson, zoneRiskData, zoneNameKey, onZoneClick, nifcPerimeters, showPerimeters, onPerimeterClick, shelters = [], showShelters = false, onShelterClick }: UnifiedOverlayProps) {

@@ -3,7 +3,7 @@ import { RISK_TIERS_ASC } from "../lib/riskTiers";
 /**
  * Shared full map legend. Single source of truth for the
  * "Shelter Cluster + Emergency Shelter Types + Active Evacuation Zones +
- * Risk Zones (9-tier) + Active Fires" key. Rendered below the map on every
+ * Risk Zones (5-tier NFDRS) + Active Fires" key. Rendered below the map on every
  * page that displays these layers so the icons, colors, and copy stay
  * identical across pages.
  *
@@ -93,10 +93,10 @@ export function MapLegend({ showHowTo = true, showCluster = true }: MapLegendPro
         </p>
       </div>
 
-      {/* Risk Zone — full 9-tier ladder. Same lib/riskTiers.ts that
+      {/* Risk Zone — NFDRS 5-tier ladder. Same lib/riskTiers.ts that
           paints the polygons + drives badges + populates the alert email. */}
       <div className="mt-4 pt-4 border-t border-gray-200">
-        <div className="text-base font-semibold text-muted-foreground mb-2">Risk Zones (9-tier model)</div>
+        <div className="text-base font-semibold text-muted-foreground mb-2">Risk Zones (5-tier model)</div>
         <div className="grid grid-cols-2 md:grid-cols-3 gap-x-3 gap-y-1.5 text-sm">
           {RISK_TIERS_ASC.map((t, i) => {
             const upper = i === RISK_TIERS_ASC.length - 1 ? 1.0 : RISK_TIERS_ASC[i + 1].cutoff;

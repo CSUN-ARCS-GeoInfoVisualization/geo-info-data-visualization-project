@@ -21,7 +21,7 @@ interface CountyRiskData {
 
 import { riskRgba } from "../lib/riskTiers";
 
-// 9-tier palette — shared source of truth in lib/riskTiers.ts
+// 5-tier NFDRS palette — shared source of truth in lib/riskTiers.ts
 const getRiskColor = riskRgba;
 
 interface Props {
