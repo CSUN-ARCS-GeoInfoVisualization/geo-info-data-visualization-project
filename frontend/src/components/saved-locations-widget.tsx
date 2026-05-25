@@ -12,23 +12,25 @@ interface SavedLocation {
 }
 
 interface PredictionResult {
-  risk_level: string;
-  risk_probability: number;
+  risk_level: string;       // 9-tier label, normalized into the 4 visual buckets via colorForLabel
+  risk_probability: number; // 0..1
 }
 
-const RISK_COLORS: Record<string, string> = {
-  Low: "bg-green-100 text-green-700 border-green-200",
-  Medium: "bg-yellow-100 text-yellow-700 border-yellow-200",
-  High: "bg-red-100 text-red-700 border-red-200",
-  Extreme: "bg-purple-100 text-purple-700 border-purple-200",
-};
+// Server returns a 9-tier label; compress to 4 visual buckets to keep the
+// badge scannable and consistent with my-locations.tsx + dashboard badge.
+function colorForLabel(label: string): string {
+  if (["Catastrophic", "Critical", "Extreme"].includes(label)) return "bg-red-100 text-red-700 border-red-200";
+  if (["Severe", "Very High", "High"].includes(label)) return "bg-orange-100 text-orange-700 border-orange-200";
+  if (["Elevated", "Guarded", "Medium"].includes(label)) return "bg-yellow-100 text-yellow-700 border-yellow-200";
+  return "bg-green-100 text-green-700 border-green-200";
+}
 
-const RISK_DOT: Record<string, string> = {
-  Low: "bg-green-500",
-  Medium: "bg-yellow-500",
-  High: "bg-red-500",
-  Extreme: "bg-purple-500",
-};
+function dotForLabel(label: string): string {
+  if (["Catastrophic", "Critical", "Extreme"].includes(label)) return "bg-red-500";
+  if (["Severe", "Very High", "High"].includes(label)) return "bg-orange-500";
+  if (["Elevated", "Guarded", "Medium"].includes(label)) return "bg-yellow-500";
+  return "bg-green-500";
+}
 
 interface SavedLocationsWidgetProps {
   onAddLocation?: () => void;
@@ -55,26 +57,34 @@ export function SavedLocationsWidget({ onAddLocation }: SavedLocationsWidgetProp
       .finally(() => setLoading(false));
   }, []);
 
+  // Read each location's COUNTY risk from the cached map data so the badge
+  // matches what the user sees on the dashboard map. Same source of truth
+  // as my-locations.tsx, the Dashboard "Current Risk Level" badge, and the
+  // alert email body.
   const fetchPredictions = async (locs: SavedLocation[]) => {
     setPredicting(true);
     try {
-      const res = await apiFetch("/predict/batch", {
-        method: "POST",
-        body: JSON.stringify({ items: locs.map((l) => ({ lat: l.lat, lon: l.lon })) }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        const map: Record<number, PredictionResult> = {};
-        data.results.forEach((r: any, i: number) => {
+      const responses = await Promise.all(
+        locs.map(async (l) => {
+          try {
+            const r = await apiFetch(`/me/locations/${l.id}/risk-by-all-zones`);
+            if (!r.ok) return null;
+            return await r.json();
+          } catch {
+            return null;
+          }
+        })
+      );
+      const map: Record<number, PredictionResult> = {};
+      responses.forEach((r, i) => {
+        if (r && r.county && r.county.label && r.county.risk_pct != null) {
           map[locs[i].id] = {
-            risk_level: r.prediction.risk_level,
-            risk_probability: r.prediction.risk_probability,
+            risk_level: r.county.label,
+            risk_probability: r.county.risk_pct / 100,
           };
-        });
-        setPredictions(map);
-      }
-    } catch {
-      /* backend unreachable or connection reset */
+        }
+      });
+      setPredictions(map);
     } finally {
       setPredicting(false);
     }
@@ -126,7 +136,7 @@ export function SavedLocationsWidget({ onAddLocation }: SavedLocationsWidgetProp
                 >
                   <div className="flex items-center gap-2 min-w-0">
                     {pred && (
-                      <span className={`h-2 w-2 rounded-full shrink-0 ${RISK_DOT[pred.risk_level] ?? "bg-gray-400"}`} />
+                      <span className={`h-2 w-2 rounded-full shrink-0 ${dotForLabel(pred.risk_level)}`} />
                     )}
                     <div className="min-w-0">
                       <p className="text-sm font-medium truncate">{loc.name}</p>
@@ -140,7 +150,7 @@ export function SavedLocationsWidget({ onAddLocation }: SavedLocationsWidgetProp
                     {predicting && !pred ? (
                       <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />
                     ) : pred ? (
-                      <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${RISK_COLORS[pred.risk_level] ?? "bg-gray-100 text-gray-700"}`}>
+                      <span className={`text-xs font-semibold px-2 py-0.5 rounded-full border ${colorForLabel(pred.risk_level)}`}>
                         {pred.risk_level}
                       </span>
                     ) : null}
