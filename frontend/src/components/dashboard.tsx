@@ -286,7 +286,13 @@ export function Dashboard({ onAddLocation }: DashboardProps) {
       {/* 7-Day Forecast + Active Alerts */}
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         <div className="lg:col-span-2">
-          <RiskChart title="7-Day Risk Forecast" type="area" />
+          <RiskChart
+            title="7-Day Risk Forecast"
+            type="area"
+            lat={selectedLocation?.lat}
+            lon={selectedLocation?.lon}
+            locationId={selectedLocation && selectedLocation.id > 0 ? selectedLocation.id : undefined}
+          />
         </div>
         <ActiveAlerts />
       </div>

@@ -23,9 +23,13 @@ interface RiskChartProps {
   type?: "line" | "area";
   lat?: number;
   lon?: number;
+  // When provided, baseline risk comes from the saved location's cached
+  // county risk so it matches the map + Dashboard badge. When omitted, falls
+  // back to LA County (matches the default "showing data for LA" hint).
+  locationId?: number;
 }
 
-export function RiskChart({ title, type = "line", lat = 34.0522, lon = -118.2437 }: RiskChartProps) {
+export function RiskChart({ title, type = "line", lat = 34.0522, lon = -118.2437, locationId }: RiskChartProps) {
   const [data, setData] = useState<DayData[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -33,28 +37,39 @@ export function RiskChart({ title, type = "line", lat = 34.0522, lon = -118.2437
     async function fetchForecast() {
       setLoading(true);
       try {
-        // Two requests in PARALLEL — Open-Meteo forecast and ONE ML prediction.
-        // The previous version fired /predict/batch 7 times sequentially with
-        // identical inputs (same lat/lon every iteration), turning a ~500ms
-        // chart into a ~4s chart. The base risk only depends on lat/lon, so
-        // one call is correct; per-day variation is layered on from weather.
+        // PARALLEL: Open-Meteo 7-day forecast + cached county risk for the
+        // baseline. Day-0 of the chart should equal what the map and badge
+        // show for the same county (no more /predict drift). Per-day
+        // variation is layered on from the weather forecast as before.
         const url =
           `https://api.open-meteo.com/v1/forecast` +
           `?latitude=${lat}&longitude=${lon}` +
           `&daily=temperature_2m_max,relative_humidity_2m_mean,wind_speed_10m_max` +
           `&temperature_unit=fahrenheit&wind_speed_unit=mph` +
           `&timezone=auto&forecast_days=7`;
-        const [forecastRes, predictRes] = await Promise.all([
-          fetchOpenMeteo<any>(url),
-          apiFetch("/predict/batch", {
-            method: "POST",
-            body: JSON.stringify({ items: [{ lat, lon }] }),
-          })
-            .then((r) => (r.ok ? r.json() : null))
-            .catch(() => null),
-        ]);
 
-        const baseRisk = (predictRes?.results?.[0]?.prediction?.risk_probability ?? null);
+        const baselinePromise: Promise<number | null> = (async () => {
+          try {
+            if (locationId && locationId > 0) {
+              const r = await apiFetch(`/me/locations/${locationId}/risk-by-all-zones`);
+              if (!r.ok) return null;
+              const j = await r.json();
+              const pct = j?.county?.risk_pct;
+              return typeof pct === "number" ? pct / 100 : null;
+            }
+            // Default LA case — read straight from the public county cache.
+            const r = await apiFetch("/research/risk-by-county");
+            if (!r.ok) return null;
+            const j = await r.json();
+            const s = j?.counties?.["Los Angeles"]?.risk_score;
+            return typeof s === "number" ? s : null;
+          } catch { return null; }
+        })();
+
+        const [forecastRes, baseRisk] = await Promise.all([
+          fetchOpenMeteo<any>(url),
+          baselinePromise,
+        ]);
 
         if (forecastRes.daily) {
           const days: DayData[] = [];
@@ -95,7 +110,7 @@ export function RiskChart({ title, type = "line", lat = 34.0522, lon = -118.2437
       setLoading(false);
     }
     fetchForecast();
-  }, [lat, lon]);
+  }, [lat, lon, locationId]);
 
   const CustomTooltip = ({ active, payload, label }: any) => {
     if (active && payload && payload.length) {
