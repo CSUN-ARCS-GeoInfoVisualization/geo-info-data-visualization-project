@@ -8,7 +8,7 @@ import { GeoJsonLayer, IconLayer } from "@deck.gl/layers";
 import { firmsPointsToPolygonCollection } from "../utils/firmsPolygons";
 import { HeatmapLayer } from "@deck.gl/aggregation-layers";
 import { CenteredInfoCard } from "./centered-info-card";
-import { ShelterEvacLegend } from "./shelter-evac-legend";
+import { ResearchMapLegend } from "./research-map-legend";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
@@ -632,13 +632,18 @@ function ResearchMapView() {
             {/* Floating legend — only shown when shelters are on (otherwise the
                 research page is fire-research focused and the evac legend would
                 be noise). Same component the Shelters & Evac page renders. */}
-            {showShelters && (
-              <div className="absolute top-3 right-3 z-[5] pointer-events-none">
-                <div className="pointer-events-auto">
-                  <ShelterEvacLegend showEvacZones={false} />
-                </div>
+            {/* Permanent map legend — top-right. Morphs based on which
+                layers are visible. */}
+            <div className="absolute top-3 right-3 z-[5] pointer-events-none">
+              <div className="pointer-events-auto">
+                <ResearchMapLegend
+                  showZones={showZones}
+                  showPerimeters={showPerimeters}
+                  showHeatmap={showHeatmap}
+                  showShelters={showShelters}
+                />
               </div>
-            )}
+            </div>
 
             {/* Shelter info card — centered popup, full metadata, same as the
                 Shelters & Evac page so the click experience is identical. */}
@@ -692,9 +697,12 @@ function ResearchMapView() {
               })()}
             </CenteredInfoCard>
 
-            {/* Always-on left in-map control navbar */}
+            {/* Always-on left in-map control navbar.
+                Outer container clips so no child can visually escape the
+                card (slider rails / popover values were rendering over the
+                map outside the navbar). Inner div is the scroll surface. */}
             <div
-              className="bg-white/95 backdrop-blur-sm rounded-xl shadow-lg border overflow-y-auto"
+              className="bg-white/95 backdrop-blur-sm rounded-xl shadow-lg border overflow-hidden flex flex-col"
               style={{
                 position: 'absolute',
                 top: 12,
@@ -705,10 +713,10 @@ function ResearchMapView() {
                 pointerEvents: 'auto',
               }}
             >
-              <div className="p-4 space-y-4 text-sm">
+              <div className="p-4 space-y-4 text-sm overflow-y-auto flex-1 min-h-0">
                 {/* Researcher-only shelter overlay toggle. Default OFF.
-                    Literal switch: red when off, green when on, with an
-                    explicit ON/OFF label so the state is unmistakable. */}
+                    Literal red/green switch — absolute thumb in fixed-width
+                    track so the layout doesn't shift between states. */}
                 <div className={`rounded-md border-2 px-3 py-3 flex items-center justify-between gap-3 transition-colors ${
                   showShelters ? 'border-emerald-500 bg-emerald-50' : 'border-red-300 bg-red-50/50'
                 }`}>
@@ -725,15 +733,21 @@ function ResearchMapView() {
                     role="switch"
                     aria-checked={showShelters}
                     onClick={() => setShowShelters(v => !v)}
-                    className={`shrink-0 inline-flex items-center gap-1.5 h-7 w-16 rounded-full px-1 transition-colors ${
+                    className={`relative shrink-0 h-7 w-[68px] rounded-full transition-colors ${
                       showShelters ? 'bg-emerald-600' : 'bg-red-500'
                     }`}
                   >
-                    {showShelters && <span className="text-[10px] font-bold text-white ml-0.5">ON</span>}
-                    <span className={`block h-5 w-5 rounded-full bg-white shadow transition-transform ${
-                      showShelters ? 'translate-x-0' : 'translate-x-9'
-                    }`} />
-                    {!showShelters && <span className="text-[10px] font-bold text-white mr-0.5">OFF</span>}
+                    {/* Both labels always rendered (one hidden via opacity)
+                        so the layout is stable and the thumb's absolute
+                        position stays predictable across states. */}
+                    <span className={`absolute left-2.5 top-1/2 -translate-y-1/2 text-[10px] font-bold text-white transition-opacity ${showShelters ? 'opacity-100' : 'opacity-0'}`}>ON</span>
+                    <span className={`absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-white transition-opacity ${showShelters ? 'opacity-0' : 'opacity-100'}`}>OFF</span>
+                    <span
+                      aria-hidden="true"
+                      className={`absolute top-1 block h-5 w-5 rounded-full bg-white shadow transition-transform ${
+                        showShelters ? 'translate-x-[42px]' : 'translate-x-1'
+                      }`}
+                    />
                   </button>
                 </div>
 
