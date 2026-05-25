@@ -2,7 +2,7 @@ from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from models import db, UserLocation
 from data.zone_resolver import resolve_all
-from routes.predict import _run as predict_at
+from routes.research import get_cached_zone_risk
 
 locations_bp = Blueprint('locations', __name__)
 
@@ -106,10 +106,11 @@ def delete_location(loc_id):
 def risk_by_all_zones(loc_id):
     """Return county/zip/neighborhood/census_tract risk for one saved location.
 
-    Lazily resolves and persists zone IDs onto user_locations so subsequent
-    calls skip point-in-polygon work. The risk per zone is the ML prediction
-    evaluated at that zone's centroid (which the per-coord _PREDICT_CACHE
-    keeps cheap on repeats).
+    Numbers come from the SAME three-tier cache (in-memory → Postgres → fresh
+    compute) that powers the dashboard map's /risk-by-county and
+    /risk-by-zone/<type> endpoints — so the side-panel value is guaranteed
+    to match what the user sees on the map for the same zone. Lookup is
+    O(1) per zone after the (~80ms) point-in-polygon resolve.
     """
     user_id = _coerce_user_id()
     if not user_id:
@@ -119,28 +120,7 @@ def risk_by_all_zones(loc_id):
     if not loc:
         return jsonify({'error': 'Not found'}), 404
 
-    needs_resolve = not (loc.county_fips and loc.zip_code and loc.neighborhood_id and loc.census_tract_id)
-    zones = None
-    if needs_resolve:
-        zones = resolve_all(loc.lat, loc.lon)
-        # Cache whatever we resolved (some may be None outside coverage).
-        if zones.get('county'):       loc.county_fips    = zones['county']['id'][:5]
-        if zones.get('zip'):          loc.zip_code       = zones['zip']['id'][:10]
-        if zones.get('neighborhood'): loc.neighborhood_id = zones['neighborhood']['id'][:64]
-        if zones.get('census_tract'): loc.census_tract_id = zones['census_tract']['id'][:11]
-        db.session.commit()
-
-    def _risk_at(centroid_lat, centroid_lon):
-        try:
-            r = predict_at(centroid_lat, centroid_lon)
-            pct = float(r['prediction']['risk_probability'])
-            return {'risk_pct': round(pct * 100, 1), 'label': _label_for(pct)}
-        except Exception:
-            return None
-
-    # Re-resolve here if we don't have ZoneHit objects in hand — needed to get centroids.
-    if zones is None:
-        zones = resolve_all(loc.lat, loc.lon)
+    zones = resolve_all(loc.lat, loc.lon)
 
     out = {'location_id': loc.id, 'name': loc.name, 'lat': loc.lat, 'lon': loc.lon}
     for key in ('county', 'zip', 'neighborhood', 'census_tract'):
@@ -148,11 +128,15 @@ def risk_by_all_zones(loc_id):
         if not z:
             out[key] = None
             continue
-        risk = _risk_at(z['centroid_lat'], z['centroid_lon'])
+        cached = get_cached_zone_risk(key, z['id'])
+        if not cached or cached.get('risk_score') is None:
+            out[key] = {'id': z['id'], 'name': z['name'], 'risk_pct': None, 'label': None}
+            continue
+        pct = float(cached['risk_score'])
         out[key] = {
-            'id':   z['id'],
-            'name': z['name'],
-            'risk_pct': risk['risk_pct'] if risk else None,
-            'label':    risk['label']    if risk else None,
+            'id':       z['id'],
+            'name':     z['name'],
+            'risk_pct': round(pct * 100, 1),
+            'label':    cached.get('label') or _label_for(pct),
         }
     return jsonify(out)

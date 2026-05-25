@@ -206,6 +206,56 @@ def _spawn_background_refresh(app, cache_key: str, recompute_fn) -> None:
     threading.Thread(target=_runner, name=f"zone-refresh-{cache_key}", daemon=True).start()
 
 
+_ZONE_TYPE_TO_CACHE_KEY = {
+    "county":       "counties",
+    "zip":          "zip-codes",
+    "neighborhood": "neighborhoods",
+    "census_tract": "census-tracts",
+}
+
+
+def get_cached_zone_risk(zone_type: str, zone_id: str) -> dict | None:
+    """Look up a single zone's risk from the SAME cache the map serves.
+
+    Returns the dict {risk_score, label, features, data_quality} or None if
+    the zone isn't represented. Uses the established three-tier fallback:
+    in-memory → Postgres endpoint_cache → fresh compute. So this is always
+    consistent with what `/api/research/risk-by-county` and
+    `/api/research/risk-by-zone/<type>` would return for the same key.
+
+    Internal use only — call from inside an app context.
+    """
+    cache_key = _ZONE_TYPE_TO_CACHE_KEY.get(zone_type)
+    if not cache_key:
+        return None
+
+    now = time.time()
+    entry = _zone_risk_cache.get(cache_key)
+    data = None
+    if entry and entry.get("expires", 0) > now and entry.get("data") is not None:
+        data = entry["data"]
+    else:
+        # Memory miss — try the Postgres-backed cache (survives redeploys).
+        db_cached = _load_cache_from_db(cache_key)
+        if db_cached:
+            data = db_cached["data"]
+            _zone_risk_cache[cache_key] = _build_cache_entry(data, now + _GRID_CACHE_TTL)
+        else:
+            # Cold everywhere — synchronous compute. Rare; only happens on a fresh
+            # DB or a never-warmed zone type.
+            data = _compute_county_risk() if zone_type == "county" else _compute_zone_risk(cache_key)
+            if data is not None:
+                entry = _build_cache_entry(data, now + _GRID_CACHE_TTL)
+                _zone_risk_cache[cache_key] = entry
+                _save_cache_to_db(cache_key, data)
+
+    if not data:
+        return None
+    bucket_key = "counties" if zone_type == "county" else "zones"
+    bucket = data.get(bucket_key) or {}
+    return bucket.get(zone_id)
+
+
 def _compute_zone_risk(zone_type: str) -> dict | None:
     """Heavy path: load boundaries, fetch live weather, batch-predict per centroid."""
     filepath = os.path.join(_BOUNDARIES_DIR, f'{zone_type}.json')
