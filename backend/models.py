@@ -101,6 +101,10 @@ class AlertActivity(db.Model):
     delivery_status = db.Column(db.String(16), nullable=False)
     reason = db.Column(db.String(64), nullable=True)
     triggered_by_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=True)
+    # Hash of (tier_bucket, sorted_at_risk_location_ids). The cron skips
+    # sending if the most recent row for this user has the same signature —
+    # so users only get re-emailed when the situation has actually changed.
+    state_signature = db.Column(db.String(64), nullable=True, index=True)
     created_at = db.Column(db.DateTime, server_default=func.now(), nullable=False, index=True)
 
     user = db.relationship('User', foreign_keys=[user_id])
