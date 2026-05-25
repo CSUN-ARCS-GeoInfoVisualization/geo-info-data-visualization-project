@@ -70,19 +70,15 @@ async function fetchWeather(lat: number, lng: number): Promise<WeatherData> {
 }
 
 function toRiskLevel(apiLevel: string | null | undefined): RiskLevel {
-  // Compress the server's 9-tier scale into the 4 visual badge buckets.
+  // 5-tier NFDRS scale → 4 visual badge buckets. "Very High" rolls into
+  // the "high" badge color since the badge component only has 4 visual states.
   switch (apiLevel) {
-    case "Catastrophic":
-    case "Critical":
     case "Extreme":
       return "extreme";
-    case "Severe":
     case "Very High":
     case "High":
       return "high";
-    case "Elevated":
-    case "Guarded":
-    case "Medium":
+    case "Moderate":
       return "moderate";
     case "Low":
     default:

@@ -28,22 +28,14 @@ def _load(model_path: str, scaler_path: str) -> tuple:
 
 
 def risk_label(score: float) -> str:
-    """Canonical 9-tier label. Cutoffs mirror the frontend's lib/riskTiers.ts
-    and backend/routes/locations.py _TIER_THRESHOLDS so polygon colors,
-    legend swatches, badge text, and alert email subjects all agree.
-
-    Was 4-tier (0.25 / 0.50 / 0.75) which made e.g. LA County at risk_score
-    0.506 render as 'High' on the map and 'Low' in the side panel — same
-    score, different label, because the side panel used the 9-tier scale.
+    """Canonical 5-tier label (NFDRS-style: Low / Moderate / High / Very High
+    / Extreme, equal 20% bands). Backend + frontend agree — same cutoffs
+    in routes/locations.py _TIER_THRESHOLDS and frontend lib/riskTiers.ts.
     """
-    if score >= 0.95: return "Catastrophic"
-    if score >= 0.90: return "Critical"
-    if score >= 0.85: return "Extreme"
-    if score >= 0.80: return "Severe"
-    if score >= 0.75: return "Very High"
-    if score >= 0.70: return "High"
-    if score >= 0.65: return "Elevated"
-    if score >= 0.55: return "Guarded"
+    if score >= 0.80: return "Extreme"
+    if score >= 0.60: return "Very High"
+    if score >= 0.40: return "High"
+    if score >= 0.20: return "Moderate"
     return "Low"
 
 

@@ -169,7 +169,7 @@ def _send_high_risk_email(to_email: str, contact_name: str, locations_payload: l
   <div style="max-width:600px;margin:auto;background:white;border-radius:12px;overflow:hidden;border:1px solid #eee">
     <div style="background:#dc2626;color:white;padding:18px 22px">
       <div style="display:flex;align-items:center;gap:10px"><img src="https://firescope.dev/firescope-logo.png" alt="FireScope" width="28" height="28" style="display:inline-block;border:0;background:white;border-radius:6px;padding:2px"><div style="font-size:13px;letter-spacing:.08em;opacity:.9">FIRESCOPE • HIGH RISK ALERT</div></div>
-      <div style="font-size:22px;font-weight:700;margin-top:4px">Elevated wildfire risk near your saved locations</div>
+      <div style="font-size:22px;font-weight:700;margin-top:4px">Wildfire risk alert for your saved locations</div>
     </div>
     <div style="padding:22px">
       <p style="margin:0 0 14px">Hi {html_escape(name)},</p>

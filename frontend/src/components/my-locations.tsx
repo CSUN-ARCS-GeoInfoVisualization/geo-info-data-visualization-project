@@ -42,10 +42,11 @@ const ZONE_OPTIONS: { key: ZoneKey; label: string }[] = [
 
 // Map any tier label → the 4 broad color buckets used in the badge.
 function colorForLabel(label: string | null): string {
+  // 5-tier NFDRS scale.
   if (!label) return "bg-gray-100 text-gray-600 border-gray-200";
-  if (["Catastrophic", "Critical", "Extreme"].includes(label)) return "bg-red-100 text-red-700 border-red-200";
-  if (["Severe", "Very High", "High"].includes(label)) return "bg-orange-100 text-orange-700 border-orange-200";
-  if (["Elevated", "Guarded"].includes(label)) return "bg-yellow-100 text-yellow-700 border-yellow-200";
+  if (label === "Extreme") return "bg-red-100 text-red-700 border-red-200";
+  if (label === "Very High" || label === "High") return "bg-orange-100 text-orange-700 border-orange-200";
+  if (label === "Moderate") return "bg-yellow-100 text-yellow-700 border-yellow-200";
   return "bg-green-100 text-green-700 border-green-200";
 }
 
