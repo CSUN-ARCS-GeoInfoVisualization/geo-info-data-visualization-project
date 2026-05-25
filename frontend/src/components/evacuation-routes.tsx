@@ -20,6 +20,7 @@ import { GoogleMapsOverlay } from '@deck.gl/google-maps';
 import { IconLayer, GeoJsonLayer, ScatterplotLayer } from '@deck.gl/layers';
 import { CenteredInfoCard } from './centered-info-card';
 import { ShelterEvacLegend, SHELTER_EVAC_COLORS } from './shelter-evac-legend';
+import { MapLegend } from './map-legend';
 
 // Defensive CA bounding box — drop any shelter point upstream may have
 // included with a non-CA lat/lon. Catches feed bugs without trusting the
@@ -1290,97 +1291,10 @@ export function EvacuationRoutes() {
             </Map>
           </div>
 
-          {/* Map Legend */}
-          <div className="mt-4 bg-gray-50 rounded-lg p-4">
-            <h4 className="font-semibold text-base mb-3">Map Legend</h4>
-
-            {/* Clustering explanation */}
-            <div className="mb-4 pb-4 border-b border-gray-200">
-              <div className="flex items-center gap-3 mb-2">
-                <div className="w-8 h-8 bg-blue-500 rounded-full flex items-center justify-center text-white text-xs font-bold shadow-sm">
-                  25
-                </div>
-                <div className="text-sm">
-                  <div className="font-semibold">Shelter Cluster</div>
-                  <div className="text-muted-foreground">Click to zoom in and expand</div>
-                </div>
-              </div>
-            </div>
-
-            {/* Shelter types */}
-            <div className="space-y-2">
-              <div className="text-base font-semibold text-muted-foreground mb-2">Emergency Shelter Types:</div>
-
-              <div className="grid grid-cols-1 gap-2 text-base">
-                {/* Evacuation Shelters */}
-                <div className="flex items-center gap-2 p-2 rounded hover:bg-gray-100">
-                  <div className="w-6 h-6 rounded-full flex items-center justify-center" style={{backgroundColor: 'rgb(59, 130, 246)'}}>
-                    <span className="text-base">🏃</span>
-                  </div>
-                  <div>
-                    <div><strong>Evacuation Shelter</strong></div>
-                    <div className="text-xs text-muted-foreground">Pre-disaster evacuation only</div>
-                  </div>
-                </div>
-
-                {/* Post-Impact Shelters */}
-                <div className="flex items-center gap-2 p-2 rounded hover:bg-gray-100">
-                  <div className="w-6 h-6 rounded-full flex items-center justify-center" style={{backgroundColor: 'rgb(34, 197, 94)'}}>
-                    <span className="text-base">🏠</span>
-                  </div>
-                  <div>
-                    <div><strong>Post-Impact Shelter</strong></div>
-                    <div className="text-xs text-muted-foreground">After disaster relief</div>
-                  </div>
-                </div>
-
-                {/* Both */}
-                <div className="flex items-center gap-2 p-2 rounded hover:bg-gray-100">
-                  <div className="w-6 h-6 rounded-full flex items-center justify-center" style={{backgroundColor: 'rgb(147, 51, 234)'}}>
-                    <span className="text-base">🏛️</span>
-                  </div>
-                  <div>
-                    <div><strong>Dual-Purpose Shelter</strong></div>
-                    <div className="text-xs text-muted-foreground">Both evacuation & post-impact</div>
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Active Evacuation Zones */}
-            <div className="mt-4 pt-4 border-t border-gray-200">
-              <div className="text-base font-semibold text-muted-foreground mb-2">Active Evacuation Zones — Statewide CA</div>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
-                <div className="flex items-center gap-2"><span className="inline-block w-4 h-3 rounded" style={{ backgroundColor: 'rgba(220,38,38,0.55)', border: '1.5px solid #dc2626' }} /> Order</div>
-                <div className="flex items-center gap-2"><span className="inline-block w-4 h-3 rounded" style={{ backgroundColor: 'rgba(249,115,22,0.55)', border: '1.5px solid #f97316' }} /> Warning</div>
-                <div className="flex items-center gap-2"><span className="inline-block w-4 h-3 rounded" style={{ backgroundColor: 'rgba(250,204,21,0.55)', border: '1.5px solid #facc15' }} /> Advisory</div>
-                <div className="flex items-center gap-2"><span className="inline-block w-4 h-3 rounded" style={{ backgroundColor: 'rgba(147,51,234,0.55)', border: '1.5px solid #9333ea' }} /> Shelter in Place</div>
-              </div>
-              <p className="text-xs text-muted-foreground mt-2">
-                Statewide evacuation polygons aggregated by Cal OES from county sheriffs and Genasys PROTECT (the same source Watch Duty uses). Active zones only — cleared zones drop off automatically. Click a zone for status, county, and instructions.
-              </p>
-            </div>
-
-            {/* Active Fire Perimeters */}
-            <div className="mt-4 pt-4 border-t border-gray-200">
-              <div className="text-base font-semibold text-muted-foreground mb-2">Active Fires — Avoid These Areas</div>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
-                <div className="flex items-center gap-2"><span className="inline-block w-4 h-3 rounded border border-gray-300" style={{ backgroundColor: '#dc2626' }} /> 0–24% contained</div>
-                <div className="flex items-center gap-2"><span className="inline-block w-4 h-3 rounded border border-gray-300" style={{ backgroundColor: '#f97316' }} /> 25–49%</div>
-                <div className="flex items-center gap-2"><span className="inline-block w-4 h-3 rounded border border-gray-300" style={{ backgroundColor: '#facc15' }} /> 50–99%</div>
-                <div className="flex items-center gap-2"><span className="inline-block w-4 h-3 rounded border border-gray-300" style={{ backgroundColor: '#2563eb' }} /> Your saved location</div>
-              </div>
-              <p className="text-xs text-muted-foreground mt-2">
-                Fire perimeter polygons come from NIFC WFIGS (live California active fires, &lt;100% contained). Size + location reflect the real fire footprint — route around them.
-              </p>
-            </div>
-
-            {/* Instructions */}
-            <div className="mt-4 pt-4 border-t border-gray-200">
-              <p className="text-sm text-muted-foreground">
-                💡 <strong>How to use:</strong> Click blue clusters to zoom in. Click individual shelters to see capacity, accessibility, and amenities. Drag to pan, scroll to zoom. FEMA - National Shelter System Facilities
-              </p>
-            </div>
+          {/* Map legend — extracted to a shared <MapLegend> so the research
+              page renders the exact same icons + colors. */}
+          <div className="mt-4">
+            <MapLegend showHowTo={true} showCluster={true} />
           </div>
         </CardContent>
       </Card>

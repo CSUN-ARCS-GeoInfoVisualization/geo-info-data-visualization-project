@@ -8,7 +8,7 @@ import { GeoJsonLayer, IconLayer } from "@deck.gl/layers";
 import { firmsPointsToPolygonCollection } from "../utils/firmsPolygons";
 import { HeatmapLayer } from "@deck.gl/aggregation-layers";
 import { CenteredInfoCard } from "./centered-info-card";
-import { ShelterEvacLegend } from "./shelter-evac-legend";
+import { MapLegend } from "./map-legend";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
@@ -969,52 +969,12 @@ function ResearchMapView() {
             </div>
           </div>
 
-      {/* Map legend BELOW the map. Renders the canonical
-          <ShelterEvacLegend/> for evac + shelter rows (icons-inside-swatches
-          identical to the Shelters & Evac page) PLUS the risk-zone tier
-          ramp and the NIFC containment ramp using the same color tokens
-          the dashboard uses. No FIRMS hotspot row — overlay deprecated. */}
-      <div className="rounded-lg border bg-white p-4">
-        <div className="text-xs font-semibold text-zinc-900 uppercase tracking-wide mb-3">Map legend</div>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 text-xs items-start">
-          {/* Column 1: shared component, exact same render as the
-              Shelters & Evac floating legend (Shield icons in evac swatches,
-              Home icons in shelter swatches, etc). */}
-          <ShelterEvacLegend />
+      {/* Identical map legend block as the Shelters & Evac page.
+          showCluster=false because research uses individual pins, not the
+          clustered IconLayer; showHowTo=false because researchers don't
+          need the "click blue clusters" guidance. */}
+      <MapLegend showHowTo={false} showCluster={false} />
 
-          {/* Column 2: dashboard's 4-tier risk-zone ramp. */}
-          <div className="bg-white/95 border border-zinc-200 rounded-lg shadow-sm p-3 space-y-2 max-w-[220px]">
-            <div className="font-semibold text-zinc-900 text-[11px] uppercase tracking-wide">Risk Zones</div>
-            <LegendSwatch color="rgba(34,197,94,0.55)" label="Low" />
-            <LegendSwatch color="rgba(234,179,8,0.65)" label="Medium" />
-            <LegendSwatch color="rgba(220,38,38,0.65)" label="High" />
-            <LegendSwatch color="rgba(153,27,27,0.75)" label="Extreme" />
-          </div>
-
-          {/* Column 3: NIFC containment ramp. */}
-          <div className="bg-white/95 border border-zinc-200 rounded-lg shadow-sm p-3 space-y-2 max-w-[230px]">
-            <div className="font-semibold text-zinc-900 text-[11px] uppercase tracking-wide">Fire Perimeter (NIFC)</div>
-            <LegendSwatch color="rgb(220,38,38)" label="Uncontained (<25%)" />
-            <LegendSwatch color="rgb(249,115,22)" label="25–49% contained" />
-            <LegendSwatch color="rgb(250,204,21)" label="50–99% contained" />
-            <LegendSwatch color="rgb(229,231,235)" label="Contained (≥100%)" border />
-          </div>
-        </div>
-      </div>
-
-    </div>
-  );
-}
-
-function LegendSwatch({ color, label, border }: { color: string; label: string; border?: boolean }) {
-  return (
-    <div className="flex items-center gap-2 text-xs">
-      <span
-        className="inline-block h-4 w-4 rounded-sm shrink-0"
-        style={{ background: color, border: border ? '1px solid rgb(180,180,180)' : undefined }}
-        aria-hidden="true"
-      />
-      <span className="text-zinc-700">{label}</span>
     </div>
   );
 }
