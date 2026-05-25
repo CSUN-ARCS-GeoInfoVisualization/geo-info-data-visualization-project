@@ -16,18 +16,38 @@ interface SavedLocation {
   lon: number;
 }
 
-interface PredictionResult {
-  risk_level: string;
-  risk_probability: number;
-  matched_name: string;
+interface ZoneRisk {
+  id: string;
+  name: string;
+  risk_pct: number | null;
+  label: string | null;
 }
 
-const RISK_COLORS: Record<string, string> = {
-  Low: "bg-green-100 text-green-700 border-green-200",
-  Medium: "bg-yellow-100 text-yellow-700 border-yellow-200",
-  High: "bg-red-100 text-red-700 border-red-200",
-  Extreme: "bg-purple-100 text-purple-700 border-purple-200",
-};
+interface AllZones {
+  location_id: number;
+  county: ZoneRisk | null;
+  zip: ZoneRisk | null;
+  neighborhood: ZoneRisk | null;
+  census_tract: ZoneRisk | null;
+}
+
+type ZoneKey = "county" | "zip" | "neighborhood" | "census_tract";
+
+const ZONE_OPTIONS: { key: ZoneKey; label: string }[] = [
+  { key: "county", label: "County" },
+  { key: "zip", label: "ZIP code" },
+  { key: "neighborhood", label: "Neighborhood" },
+  { key: "census_tract", label: "Census tract" },
+];
+
+// Map any tier label → the 4 broad color buckets used in the badge.
+function colorForLabel(label: string | null): string {
+  if (!label) return "bg-gray-100 text-gray-600 border-gray-200";
+  if (["Catastrophic", "Critical", "Extreme"].includes(label)) return "bg-red-100 text-red-700 border-red-200";
+  if (["Severe", "Very High", "High"].includes(label)) return "bg-orange-100 text-orange-700 border-orange-200";
+  if (["Elevated", "Guarded"].includes(label)) return "bg-yellow-100 text-yellow-700 border-yellow-200";
+  return "bg-green-100 text-green-700 border-green-200";
+}
 
 const QUICK_LABELS = [
   { label: "Home", icon: Home },
@@ -40,9 +60,10 @@ export function MyLocations() {
   const placesLib = useMapsLibrary("places");
 
   const [locations, setLocations] = useState<SavedLocation[]>([]);
-  const [predictions, setPredictions] = useState<Record<number, PredictionResult>>({});
+  const [zoneRisks, setZoneRisks] = useState<Record<number, AllZones>>({});
   const [loadingLocations, setLoadingLocations] = useState(false);
   const [runningPredictions, setRunningPredictions] = useState(false);
+  const [zoneType, setZoneType] = useState<ZoneKey>("county");
 
   // Add form state
   const [formName, setFormName] = useState("");
@@ -100,28 +121,31 @@ export function MyLocations() {
     fetchLocations();
   }, []);
 
+  // For each location, hit the new /risk-by-all-zones endpoint (parallel).
+  // Each response has county / zip / neighborhood / census_tract risks; the
+  // global zoneType selector just picks which one to show.
   const runPredictions = async (locs: SavedLocation[]) => {
     if (locs.length === 0) return;
     setRunningPredictions(true);
     try {
-      const res = await apiFetch("/predict/batch", {
-        method: "POST",
-        body: JSON.stringify({
-          items: locs.map((l) => ({ lat: l.lat, lon: l.lon })),
-        }),
-      });
-      if (res.ok) {
-        const data = await res.json();
-        const map: Record<number, PredictionResult> = {};
-        data.results.forEach((r: any, i: number) => {
-          map[locs[i].id] = {
-            risk_level: r.prediction.risk_level,
-            risk_probability: r.prediction.risk_probability,
-            matched_name: r.location.matched_name,
-          };
+      const responses = await Promise.all(
+        locs.map(async (l) => {
+          try {
+            const res = await apiFetch(`/me/locations/${l.id}/risk-by-all-zones`);
+            if (!res.ok) return null;
+            return (await res.json()) as AllZones;
+          } catch {
+            return null;
+          }
+        })
+      );
+      setZoneRisks((prev) => {
+        const next = { ...prev };
+        responses.forEach((r) => {
+          if (r) next[r.location_id] = r;
         });
-        setPredictions((prev) => ({ ...prev, ...map }));
-      }
+        return next;
+      });
     } finally {
       setRunningPredictions(false);
     }
@@ -168,7 +192,7 @@ export function MyLocations() {
     const res = await apiFetch(`/me/locations/${id}`, { method: "DELETE" });
     if (res.ok) {
       setLocations((prev) => prev.filter((l) => l.id !== id));
-      setPredictions((prev) => { const copy = { ...prev }; delete copy[id]; return copy; });
+      setZoneRisks((prev) => { const copy = { ...prev }; delete copy[id]; return copy; });
     }
   };
 
@@ -182,17 +206,35 @@ export function MyLocations() {
           </p>
         </div>
         {locations.length > 0 && (
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => runPredictions(locations)}
-            disabled={runningPredictions}
-          >
-            {runningPredictions
-              ? <Loader2 className="h-4 w-4 animate-spin mr-2" />
-              : <RefreshCw className="h-4 w-4 mr-2" />}
-            Refresh risk
-          </Button>
+          <div className="flex items-center gap-2">
+            <div className="flex rounded-full border bg-muted/40 p-0.5 text-xs">
+              {ZONE_OPTIONS.map(({ key, label }) => (
+                <button
+                  key={key}
+                  type="button"
+                  onClick={() => setZoneType(key)}
+                  className={`px-2.5 py-1 rounded-full transition-colors ${
+                    zoneType === key
+                      ? "bg-white shadow text-foreground font-medium"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  {label}
+                </button>
+              ))}
+            </div>
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => runPredictions(locations)}
+              disabled={runningPredictions}
+            >
+              {runningPredictions
+                ? <Loader2 className="h-4 w-4 animate-spin mr-2" />
+                : <RefreshCw className="h-4 w-4 mr-2" />}
+              Refresh risk
+            </Button>
+          </div>
         )}
       </div>
 
@@ -275,7 +317,8 @@ export function MyLocations() {
       ) : (
         <div className="space-y-3">
           {locations.map((loc) => {
-            const pred = predictions[loc.id];
+            const all = zoneRisks[loc.id];
+            const zone = all ? all[zoneType] : null;
             return (
               <div
                 key={loc.id}
@@ -288,24 +331,29 @@ export function MyLocations() {
                     {loc.address && (
                       <p className="text-xs text-muted-foreground truncate max-w-xs">{loc.address}</p>
                     )}
-                    <p className="text-xs text-muted-foreground">
-                      {loc.lat.toFixed(4)}, {loc.lon.toFixed(4)}
-                    </p>
+                    {zone && (
+                      <p className="text-xs text-muted-foreground">
+                        {ZONE_OPTIONS.find((z) => z.key === zoneType)?.label}:{" "}
+                        <span className="font-medium text-foreground">{zone.name}</span>
+                      </p>
+                    )}
                   </div>
                 </div>
 
                 <div className="flex items-center gap-3 shrink-0">
-                  {runningPredictions && !pred ? (
+                  {runningPredictions && !all ? (
                     <Loader2 className="h-4 w-4 animate-spin text-muted-foreground" />
-                  ) : pred ? (
+                  ) : zone && zone.label && zone.risk_pct != null ? (
                     <div className="text-right">
-                      <span className={`text-xs font-semibold px-2 py-1 rounded-full border ${RISK_COLORS[pred.risk_level] ?? "bg-gray-100 text-gray-700"}`}>
-                        {pred.risk_level}
+                      <span className={`text-xs font-semibold px-2 py-1 rounded-full border ${colorForLabel(zone.label)}`}>
+                        {zone.label}
                       </span>
                       <p className="text-xs text-muted-foreground mt-0.5">
-                        {Math.round(pred.risk_probability * 100)}% risk
+                        {zone.risk_pct.toFixed(0)}% risk
                       </p>
                     </div>
+                  ) : all ? (
+                    <span className="text-xs text-muted-foreground italic">no data</span>
                   ) : null}
 
                   <Button
