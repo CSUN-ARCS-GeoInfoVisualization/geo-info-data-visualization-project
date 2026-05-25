@@ -1,6 +1,4 @@
 import { useEffect, type ReactNode } from "react";
-import { createPortal } from "react-dom";
-import { X } from "lucide-react";
 
 interface CenteredInfoCardProps {
   open: boolean;
@@ -10,18 +8,22 @@ interface CenteredInfoCardProps {
   /** Optional colored stripe across the header — pass a tailwind bg-* class. */
   accent?: string;
   children: ReactNode;
-  /** Max width override (default ~480px). */
+  /** Max width override (default 340px to match the dashboard popup). */
   width?: string;
 }
 
 /**
- * Single source of truth for map-driven info popups across the site.
- * Renders into a portal at the document body so it always escapes the map
- * container's clipping. Click the scrim, press ESC, or hit X to close.
+ * Map info popup — same positioning pattern as the dashboard GoogleRiskMap:
+ * absolute-positioned card anchored at the top-center of the nearest
+ * positioned ancestor (the map container). No portal, no scrim, no overlay
+ * blocking — just a small card hovering over the map.
  *
- * Why this exists: deck.gl click anchors landed popups near the edge of
- * the viewport, sometimes clipping the close button entirely. A centered
- * fixed-position card is reachable from anywhere on the map.
+ * The parent must be `position: relative` (every map container in this
+ * app already is, since deck.gl overlays require it).
+ *
+ * Was previously a portal-to-body fixed-position centered modal — that
+ * pattern was confusing because it covered the whole viewport with a
+ * scrim instead of just labeling the clicked feature.
  */
 export function CenteredInfoCard({
   open,
@@ -30,9 +32,9 @@ export function CenteredInfoCard({
   subtitle,
   accent,
   children,
-  width = "max-w-[480px]",
+  width = "340px",
 }: CenteredInfoCardProps) {
-  // ESC closes the card. Effect runs only while open so we don't leak listeners.
+  // ESC still closes the card.
   useEffect(() => {
     if (!open) return;
     const onKey = (e: KeyboardEvent) => {
@@ -43,80 +45,108 @@ export function CenteredInfoCard({
   }, [open, onClose]);
 
   if (!open) return null;
-  if (typeof document === "undefined") return null;
 
-  return createPortal(
-    // Inline styles so a parent's `transform`, `filter`, or Tailwind purge
-    // can't change positioning — earlier the card was rendering at the
-    // bottom of the page on the Shelters & Evac map because `fixed inset-0`
-    // was getting overridden somehow.
+  return (
     <div
       role="dialog"
-      aria-modal="true"
-      onClick={onClose}
+      aria-modal="false"
       style={{
-        position: 'fixed',
-        top: 0, right: 0, bottom: 0, left: 0,
-        zIndex: 10000,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        padding: '0 16px',
+        position: "absolute",
+        left: "50%",
+        top: 12,
+        transform: "translateX(-50%)",
+        zIndex: 1000,
+        background: "white",
+        border: "1px solid #e5e7eb",
+        borderRadius: 10,
+        maxWidth: width,
+        width: "calc(100% - 24px)",
+        maxHeight: "calc(100% - 24px)",
+        boxShadow:
+          "0 10px 15px -3px rgba(0,0,0,0.15), 0 4px 6px -4px rgba(0,0,0,0.08)",
+        overflow: "hidden",
+        display: "flex",
+        flexDirection: "column",
       }}
     >
-      {/* Scrim */}
-      <div
-        aria-hidden="true"
-        style={{
-          position: 'absolute',
-          top: 0, right: 0, bottom: 0, left: 0,
-          background: 'rgba(0, 0, 0, 0.35)',
-          backdropFilter: 'blur(2px)',
-        }}
-      />
+      {accent && <div className={accent} style={{ height: 4, width: "100%" }} />}
 
-      {/* Card */}
-      <div
-        className={`relative w-full ${width} bg-white rounded-xl shadow-2xl overflow-hidden border border-zinc-200 max-h-[85vh] flex flex-col`}
-        style={{ position: 'relative', zIndex: 1 }}
-        onClick={(e) => e.stopPropagation()}
-      >
-        {accent && <div className={`h-1 w-full ${accent}`} />}
-
-        {(title || subtitle) && (
-          <div className="px-5 pt-4 pb-3 border-b border-zinc-100 flex items-start justify-between gap-3">
-            <div className="min-w-0">
-              {title && <div className="text-base font-semibold text-zinc-900 leading-tight">{title}</div>}
-              {subtitle && <div className="mt-0.5 text-xs text-zinc-500">{subtitle}</div>}
-            </div>
-            <button
-              type="button"
-              onClick={onClose}
-              aria-label="Close"
-              className="-mt-1 -mr-1 inline-flex h-8 w-8 items-center justify-center rounded-md text-zinc-500 hover:bg-zinc-100 hover:text-zinc-900 shrink-0"
-            >
-              <X className="h-4 w-4" />
-            </button>
+      {(title || subtitle) && (
+        <div
+          style={{
+            padding: "12px 14px 10px",
+            borderBottom: "1px solid #f1f5f9",
+            display: "flex",
+            alignItems: "flex-start",
+            justifyContent: "space-between",
+            gap: 10,
+          }}
+        >
+          <div style={{ minWidth: 0, paddingRight: 6 }}>
+            {title && (
+              <div style={{ fontWeight: 700, fontSize: 14, color: "#0f172a", lineHeight: 1.25 }}>
+                {title}
+              </div>
+            )}
+            {subtitle && (
+              <div style={{ marginTop: 2, fontSize: 11, color: "#64748b" }}>{subtitle}</div>
+            )}
           </div>
-        )}
-
-        {/* If no header, still expose a close button so users always have one. */}
-        {!title && !subtitle && (
           <button
             type="button"
             onClick={onClose}
             aria-label="Close"
-            className="absolute top-2 right-2 z-10 inline-flex h-8 w-8 items-center justify-center rounded-md bg-white/80 text-zinc-600 hover:bg-zinc-100 hover:text-zinc-900 shadow-sm"
+            style={{
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+              fontSize: 18,
+              lineHeight: 1,
+              color: "#6b7280",
+              padding: "2px 4px",
+              marginTop: -2,
+            }}
           >
-            <X className="h-4 w-4" />
+            ×
           </button>
-        )}
-
-        <div className="px-5 py-4 overflow-y-auto text-sm text-zinc-700 leading-relaxed">
-          {children}
         </div>
+      )}
+
+      {!title && !subtitle && (
+        <button
+          type="button"
+          onClick={onClose}
+          aria-label="Close"
+          style={{
+            position: "absolute",
+            top: 6,
+            right: 8,
+            background: "rgba(255,255,255,0.9)",
+            border: "none",
+            cursor: "pointer",
+            fontSize: 18,
+            lineHeight: 1,
+            color: "#6b7280",
+            zIndex: 2,
+            padding: "2px 6px",
+            borderRadius: 4,
+          }}
+        >
+          ×
+        </button>
+      )}
+
+      <div
+        style={{
+          padding: "12px 14px",
+          overflowY: "auto",
+          fontSize: 12.5,
+          lineHeight: 1.55,
+          color: "#334155",
+        }}
+      >
+        {children}
       </div>
-    </div>,
-    document.body
+    </div>
   );
 }

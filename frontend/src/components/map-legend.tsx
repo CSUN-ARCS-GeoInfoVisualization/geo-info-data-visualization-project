@@ -90,6 +90,20 @@ export function MapLegend({ showHowTo = true, showCluster = true }: MapLegendPro
         </p>
       </div>
 
+      {/* Risk Zone tiers — matches dashboard's GoogleRiskMap polygon coloring */}
+      <div className="mt-4 pt-4 border-t border-gray-200">
+        <div className="text-base font-semibold text-muted-foreground mb-2">Risk Zones (model tier)</div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
+          <div className="flex items-center gap-2"><span className="inline-block w-4 h-3 rounded border border-gray-300" style={{ backgroundColor: 'rgba(34,197,94,0.55)' }} /> Low</div>
+          <div className="flex items-center gap-2"><span className="inline-block w-4 h-3 rounded border border-gray-300" style={{ backgroundColor: 'rgba(234,179,8,0.65)' }} /> Medium</div>
+          <div className="flex items-center gap-2"><span className="inline-block w-4 h-3 rounded border border-gray-300" style={{ backgroundColor: 'rgba(220,38,38,0.65)' }} /> High</div>
+          <div className="flex items-center gap-2"><span className="inline-block w-4 h-3 rounded border border-gray-300" style={{ backgroundColor: 'rgba(153,27,27,0.75)' }} /> Extreme</div>
+        </div>
+        <p className="text-xs text-muted-foreground mt-2">
+          ML-predicted risk per zone (county / ZIP / neighborhood / census tract). Shown on the dashboard map and on the research map's "Risk zone" or "Mixed" view. Click a zone polygon to see the model inputs that drove the score.
+        </p>
+      </div>
+
       {/* Active Fire Perimeters */}
       <div className="mt-4 pt-4 border-t border-gray-200">
         <div className="text-base font-semibold text-muted-foreground mb-2">Active Fires — Avoid These Areas</div>
