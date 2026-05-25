@@ -165,6 +165,10 @@ function FireFacilitiesOverlay({
   useEffect(() => { setTooltipRef.current = setTooltip; }, []);
   const [zoneTooltip, setZoneTooltip] = useState<any>(null);
   useEffect(() => { setZoneTooltipRef.current = setZoneTooltip; }, []);
+  // Separate state for fire-perimeter clicks so the card body can render
+  // fire-specific fields (incident name, acres, % contained) instead of
+  // accidentally showing evacuation-zone copy.
+  const [fireTooltip, setFireTooltip] = useState<any>(null);
   const [hoveredShelter, setHoveredShelter] = useState<any>(null);
   useEffect(() => { setHoveredShelterRef.current = setHoveredShelter; }, []);
   const [facilitiesData, setFacilitiesData] = useState<any[]>([]);
@@ -501,10 +505,10 @@ function FireFacilitiesOverlay({
           onClick: (info: any) => {
             if (info.object) {
               console.log('[evac] fire perimeter click', info.object?.properties);
-              setZoneTooltip({
+              setFireTooltip({
                 x: info.x,
                 y: info.y,
-                props: { ...(info.object.properties || {}), __kind: 'fire' },
+                props: info.object.properties || {},
               });
               return true;
             }
@@ -680,6 +684,58 @@ function FireFacilitiesOverlay({
           <ShelterEvacLegend />
         </div>
       </div>
+
+      {/* Fire perimeter info — fire-specific fields only. */}
+      <CenteredInfoCard
+        open={!!fireTooltip}
+        onClose={() => setFireTooltip(null)}
+        accent="bg-red-700"
+        title={fireTooltip?.props?.poly_IncidentName || fireTooltip?.props?.attr_IncidentName || 'Active Fire'}
+        subtitle={(() => {
+          const p = fireTooltip?.props || {};
+          const acres = p.poly_GISAcres != null ? `${Number(p.poly_GISAcres).toLocaleString(undefined, { maximumFractionDigits: 0 })} acres` : null;
+          const cat = p.poly_FeatureCategory || p.attr_IncidentTypeCategory;
+          return [acres, cat].filter(Boolean).join(' · ') || undefined;
+        })()}
+      >
+        {fireTooltip?.props && (() => {
+          const p = fireTooltip.props;
+          const pct = p.attr_PercentContained == null ? null : Number(p.attr_PercentContained);
+          const containedLabel =
+            pct == null ? 'Unknown' :
+            pct >= 100  ? `${pct}% — fully contained` :
+            pct >= 50   ? `${pct}% — 50–99% contained` :
+            pct >= 25   ? `${pct}% — 25–49% contained` :
+            `${pct}% — 0–24% contained (uncontrolled)`;
+          const containedBg =
+            pct == null ? 'bg-zinc-100 text-zinc-700 border-zinc-200' :
+            pct >= 100  ? 'bg-white text-zinc-700 border-zinc-300' :
+            pct >= 50   ? 'bg-yellow-100 text-yellow-900 border-yellow-200' :
+            pct >= 25   ? 'bg-orange-100 text-orange-900 border-orange-200' :
+            'bg-red-100 text-red-900 border-red-200';
+          const discovered = p.attr_FireDiscoveryDateTime ? new Date(Number(p.attr_FireDiscoveryDateTime)).toLocaleString() : null;
+          return (
+            <div className="space-y-3">
+              <span className={`inline-block px-2.5 py-1 rounded-md text-xs font-semibold border ${containedBg}`}>
+                {containedLabel}
+              </span>
+              <dl className="grid grid-cols-3 gap-x-3 gap-y-2 text-xs">
+                {p.poly_GISAcres != null && (<><dt className="col-span-1 text-zinc-500">Acres burned</dt><dd className="col-span-2">{Number(p.poly_GISAcres).toLocaleString(undefined, { maximumFractionDigits: 2 })}</dd></>)}
+                {p.poly_FeatureCategory && (<><dt className="col-span-1 text-zinc-500">Type</dt><dd className="col-span-2">{p.poly_FeatureCategory}</dd></>)}
+                {p.attr_POOCounty && (<><dt className="col-span-1 text-zinc-500">County</dt><dd className="col-span-2">{p.attr_POOCounty}</dd></>)}
+                {p.attr_POOState && (<><dt className="col-span-1 text-zinc-500">State</dt><dd className="col-span-2">{p.attr_POOState}</dd></>)}
+                {discovered && (<><dt className="col-span-1 text-zinc-500">Discovered</dt><dd className="col-span-2">{discovered}</dd></>)}
+                {p.attr_FireCause && (<><dt className="col-span-1 text-zinc-500">Cause</dt><dd className="col-span-2">{p.attr_FireCause}</dd></>)}
+                {p.attr_IncidentManagementOrganization && (<><dt className="col-span-1 text-zinc-500">Managing org</dt><dd className="col-span-2">{p.attr_IncidentManagementOrganization}</dd></>)}
+                {p.attr_UniqueFireIdentifier && (<><dt className="col-span-1 text-zinc-500">Fire ID</dt><dd className="col-span-2 font-mono text-[11px]">{p.attr_UniqueFireIdentifier}</dd></>)}
+              </dl>
+              <div className="pt-2 border-t border-zinc-100 text-[11px] text-zinc-400">
+                Source: NIFC WFIGS Interagency Perimeters (live, year-to-date active California fires).
+              </div>
+            </div>
+          );
+        })()}
+      </CenteredInfoCard>
 
       {/* Evacuation zone info — centered card with every CalOES field we have. */}
       <CenteredInfoCard
