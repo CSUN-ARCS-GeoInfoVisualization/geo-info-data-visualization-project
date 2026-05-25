@@ -1,11 +1,123 @@
 # FireScope — Session Handoff
 
-**Stable tag:** `v2.8-stable` (commit `f7fa324`, 2026-05-25)
+**Stable tag:** `v2.9-stable` (commit `1c19015`, 2026-05-25)
 **Live URL:** https://firescope.dev (custom domain, HTTPS) · https://firescope.netlify.app
 **API:** https://firescope-api.onrender.com/api
-**GitHub Release:** https://github.com/CSUN-ARCS-GeoInfoVisualization/geo-info-data-visualization-project/releases/tag/v2.8-stable
+**GitHub Release:** https://github.com/CSUN-ARCS-GeoInfoVisualization/geo-info-data-visualization-project/releases/tag/v2.9-stable
 
 This document is the single source of truth for picking up FireScope work in a fresh session. Read this first, then `README.md`, then jump in.
+
+---
+
+## What v2.9-stable adds (on top of v2.8)
+
+### Canonical NFDRS 5-tier risk model
+
+The v2.8 release shipped a custom 9-tier label scale (Catastrophic / Critical / Severe / Extreme / Very High / High / Elevated / Guarded / Low) that didn't match the agency advisories users see elsewhere. Replaced with the standard **National Fire Danger Rating System (NFDRS)** 5-tier scale, equal 20% bands:
+
+| Tier | Range | Hex | RGBA polygon |
+|---|---|---|---|
+| Extreme   | 80–100% | `#7f1d1d` | `[127,29,29,200]` |
+| Very High | 60–80%  | `#dc2626` | `[220,38,38,180]` |
+| High      | 40–60%  | `#f97316` | `[249,115,22,160]` |
+| Moderate  | 20–40%  | `#facc15` | `[250,204,21,140]` |
+| Low       | 0–20%   | `#22c55e` | `[34,197,94,120]`  |
+
+**Single source of truth chain (everything reads from these):**
+
+1. `frontend/src/lib/riskTiers.ts` — `RISK_TIERS_DESC`, `RISK_TIERS_ASC`, `riskRgba(score)`, `tierForScore(score)`.
+2. `backend/ml/inference.risk_label(score)` — emits the label on every `/predict` and `/predict/batch` response.
+3. `backend/routes/locations._TIER_THRESHOLDS` — `_label_for(pct)` fallback used by `/me/locations/<id>/risk-by-all-zones` and the alert cron.
+4. `backend/services/email/renderer._risk_level_from_score` and `_risk_badge_color` — match the 5-tier scale for any template that ships through that module.
+5. `frontend/src/components/GoogleRiskMap.labelColor` — 5-case switch keyed on the canonical labels.
+
+Wired through every polygon overlay (`CountyRiskOverlay`, `ZipCodeRiskOverlay`, `NeighborhoodRiskOverlay`, `CensusTractRiskOverlay`, `research-page` UnifiedResearchOverlay) so the chip color on a clicked feature is always identical to the polygon underneath.
+
+### Shelters & Evacuation page rebuild
+
+- Smooth ref-based `GoogleMapsOverlay` (no more canvas flicker on zoom or layer toggle).
+- Shelters filtered to **OPEN-only**, defensive CA bounding-box filter on top of the server-side `state=CA` filter.
+- Three independent click popups (shelter / evac zone / fire perimeter), each with the matching info — fire clicks no longer surface evac-zone copy.
+- Each popup is a centered card anchored at top-center of the map (same UX pattern as the dashboard's `GoogleRiskMap`), close on X / scrim / ESC.
+- **0/N status banners** always rendered above the map (active evac orders + open shelters), with "Show on map" buttons that fit bounds to the matching layer.
+- Shared `<ShelterEvacLegend />` floating top-right of the map + the canonical `<MapLegend />` rendered as a card directly below.
+
+### Research-page shelter overlay
+
+- New researcher-only toggle (default OFF) — literal red/green switch with ON/OFF labels rendered via inline styles so no UI library reset can repaint it white.
+- When ON: all 8,014 CA shelters rendered as the same `🏃` / `🏠` / `🏛️` emoji-in-colored-circle icons the Shelters & Evac page uses. No FIRMS-style heatmap.
+- Click a shelter pin → centered info card opens AND the "Selected shelter" block in the left sidebar populates with the full metadata (status, address, capacity, accessibility, generator, Open in Google Maps).
+- New `<MapLegend />` card below the map, identical to the Shelters & Evac legend, plus the 5-tier risk-zone ladder.
+
+### Alerts — county-match + fire-pickable + shelter-opened
+
+- **Evac trigger** is now two-tier: polygon containment first (life-safety wording), county match second (heads-up wording). Saved location in LA County gets an alert when LA County has any active CalOES zone, even if the polygon doesn't overlap the saved point.
+- **Shelter-opened sub-channel** folded into the 10-min evac cron — newly OPEN shelters in any county containing a saved location fire one batched email per (user × cron-tick), capped at 10 shelters per email so the first opt-in doesn't flood.
+- **Fire perimeter popups** on the Shelters & Evac map are now clickable + open a fire-specific card (containment tier chip, acres, county, discovered date, cause, managing org, NIFC fire ID) — used to be `pickable:false`.
+- **Cron self-call replaced** with `services.cache.get_cached_data(...)` — in-process read of the same 3-tier cache the public endpoints use, no HTTP hop, no gunicorn self-deadlock. Evac cron response dropped from 20–90s timeouts to 0.5–5s.
+- **Alert emails** now lead with a 56px centered FireScope logo on its own line (was a 28px inline element), urgency copy + tier labels follow the 5-tier scale (`HIGH_RISK_THRESHOLD = 0.60` = Very High and above).
+
+### Operations & hygiene
+
+- **`scripts/refresh-zone-cache.sh`** — the SAFE way to re-warm the four zone caches. Hits each endpoint sequentially and bails on the first non-200. Runbook entry above the v2.8 verify block documents that direct `DELETE FROM zone_risk_cache` is forbidden (it caused a pool-exhaustion outage on 2026-05-25 — see commit `2ea9a44`).
+- **DB pool bumped** to `pool_size=20, max_overflow=30, pool_pre_ping=True, pool_recycle=300` in `backend/config.py`. Worst-case cold-cache compute storm can no longer starve `/login` or `/health`.
+- **Top nav z-index** bumped to `z-[100]`; research page's in-map navbar lowered to `zIndex:40` so users can always click through to Dashboard / News / etc even when the navbar is up.
+- **About page** refresh: alerts system card, infrastructure card, custom-domain link, updated ML model copy.
+
+### Files touched in v2.9
+
+```
+README.md
+docs/SESSION_HANDOFF.md                            (this file)
+backend/config.py                                  (DB pool 20+30 + pre_ping + recycle)
+backend/ml/inference.py                            (5-tier risk_label)
+backend/routes/locations.py                        (5-tier _TIER_THRESHOLDS)
+backend/routes/internal_alerts.py                  (county match + shelter-opened + direct cache reads + fire pickable + logo + 5-tier subjects)
+backend/routes/predict.py                          (no functional change)
+backend/services/cache.py                          (NEW get_cached_data helper)
+backend/services/email/renderer.py                 (5-tier templates)
+frontend/src/lib/riskTiers.ts                      (NEW canonical 5-tier source of truth)
+frontend/src/components/centered-info-card.tsx     (dashboard top-center anchor pattern)
+frontend/src/components/map-legend.tsx             (NEW shared full legend)
+frontend/src/components/shelter-evac-legend.tsx    (still here; floating top-right legend)
+frontend/src/components/evacuation-routes.tsx      (smooth overlay, OPEN-only, 3 popups, 0/N banners)
+frontend/src/components/research-page.tsx          (shelter toggle, sidebar info, legend, ZoomTracker removed)
+frontend/src/components/GoogleRiskMap.tsx          (5-tier labelColor)
+frontend/src/components/dashboard.tsx              (5-tier toRiskLevel)
+frontend/src/components/my-locations.tsx           (5-tier colorForLabel)
+frontend/src/components/saved-locations-widget.tsx (5-tier colorForLabel + dotForLabel)
+frontend/src/components/notification-settings.tsx  (5-tier copy, 'Coming soon' badges dropped)
+frontend/src/components/CountyRiskOverlay.tsx, ZipCodeRiskOverlay.tsx, NeighborhoodRiskOverlay.tsx, CensusTractRiskOverlay.tsx  (riskRgba)
+frontend/src/components/risk-map.tsx               (5-tier in-page legend)
+frontend/src/components/settings-page.tsx          (About page refresh)
+frontend/src/App.tsx                               (top nav z-[100] + ?page= deep-link bootstrap)
+scripts/refresh-zone-cache.sh                      (NEW safe cache refresh)
+```
+
+### Verify the v2.9 stack is healthy
+
+```bash
+# 1. Polygon color matches popup chip color
+curl -s https://firescope-api.onrender.com/api/research/risk-by-county \
+  | python3 -c "import json,sys; d=json.load(sys.stdin)['counties']; \
+                print('LA:', d['Los Angeles']['risk_score'], '->', d['Los Angeles']['label'])"
+# Same label should appear in /me/locations/<id>/risk-by-all-zones .county.label
+# and in the chip rendered by GoogleRiskMap.labelColor — bit-identical hex.
+
+# 2. Cron endpoints respond fast (direct cache reads, no HTTP hop)
+TOKEN=$INTERNAL_CRON_TOKEN
+for path in high-risk breaking-news evacuation; do
+  curl -s -X POST "https://firescope-api.onrender.com/api/internal/alerts/$path" \
+    -H "X-Internal-Token: $TOKEN" \
+    -w "$path  HTTP=%{http_code}  %{time_total}s\n" -o /dev/null
+done
+# Expect <2s for high-risk and breaking-news, <5s for evacuation when warm.
+
+# 3. Safe cache refresh path
+bash scripts/refresh-zone-cache.sh
+# Never DELETE FROM zone_risk_cache; — that's how we caused the
+# 2026-05-25 outage.
+```
 
 ---
 
@@ -206,7 +318,8 @@ gh run list --workflow=daily-prewarm.yml --limit 3
 
 | Tag | Date | Headline |
 |---|---|---|
-| **v2.8-stable** | 2026-05-25 | Full alerts system (3 channels) + custom domain `firescope.dev` + Resend email + cached-zone single source of truth across map / badge / widget / email (this section) |
+| **v2.9-stable** | 2026-05-25 | NFDRS 5-tier risk model unified across map / popup / badge / legend / alert email + Shelters & Evac rebuild (smooth overlay, OPEN-only, centered popups, 3 click types) + research-page shelter overlay + county-match evac + shelter-opened sub-channel + direct in-process cache reads in the cron (this section) |
+| **v2.8-stable** | 2026-05-25 | Full alerts system (3 channels) + custom domain `firescope.dev` + Resend email + cached-zone single source of truth across map / badge / widget / email |
 | **v2.7-stable** | 2026-05-21 | Site-wide perf overhaul — 16 endpoints under 1 s, 11 under 500 ms |
 | **v2.6-v2-merged** | 2026-05-20 | Sania's calibrated KBDI random forest + KBDI slider + SHAP attribution charts + spatial-block CV |
 | **v2.5-inputs-only** | 2026-05-20 | Real EVI (GEE) + real elevation (USGS 3DEP) + per-tile DB cache + IDW safety net for cold-tile fetches |

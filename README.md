@@ -1,7 +1,7 @@
 # FireScope
 
 **Live site:** https://firescope.dev (custom domain) · https://firescope.netlify.app
-**Latest stable:** [`v2.8-stable`](https://github.com/CSUN-ARCS-GeoInfoVisualization/geo-info-data-visualization-project/releases/tag/v2.8-stable) — full alerts system end-to-end: custom domain + Resend email (DKIM/SPF verified) + three opt-in channels (high-risk zones, breaking fire news, evacuation orders with nearest shelters) + three GitHub-Actions cron workflows + change-driven dedup. Every risk surface on the site now reads from one cached source of truth. See [`docs/SESSION_HANDOFF.md`](docs/SESSION_HANDOFF.md) to pick up where the team left off.
+**Latest stable:** [`v2.9-stable`](https://github.com/CSUN-ARCS-GeoInfoVisualization/geo-info-data-visualization-project/releases/tag/v2.9-stable) — Shelters & Evacuation page rebuild (smooth ref-based overlay, OPEN-only filtering, centered popups with rich metadata for shelter / fire / evac zone clicks, always-visible 0/N status banners), research-page shelter overlay with red/green switch + sidebar info card, **canonical NFDRS 5-tier risk model** (Low / Moderate / High / Very High / Extreme — single source of truth in `lib/riskTiers.ts` and `ml/inference.risk_label`), shelter-opened-in-your-county alert sub-channel, county-match evac trigger, **direct in-process cache lookup** in the cron pipeline (no more HTTP self-deadlock), DB pool bumped to 20+30, alert emails with 56px centered logo + 5-tier urgency copy, and a fully refreshed About page. See [`docs/SESSION_HANDOFF.md`](docs/SESSION_HANDOFF.md) to pick up where the team left off.
 
 California wildfire risk visualization and prediction platform. Senior research project at California State University, Northridge (2025–2026).
 
