@@ -657,7 +657,21 @@ def run_evacuation_alerts():
     now = datetime.utcnow()
 
     zones = _fetch_active_evac_zones()
-    shelters = _fetch_open_shelters() if zones else []
+    # Short-circuit: if there are no active CalOES zones, nothing can possibly
+    # trigger an alert. Skip the 8000-row shelters fetch entirely — that was
+    # the bulk of the 20s response time on quiet days.
+    if not zones:
+        return jsonify({
+            "scanned_users": 0,
+            "active_zones": 0,
+            "sent": 0,
+            "skipped_dedup": 0,
+            "skipped_no_overlap": 0,
+            "errors": 0,
+            "sent_message_ids": [],
+            "note": "no active evacuation zones — skipped user scan",
+        })
+    shelters = _fetch_open_shelters()
 
     q = (
         session.query(NotificationPreference, User)
