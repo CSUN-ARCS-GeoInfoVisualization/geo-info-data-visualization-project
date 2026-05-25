@@ -10,8 +10,9 @@ pass without back-and-forth on the YAML side.
 """
 
 import os
+import hashlib
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime
 
 from flask import Blueprint, request, jsonify
 
@@ -23,7 +24,6 @@ logger = logging.getLogger(__name__)
 internal_alerts_bp = Blueprint("internal_alerts", __name__)
 
 HIGH_RISK_THRESHOLD = 0.70  # /predict returns risk_probability in 0..1; 0.70 = "High" tier in the 9-tier scale
-DEDUP_WINDOW_HOURS = 24   # don't re-email same user at same tier inside this window
 
 
 def _require_internal_token():
@@ -56,20 +56,31 @@ def _eligible_prefs(session):
     return rows
 
 
-def _already_alerted(session, user_id, risk_level):
-    """Per-user, per-tier dedup inside the 24h window."""
-    cutoff = datetime.utcnow() - timedelta(hours=DEDUP_WINDOW_HOURS)
-    q = (
-        session.query(AlertActivity)
+def _state_signature(tier_bucket: int, hits: list) -> str:
+    """Stable hash of (tier_bucket, sorted_at_risk_location_ids).
+
+    Two cron runs with the same tier max AND the same set of locations
+    above threshold collapse to the same hash — we skip the send. A new
+    location crossing 70%, an existing one dropping off, or a tier change
+    all produce a new hash and re-fire the email.
+    """
+    loc_ids = sorted(int(h.get("location_id", 0)) for h in hits)
+    raw = f"tier={tier_bucket}|locs={','.join(str(i) for i in loc_ids)}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
+
+
+def _last_alert_signature(session, user_id):
+    """Most recent SENT alert for this user, or None if never alerted."""
+    row = (
+        session.query(AlertActivity.state_signature)
         .filter(
             AlertActivity.user_id == user_id,
-            AlertActivity.risk_level == risk_level,
             AlertActivity.delivery_status == "sent",
-            AlertActivity.created_at >= cutoff,
         )
+        .order_by(AlertActivity.created_at.desc())
         .first()
     )
-    return q is not None
+    return row[0] if row else None
 
 
 def _send_high_risk_email(to_email: str, contact_name: str, locations_payload: list):
@@ -191,16 +202,19 @@ def run_high_risk_alerts():
                 errors += 1
                 continue
             if pct >= HIGH_RISK_THRESHOLD:
-                hits.append({"name": loc.name, "risk": pct, "label": label})
+                hits.append({"location_id": loc.id, "name": loc.name, "risk": pct, "label": label})
 
         if not hits:
             skipped_below += 1
             continue
 
-        # Tier-bucketed dedup: 0..1 probability → 70/80/90/100 buckets.
+        # Change-driven dedup: signature is (tier max, sorted at-risk location ids).
+        # Same signature as last sent => situation unchanged => no email.
         max_risk = max(h["risk"] for h in hits)
         bucket = int(max_risk * 100 // 10) * 10  # 70, 80, 90, 100
-        if _already_alerted(session, user.id, bucket):
+        sig = _state_signature(bucket, hits)
+        last_sig = _last_alert_signature(session, user.id)
+        if last_sig == sig:
             skipped_dedup += 1
             continue
 
@@ -220,6 +234,7 @@ def run_high_risk_alerts():
             risk_level=bucket,
             delivery_status=status,
             reason=("high_risk_cron" if msg_id else f"high_risk_cron_err:{(send_err or '')[:40]}"),
+            state_signature=sig,
         ))
         if msg_id:
             sent += 1
