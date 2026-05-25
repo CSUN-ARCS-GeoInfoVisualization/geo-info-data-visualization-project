@@ -7,15 +7,14 @@ type RequestOptions = {
 export type NotificationPreference = {
   user_id: number;
   opted_in: boolean;
-  frequency: "instant" | "daily" | "weekly";
-  risk_threshold: number;
-  paused_until: string | null;
-  blackout_start: string | null;
-  blackout_end: string | null;
+  email_enabled: boolean;
+  contact_email: string | null;
   last_sent_at: string | null;
   unsubscribed_at: string | null;
-  contact_email: string | null;
-  contact_phone: string | null;
+  // Per-channel toggles (slice 1A: only high_risk_enabled is wired to a real pipeline)
+  breaking_news_enabled: boolean;
+  high_risk_enabled: boolean;
+  evacuation_enabled: boolean;
 };
 
 const rawApiUrl = import.meta.env.VITE_API_URL || "http://localhost:5000";

@@ -1,224 +1,143 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import {
-  Bell, ShieldAlert, Zap, Clock, CalendarClock, Mail, Phone,
-  BellOff, BellRing, Gauge, CheckCircle2, AlertCircle, User,
+  Bell, BellOff, BellRing, Flame, Newspaper, Siren, MapPin, AlertCircle, CheckCircle2,
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
 import { Input } from "./ui/input";
 import { Badge } from "./ui/badge";
+import { Switch } from "./ui/switch";
+import {
+  Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
+} from "./ui/dialog";
+import { apiFetch } from "../services/api";
 import { type NotificationPreference } from "../services/AuthService";
-
-// API for notification prefs is currently returning 500 on Render. Per product
-// decision, this page is UI-only for now — state is backed by localStorage so
-// name/email/phone persist across reloads without a backend dependency.
-const LS_KEY = "firescope.alertPrefs.v1";
-
-type StoredPrefs = NotificationPreference & { contact_name?: string | null };
-
-function defaultPrefs(): StoredPrefs {
-  return {
-    user_id: 0,
-    opted_in: false,
-    email_enabled: true,
-    sms_enabled: false,
-    contact_name: null,
-    contact_email: null,
-    contact_phone: null,
-    frequency: "daily",
-    risk_threshold: 70,
-    paused_until: null,
-    blackout_start: null,
-    blackout_end: null,
-    last_sent_at: null,
-    unsubscribed_at: null,
-  };
-}
-
-function loadStoredPrefs(): StoredPrefs {
-  try {
-    const raw = localStorage.getItem(LS_KEY);
-    if (!raw) return defaultPrefs();
-    return { ...defaultPrefs(), ...JSON.parse(raw) };
-  } catch {
-    return defaultPrefs();
-  }
-}
-
-function saveStoredPrefs(prefs: StoredPrefs) {
-  try {
-    localStorage.setItem(LS_KEY, JSON.stringify(prefs));
-  } catch {
-    /* quota / disabled storage — silently drop */
-  }
-}
 
 type NotificationSettingsProps = {
   token: string;
+  onNavigateToLocations?: () => void;
 };
 
-type DraftPreference = {
-  frequency: "instant" | "daily" | "weekly";
-  riskThreshold: number;
-  pausedUntilLocal: string;
-  blackoutStartLocal: string;
-  blackoutEndLocal: string;
+type Prefs = {
+  opted_in: boolean;
+  email_enabled: boolean;
+  contact_email: string;
+  breaking_news_enabled: boolean;
+  high_risk_enabled: boolean;
+  evacuation_enabled: boolean;
 };
 
-function isoToLocalDateTime(value: string | null): string {
-  if (!value) return "";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "";
-  const pad = (n: number) => `${n}`.padStart(2, "0");
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}T${pad(date.getHours())}:${pad(date.getMinutes())}`;
-}
+const DEFAULT_PREFS: Prefs = {
+  opted_in: false,
+  email_enabled: true,
+  contact_email: "",
+  breaking_news_enabled: false,
+  high_risk_enabled: true,
+  evacuation_enabled: true,
+};
 
-function localDateTimeToIso(value: string): string | null {
-  if (!value) return null;
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return null;
-  return date.toISOString();
-}
-
-function buildDraft(pref: NotificationPreference): DraftPreference {
+function fromServer(p: NotificationPreference): Prefs {
   return {
-    frequency: pref.frequency,
-    riskThreshold: pref.risk_threshold,
-    pausedUntilLocal: isoToLocalDateTime(pref.paused_until),
-    blackoutStartLocal: isoToLocalDateTime(pref.blackout_start),
-    blackoutEndLocal: isoToLocalDateTime(pref.blackout_end),
+    opted_in: p.opted_in,
+    email_enabled: p.email_enabled,
+    contact_email: p.contact_email || "",
+    breaking_news_enabled: p.breaking_news_enabled,
+    high_risk_enabled: p.high_risk_enabled,
+    evacuation_enabled: p.evacuation_enabled,
   };
 }
 
-const FREQ_OPTIONS: { value: DraftPreference["frequency"]; label: string; desc: string; icon: typeof Zap }[] = [
-  { value: "instant", label: "Instant", desc: "Get notified immediately", icon: Zap },
-  { value: "daily", label: "Daily Digest", desc: "Once per day summary", icon: Clock },
-  { value: "weekly", label: "Weekly Digest", desc: "Weekly summary email", icon: CalendarClock },
-];
-
-const RISK_TIERS = [
-  { value: 50, label: "Low",          color: "#22c55e", bgTint: "#f0fdf4" },  // Green
-  { value: 55, label: "Guarded",      color: "#facc15", bgTint: "#fefce8" },  // Bright Yellow
-  { value: 65, label: "Elevated",     color: "#ca8a04", bgTint: "#fefce8" },  // Dark Yellow
-  { value: 70, label: "High",         color: "#fb923c", bgTint: "#fff7ed" },  // Bright Orange
-  { value: 75, label: "Very High",    color: "#f97316", bgTint: "#fff7ed" },  // Orange
-  { value: 80, label: "Severe",       color: "#c2410c", bgTint: "#fff7ed" },  // Dark Orange
-  { value: 85, label: "Extreme",      color: "#f87171", bgTint: "#fef2f2" },  // Light Red
-  { value: 90, label: "Critical",     color: "#dc2626", bgTint: "#fef2f2" },  // Red
-  { value: 95, label: "Catastrophic", color: "#991b1b", bgTint: "#fef2f2" },  // Dark Red
-];
-
-export function NotificationSettings(_props: NotificationSettingsProps) {
-  const initial = loadStoredPrefs();
-  const [preference, setPreference] = useState<StoredPrefs>(initial);
-  const [draft, setDraft] = useState<DraftPreference>(buildDraft(initial));
+export function NotificationSettings({ onNavigateToLocations }: NotificationSettingsProps) {
+  const [prefs, setPrefs] = useState<Prefs>(DEFAULT_PREFS);
+  const [original, setOriginal] = useState<Prefs>(DEFAULT_PREFS);
+  const [locationCount, setLocationCount] = useState<number | null>(null);
+  const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [contactName, setContactName] = useState(initial.contact_name || "");
-  const [contactEmail, setContactEmail] = useState(initial.contact_email || "");
-  const [contactPhone, setContactPhone] = useState(initial.contact_phone || "");
+  const [needLocationDialog, setNeedLocationDialog] = useState(false);
 
-  const isDirty = useMemo(() => {
-    return (
-      draft.frequency !== preference.frequency ||
-      draft.riskThreshold !== preference.risk_threshold ||
-      localDateTimeToIso(draft.pausedUntilLocal) !== (preference.paused_until ? new Date(preference.paused_until).toISOString() : null) ||
-      localDateTimeToIso(draft.blackoutStartLocal) !== (preference.blackout_start ? new Date(preference.blackout_start).toISOString() : null) ||
-      localDateTimeToIso(draft.blackoutEndLocal) !== (preference.blackout_end ? new Date(preference.blackout_end).toISOString() : null) ||
-      (contactName || "") !== (preference.contact_name || "") ||
-      (contactEmail || "") !== (preference.contact_email || "") ||
-      (contactPhone || "") !== (preference.contact_phone || "")
-    );
-  }, [preference, draft, contactName, contactEmail, contactPhone]);
-
-  // All persistence is local; no API calls while /api/me/notifications is broken.
-  const persist = (next: StoredPrefs) => {
-    saveStoredPrefs(next);
-    setPreference(next);
-    setDraft(buildDraft(next));
-    setContactName(next.contact_name || "");
-    setContactEmail(next.contact_email || "");
-    setContactPhone(next.contact_phone || "");
-  };
-
-  const onSave = () => {
-    setSaving(true);
-    setMessage(null);
-    setError(null);
-    const next: StoredPrefs = {
-      ...preference,
-      frequency: draft.frequency,
-      risk_threshold: draft.riskThreshold,
-      paused_until: localDateTimeToIso(draft.pausedUntilLocal),
-      blackout_start: localDateTimeToIso(draft.blackoutStartLocal),
-      blackout_end: localDateTimeToIso(draft.blackoutEndLocal),
-      contact_name: contactName.trim() || null,
-      contact_email: contactEmail.trim() || null,
-      contact_phone: contactPhone.trim() || null,
-    };
-    persist(next);
-    setMessage("Settings saved locally. Backend delivery will resume once reconnected.");
-    setSaving(false);
-  };
-
-  const onSubscribe = () => {
-    setSaving(true);
-    setMessage(null);
-    setError(null);
-    const next: StoredPrefs = {
-      ...preference,
-      opted_in: true,
-      unsubscribed_at: null,
-      contact_name: contactName.trim() || null,
-      contact_email: contactEmail.trim() || null,
-      contact_phone: contactPhone.trim() || null,
-    };
-    persist(next);
-    setMessage("Alerts enabled locally. You will receive wildfire alerts at this contact info once delivery is reconnected.");
-    setSaving(false);
-  };
-
-  const onUnsubscribe = () => {
-    setSaving(true);
-    setMessage(null);
-    setError(null);
-    const next: StoredPrefs = {
-      ...preference,
-      opted_in: false,
-      unsubscribed_at: new Date().toISOString(),
-    };
-    persist(next);
-    setMessage("Alerts disabled.");
-    setSaving(false);
-  };
-
-  const onPause24Hours = () => {
-    if (!draft) return;
-    const pauseUntil = new Date(Date.now() + 24 * 60 * 60 * 1000);
-    setDraft({ ...draft, pausedUntilLocal: isoToLocalDateTime(pauseUntil.toISOString()) });
-    setMessage("Pause set for 24 hours. Save to apply.");
-  };
-
-  const onResetSchedule = () => {
-    if (!draft) return;
-    setDraft({
-      ...draft,
-      pausedUntilLocal: "",
-      blackoutStartLocal: "",
-      blackoutEndLocal: "",
+  // Initial load: prefs + saved location count (gates the high-risk toggle).
+  useEffect(() => {
+    let cancelled = false;
+    Promise.all([
+      apiFetch("/me/notifications").then(r => r.json()).catch(() => null),
+      apiFetch("/me/locations").then(r => r.json()).catch(() => []),
+    ]).then(([prefData, locs]) => {
+      if (cancelled) return;
+      if (prefData && prefData.user_id != null) {
+        const p = fromServer(prefData);
+        setPrefs(p);
+        setOriginal(p);
+      }
+      setLocationCount(Array.isArray(locs) ? locs.length : 0);
+      setLoading(false);
     });
-    setMessage("Pause/blackout cleared. Save to apply.");
-  };
+    return () => { cancelled = true; };
+  }, []);
 
-  const thresholdColor =
-    draft.riskThreshold <= 30 ? "text-emerald-600" :
-    draft.riskThreshold <= 60 ? "text-yellow-600" :
-    "text-red-600";
+  const dirty =
+    prefs.opted_in !== original.opted_in ||
+    prefs.email_enabled !== original.email_enabled ||
+    prefs.contact_email !== original.contact_email ||
+    prefs.breaking_news_enabled !== original.breaking_news_enabled ||
+    prefs.high_risk_enabled !== original.high_risk_enabled ||
+    prefs.evacuation_enabled !== original.evacuation_enabled;
+
+  const noLocations = locationCount === 0;
+
+  function tryToggleHighRisk(checked: boolean) {
+    if (checked && noLocations) {
+      setNeedLocationDialog(true);
+      return;
+    }
+    setPrefs({ ...prefs, high_risk_enabled: checked });
+  }
+
+  async function onSave() {
+    setSaving(true);
+    setError(null);
+    setMessage(null);
+    try {
+      const res = await apiFetch("/me/notifications", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          opted_in: prefs.opted_in,
+          email_enabled: prefs.email_enabled,
+          contact_email: prefs.contact_email.trim() || null,
+          breaking_news_enabled: prefs.breaking_news_enabled,
+          high_risk_enabled: prefs.high_risk_enabled,
+          evacuation_enabled: prefs.evacuation_enabled,
+        }),
+      });
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}));
+        throw new Error(body.error || `Save failed (HTTP ${res.status})`);
+      }
+      const body = await res.json();
+      const next = fromServer(body);
+      setPrefs(next);
+      setOriginal(next);
+      setMessage("Alert settings saved.");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Save failed");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  if (loading) {
+    return (
+      <div className="max-w-2xl mx-auto p-8 text-center text-muted-foreground">
+        Loading alert settings…
+      </div>
+    );
+  }
 
   return (
-    <div className="max-w-4xl mx-auto space-y-6">
-      {/* Page header */}
+    <div className="max-w-2xl mx-auto space-y-6">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-2xl font-bold flex items-center gap-2.5">
@@ -228,321 +147,189 @@ export function NotificationSettings(_props: NotificationSettingsProps) {
             Alert Settings
           </h1>
           <p className="text-muted-foreground mt-1">
-            Configure how and when you receive wildfire alerts.
+            Choose which wildfire alerts you want emailed to you.
           </p>
         </div>
         <Badge
           variant="outline"
-          className={`px-3 py-1.5 text-sm font-medium transition-colors ${
-            preference.opted_in
+          className={`px-3 py-1.5 text-sm font-medium ${
+            prefs.opted_in && prefs.email_enabled
               ? "border-emerald-200 bg-emerald-50 text-emerald-700"
-              : "border-red-200 bg-red-50 text-red-700"
+              : "border-zinc-200 bg-zinc-50 text-zinc-700"
           }`}
         >
-          {preference.opted_in ? (
+          {prefs.opted_in && prefs.email_enabled ? (
             <BellRing className="h-3.5 w-3.5 mr-1.5" />
           ) : (
             <BellOff className="h-3.5 w-3.5 mr-1.5" />
           )}
-          {preference.opted_in ? "Subscribed" : "Unsubscribed"}
+          {prefs.opted_in && prefs.email_enabled ? "Subscribed" : "Off"}
         </Badge>
       </div>
 
-      {/* Frequency selection */}
+      {/* Master switch + contact email */}
       <Card>
         <CardHeader className="pb-3">
-          <CardTitle className="text-base font-semibold">Alert Frequency</CardTitle>
-          <CardDescription>Choose how often you want to receive notifications.</CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-            {FREQ_OPTIONS.map(({ value, label, desc, icon: Icon }) => {
-              const selected = draft.frequency === value;
-              return (
-                <button
-                  key={value}
-                  type="button"
-                  onClick={() => setDraft({ ...draft, frequency: value })}
-                  className={`relative flex flex-col items-start gap-1.5 rounded-xl border-2 p-4 text-left transition-all duration-200 hover:shadow-md ${
-                    selected
-                      ? "border-red-500 bg-red-50/50 shadow-sm shadow-red-500/10"
-                      : "border-transparent bg-muted/40 hover:border-gray-200"
-                  }`}
-                >
-                  <div className={`rounded-lg p-1.5 ${selected ? "bg-red-100 text-red-600" : "bg-gray-100 text-gray-500"} transition-colors`}>
-                    <Icon className="h-4 w-4" />
-                  </div>
-                  <span className={`text-sm font-semibold ${selected ? "text-red-700" : "text-foreground"}`}>{label}</span>
-                  <span className="text-xs text-muted-foreground">{desc}</span>
-                  {selected && (
-                    <div className="absolute top-3 right-3">
-                      <CheckCircle2 className="h-4 w-4 text-red-500" />
-                    </div>
-                  )}
-                </button>
-              );
-            })}
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Risk threshold levels */}
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base font-semibold flex items-center gap-2">
-            <Gauge className="h-4 w-4 text-muted-foreground" />
-            Risk Threshold Levels
-          </CardTitle>
-          <CardDescription>
-            Choose your minimum alert level. You will automatically be notified for all tiers above the one you select.
-          </CardDescription>
-        </CardHeader>
-        <CardContent>
-          <div className="space-y-2">
-            {RISK_TIERS.map((tier) => {
-              const isSelected = draft.riskThreshold === tier.value;
-              const isAbove = draft.riskThreshold <= tier.value;
-              return (
-                <button
-                  key={tier.value}
-                  type="button"
-                  onClick={() => setDraft({ ...draft, riskThreshold: tier.value })}
-                  className="w-full flex items-center gap-3 rounded-lg px-4 py-3 text-left transition-all duration-200"
-                  style={{
-                    borderWidth: 2,
-                    borderStyle: "solid",
-                    borderColor: isSelected || isAbove ? tier.color : "transparent",
-                    backgroundColor: isSelected || isAbove ? tier.bgTint : "rgba(0,0,0,0.03)",
-                    opacity: isSelected ? 1 : isAbove ? 0.85 : 0.45,
-                    boxShadow: isSelected ? `0 1px 4px ${tier.color}33` : "none",
-                  }}
-                >
-                  <div
-                    className="w-5 h-5 rounded-full flex items-center justify-center shrink-0"
-                    style={{
-                      borderWidth: 2,
-                      borderStyle: "solid",
-                      borderColor: isSelected ? tier.color : "#d1d5db",
-                    }}
-                  >
-                    {isSelected && (
-                      <div className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: tier.color }} />
-                    )}
-                  </div>
-                  <div
-                    className="w-10 text-right text-sm font-bold tabular-nums"
-                    style={{ color: isAbove ? tier.color : "#9ca3af" }}
-                  >
-                    {tier.value}%
-                  </div>
-                  <div className="h-2.5 flex-1 rounded-full overflow-hidden" style={{ backgroundColor: "#e5e7eb" }}>
-                    <div
-                      className="h-full rounded-full transition-all duration-500"
-                      style={{ width: `${tier.value}%`, backgroundColor: tier.color }}
-                    />
-                  </div>
-                  <span
-                    className="text-xs font-medium w-24 text-right"
-                    style={{ color: isAbove ? tier.color : "#9ca3af" }}
-                  >
-                    {tier.label}
-                  </span>
-                  {isAbove && !isSelected && (
-                    <CheckCircle2 className="h-4 w-4 shrink-0" style={{ color: tier.color }} />
-                  )}
-                </button>
-              );
-            })}
-          </div>
-          {(() => {
-            const selected = RISK_TIERS.find((t) => t.value === draft.riskThreshold);
-            return (
-              <div
-                className="mt-4 rounded-lg px-3 py-2.5"
-                style={{
-                  backgroundColor: selected ? `${selected.color}12` : "#eff6ff",
-                  borderWidth: 1,
-                  borderStyle: "solid",
-                  borderColor: selected ? `${selected.color}40` : "#bfdbfe",
-                }}
-              >
-                <p className="text-xs" style={{ color: selected?.color ?? "#1e40af" }}>
-                  <strong>Your selection: {selected?.label ?? `${draft.riskThreshold}%`}</strong>
-                  {" "}— you will receive alerts for this level and all higher tiers automatically.
-                </p>
-              </div>
-            );
-          })()}
-        </CardContent>
-      </Card>
-
-      {/* Contact info */}
-      <Card>
-        <CardHeader className="pb-3">
-          <CardTitle className="text-base font-semibold flex items-center gap-2">
-            <Mail className="h-4 w-4 text-muted-foreground" />
-            Contact Information
-          </CardTitle>
-          <CardDescription>
-            How should we reach you when an alert is triggered?
-          </CardDescription>
+          <CardTitle className="text-base font-semibold">Email alerts</CardTitle>
+          <CardDescription>Master switch. Turn off to silence every channel below.</CardDescription>
         </CardHeader>
         <CardContent className="space-y-4">
-          <div className="space-y-2">
-            <label htmlFor="alert-name" className="text-sm font-medium">Full Name</label>
-            <div className="relative group">
-              <User className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground transition-colors group-focus-within:text-red-500" />
-              <Input
-                id="alert-name"
-                type="text"
-                placeholder="Jane Doe"
-                className="pl-10 h-10"
-                value={contactName}
-                onChange={(e) => setContactName(e.target.value)}
-              />
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <div className="font-medium">Send me wildfire alerts by email</div>
+              <div className="text-xs text-muted-foreground mt-0.5">
+                Threshold is fixed at <span className="font-semibold">High</span> risk and above.
+              </div>
             </div>
+            <Switch
+              checked={prefs.opted_in && prefs.email_enabled}
+              onCheckedChange={(checked) =>
+                setPrefs({ ...prefs, opted_in: checked, email_enabled: checked })
+              }
+            />
           </div>
-          <div className="space-y-2">
-            <label htmlFor="alert-email" className="text-sm font-medium">Email Address</label>
-            <div className="relative group">
-              <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground transition-colors group-focus-within:text-red-500" />
-              <Input
-                id="alert-email"
-                type="email"
-                placeholder="your.email@example.com"
-                className="pl-10 h-10"
-                value={contactEmail}
-                onChange={(e) => setContactEmail(e.target.value)}
-              />
-            </div>
-          </div>
-          <div className="space-y-2">
-            <label htmlFor="alert-phone" className="text-sm font-medium flex items-center gap-1.5">
-              <Phone className="h-3.5 w-3.5 text-muted-foreground" />
-              Phone Number <span className="text-xs text-muted-foreground font-normal">(optional — SMS alerts coming soon)</span>
-            </label>
+
+          <div className="space-y-1.5">
+            <label className="text-sm font-medium">Send to</label>
             <Input
-              id="alert-phone"
-              type="tel"
-              placeholder="(555) 123-4567"
-              className="h-10"
-              value={contactPhone}
-              onChange={(e) => setContactPhone(e.target.value)}
+              type="email"
+              placeholder="Leave blank to use your account email"
+              value={prefs.contact_email}
+              onChange={(e) => setPrefs({ ...prefs, contact_email: e.target.value })}
+              disabled={!prefs.opted_in || !prefs.email_enabled}
             />
           </div>
         </CardContent>
       </Card>
 
-      {/* Current subscription summary — always visible once contact info is saved */}
-      {(preference.contact_email || preference.contact_phone) && (
-        <Card className="border-emerald-200 bg-emerald-50/50">
-          <CardContent className="py-3 text-sm">
-            <div className="flex items-start gap-2">
-              <CheckCircle2 className="h-4 w-4 text-emerald-600 shrink-0 mt-0.5" />
-              <div className="space-y-0.5">
-                <div className="font-medium text-emerald-900">
-                  {preference.opted_in ? "Subscribed — alerts will be sent to:" : "Saved contact info (not yet subscribed):"}
-                </div>
-                {preference.contact_email && (
-                  <div className="text-emerald-800 flex items-center gap-1.5">
-                    <Mail className="h-3.5 w-3.5" /> {preference.contact_email}
-                  </div>
-                )}
-                {preference.contact_phone && (
-                  <div className="text-emerald-800 flex items-center gap-1.5">
-                    <Phone className="h-3.5 w-3.5" /> {preference.contact_phone}
-                  </div>
-                )}
-                <div className="text-xs text-emerald-700/80 pt-1">
-                  Edit the fields above and press <strong>{preference.opted_in ? "Save changes" : "Subscribe"}</strong> to update.
-                </div>
-              </div>
-            </div>
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Feedback messages */}
-      {message && (
-        <div className="flex items-center gap-2 rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 animate-[fadeIn_0.2s_ease-out]">
-          <CheckCircle2 className="h-4 w-4 text-emerald-500 shrink-0" />
-          <p className="text-sm text-emerald-700">{message}</p>
-        </div>
-      )}
-      {error && (
-        <div className="flex items-center gap-2 rounded-lg bg-red-50 border border-red-200 px-4 py-3 animate-[fadeIn_0.2s_ease-out]">
-          <AlertCircle className="h-4 w-4 text-red-500 shrink-0" />
-          <p className="text-sm text-red-700">{error}</p>
-        </div>
-      )}
-
-      {/* Subscribe action */}
-      <Card className="border-0 shadow-lg bg-white sticky bottom-4 z-10">
-        <CardContent className="py-4 flex items-center justify-between gap-3">
-          <p className="text-sm text-muted-foreground">
-            {preference.opted_in
-              ? "You are subscribed to wildfire alerts."
-              : "Subscribe to start receiving wildfire alerts."}
-          </p>
-          {preference.opted_in ? (
-            <div className="flex gap-2">
-              {isDirty && (
-                <Button onClick={onSave} disabled={saving} className="min-w-[130px]">
-                  {saving ? <Loader2 className="h-4 w-4 mr-1.5 animate-spin" /> : <CheckCircle2 className="h-4 w-4 mr-1.5" />}
-                  {saving ? "Saving..." : "Save changes"}
-                </Button>
-              )}
-              <Button
-                variant="outline"
-                onClick={onUnsubscribe}
-                disabled={saving}
-                className="text-red-600 border-red-200 hover:bg-red-50 min-w-[140px]"
-              >
-                {saving ? (
-                  <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
-                ) : (
-                  <BellOff className="h-4 w-4 mr-1.5" />
-                )}
-                {saving ? "Processing..." : "Unsubscribe"}
-              </Button>
-            </div>
-          ) : (
-            <Button
-              onClick={async () => {
-                if (isDirty) await onSave();
-                await onSubscribe();
-              }}
-              disabled={saving}
-              variant="outline"
-              className="border-2 border-red-500 text-black font-medium hover:bg-red-500 hover:text-white active:bg-red-600 transition-all duration-200 min-w-[140px]"
-            >
-              {saving ? (
-                <Loader2 className="h-4 w-4 mr-1.5 animate-spin" />
-              ) : (
-                <BellRing className="h-4 w-4 mr-1.5" />
-              )}
-              {saving ? "Subscribing..." : "Subscribe"}
-            </Button>
-          )}
-        </CardContent>
-      </Card>
-
-      {/* Emergency notice */}
-      <Card className="border-orange-200 bg-gradient-to-r from-orange-50 to-amber-50/50 overflow-hidden relative">
-        <div className="absolute top-0 left-0 w-1 h-full bg-gradient-to-b from-orange-400 to-amber-500" />
-        <CardHeader className="pb-2 pl-6">
-          <CardTitle className="flex items-center gap-2 text-orange-900 text-base">
-            <ShieldAlert className="h-5 w-5 text-orange-500" />
-            Emergency Alert Notice
-          </CardTitle>
+      {/* Channels */}
+      <Card>
+        <CardHeader className="pb-3">
+          <CardTitle className="text-base font-semibold">Alert channels</CardTitle>
+          <CardDescription>Pick which kinds of fires & risk we email you about.</CardDescription>
         </CardHeader>
-        <CardContent className="pl-6">
-          <p className="text-sm text-orange-800/80">
-            Emergency alerts may still be delivered even when regular alerts are paused or unsubscribed.
-            These include imminent fire threats and mandatory evacuation orders.
-          </p>
+        <CardContent className="divide-y">
+          {/* High-risk zones */}
+          <ChannelRow
+            icon={<Flame className="h-4 w-4 text-red-500" />}
+            title="High risk near your saved locations"
+            description="Email when one of your saved locations is at High risk (70%+) or above."
+            checked={prefs.high_risk_enabled && prefs.opted_in && prefs.email_enabled}
+            onChange={tryToggleHighRisk}
+            disabled={!prefs.opted_in || !prefs.email_enabled}
+            badge={noLocations ? "No locations saved" : null}
+          />
+
+          {/* Breaking news */}
+          <ChannelRow
+            icon={<Newspaper className="h-4 w-4 text-amber-500" />}
+            title="Breaking fire news"
+            description="Email when major new wildfire stories are published."
+            checked={prefs.breaking_news_enabled && prefs.opted_in && prefs.email_enabled}
+            onChange={(c) => setPrefs({ ...prefs, breaking_news_enabled: c })}
+            disabled={!prefs.opted_in || !prefs.email_enabled}
+            badge="Coming soon"
+          />
+
+          {/* Evacuation */}
+          <ChannelRow
+            icon={<Siren className="h-4 w-4 text-orange-600" />}
+            title="Evacuation warnings & orders"
+            description="Email when an active evacuation zone overlaps any of your saved locations, plus nearby open shelters."
+            checked={prefs.evacuation_enabled && prefs.opted_in && prefs.email_enabled}
+            onChange={(c) => setPrefs({ ...prefs, evacuation_enabled: c })}
+            disabled={!prefs.opted_in || !prefs.email_enabled}
+            badge="Coming soon"
+          />
         </CardContent>
       </Card>
+
+      {/* Save bar */}
+      <div className="flex items-center justify-between gap-3">
+        <div className="text-sm">
+          {message && (
+            <span className="text-emerald-700 flex items-center gap-1.5">
+              <CheckCircle2 className="h-4 w-4" /> {message}
+            </span>
+          )}
+          {error && (
+            <span className="text-red-700 flex items-center gap-1.5">
+              <AlertCircle className="h-4 w-4" /> {error}
+            </span>
+          )}
+        </div>
+        <Button onClick={onSave} disabled={!dirty || saving}>
+          {saving ? "Saving…" : "Save changes"}
+        </Button>
+      </div>
+
+      {/* No-locations dialog (gates the high-risk toggle) */}
+      <Dialog open={needLocationDialog} onOpenChange={setNeedLocationDialog}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle className="flex items-center gap-2">
+              <MapPin className="h-5 w-5 text-red-500" /> Add a location first
+            </DialogTitle>
+            <DialogDescription>
+              High-risk alerts watch the places that matter to you. Add a saved{" "}
+              <button
+                type="button"
+                onClick={() => {
+                  setNeedLocationDialog(false);
+                  onNavigateToLocations?.();
+                }}
+                className="text-red-600 underline font-medium hover:text-red-700"
+              >
+                location
+              </button>
+              {" "}before turning this channel on.
+            </DialogDescription>
+          </DialogHeader>
+          <DialogFooter>
+            <Button variant="outline" onClick={() => setNeedLocationDialog(false)}>
+              Cancel
+            </Button>
+            <Button
+              onClick={() => {
+                setNeedLocationDialog(false);
+                onNavigateToLocations?.();
+              }}
+            >
+              Add a location
+            </Button>
+          </DialogFooter>
+        </DialogContent>
+      </Dialog>
+    </div>
+  );
+}
+
+function ChannelRow(props: {
+  icon: React.ReactNode;
+  title: string;
+  description: string;
+  checked: boolean;
+  onChange: (c: boolean) => void;
+  disabled?: boolean;
+  badge?: string | null;
+}) {
+  return (
+    <div className="flex items-start justify-between gap-4 py-4 first:pt-0 last:pb-0">
+      <div className="flex gap-3 flex-1 min-w-0">
+        <div className="mt-0.5 rounded-lg bg-muted/50 p-1.5">{props.icon}</div>
+        <div className="min-w-0">
+          <div className="font-medium flex flex-wrap items-center gap-2">
+            <span>{props.title}</span>
+            {props.badge && (
+              <Badge variant="outline" className="text-xs font-normal text-muted-foreground border-zinc-200">
+                {props.badge}
+              </Badge>
+            )}
+          </div>
+          <div className="text-xs text-muted-foreground mt-0.5">{props.description}</div>
+        </div>
+      </div>
+      <Switch checked={props.checked} onCheckedChange={props.onChange} disabled={props.disabled} />
     </div>
   );
 }
