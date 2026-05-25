@@ -243,8 +243,21 @@ function labelColor(label: string) {
 export function GoogleRiskMap({
   center = { lat: 36.7783, lng: -119.4179 },
   zoom = 6,
-}: GoogleRiskMapProps) {
-  const [zoneLevel, setZoneLevel] = useState<ZoneLevel>("counties");
+  zoneLevel: zoneLevelProp,
+  onZoneLevelChange,
+}: GoogleRiskMapProps & {
+  zoneLevel?: ZoneLevel;
+  onZoneLevelChange?: (z: ZoneLevel) => void;
+}) {
+  // Controlled-or-uncontrolled: if parent passes zoneLevel + onZoneLevelChange
+  // we use those; otherwise we keep our own internal state so older callers
+  // (e.g. the standalone risk-map page) still work without changes.
+  const [internalZoneLevel, setInternalZoneLevel] = useState<ZoneLevel>("counties");
+  const zoneLevel = zoneLevelProp ?? internalZoneLevel;
+  const setZoneLevel = (z: ZoneLevel) => {
+    if (onZoneLevelChange) onZoneLevelChange(z);
+    else setInternalZoneLevel(z);
+  };
   const [selectedZone, setSelectedZone] = useState<SelectedZone | null>(null);
 
   const levelLabel: Record<ZoneLevel, string> = {

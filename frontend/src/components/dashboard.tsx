@@ -83,6 +83,20 @@ const DEFAULT_LOCATION: SavedLocation = {
   lon: -118.2437,
 };
 
+// Map's selector uses the cache-key form; risk-by-all-zones uses a tighter
+// camel-ish form. Convert once here so every downstream widget agrees.
+export type MapZoneLevel = "counties" | "zip-codes" | "neighborhoods" | "census-tracts";
+export type ApiZoneKey   = "county"   | "zip"       | "neighborhood"  | "census_tract";
+
+export function apiKeyForMapZone(z: MapZoneLevel): ApiZoneKey {
+  switch (z) {
+    case "counties":      return "county";
+    case "zip-codes":     return "zip";
+    case "neighborhoods": return "neighborhood";
+    case "census-tracts": return "census_tract";
+  }
+}
+
 export function Dashboard({ onAddLocation }: DashboardProps) {
   const [email, setEmail] = useState<string | null>(null);
   const [locations, setLocations] = useState<SavedLocation[]>([]);
@@ -91,6 +105,10 @@ export function Dashboard({ onAddLocation }: DashboardProps) {
   const [weatherLoading, setWeatherLoading] = useState(false);
   const [riskLevel, setRiskLevel] = useState<RiskLevel | null>(null);
   const [usingDefault, setUsingDefault] = useState(false);
+  // The Risk Zones map is now the canonical zone-type selector for the
+  // whole dashboard. Badge + per-location widget + 7-day chart baseline
+  // all follow whatever the user picks here.
+  const [mapZoneLevel, setMapZoneLevel] = useState<MapZoneLevel>("counties");
 
   useEffect(() => {
     apiFetch("/me")
@@ -138,21 +156,26 @@ export function Dashboard({ onAddLocation }: DashboardProps) {
       .finally(() => setWeatherLoading(false));
 
     setRiskLevel(null);
-    // Single source of truth: same cached zone-risk the map shows.
-    // For saved locations, hit risk-by-all-zones and read .county.label.
-    // For the LA default (no DB row), look up Los Angeles County in the
-    // public /research/risk-by-county cache directly.
+    // Single source of truth: same cached zone-risk the map shows. Badge
+    // follows the map's zone selector (counties / ZIPs / neighborhoods /
+    // census tracts) so the number on the page always matches the polygon
+    // the user is currently looking at.
+    const apiKey = apiKeyForMapZone(mapZoneLevel);
     if (loc.id > 0) {
       apiFetch(`/me/locations/${loc.id}/risk-by-all-zones`)
         .then(async (r) => {
           if (r.ok) {
             const data = await r.json();
-            const label = data.county?.label;
+            const label = data[apiKey]?.label;
             if (label) setRiskLevel(toRiskLevel(label));
           }
         })
         .catch(() => {});
     } else {
+      // Default LA: only county is trivially derivable without a saved
+      // location (we don't know which ZIP / neighborhood / tract you're in).
+      // Show county-tier risk regardless of map zone choice — saving a
+      // real location unlocks the rest.
       apiFetch("/research/risk-by-county")
         .then(async (r) => {
           if (r.ok) {
@@ -163,7 +186,7 @@ export function Dashboard({ onAddLocation }: DashboardProps) {
         })
         .catch(() => {});
     }
-  }, [selectedId, locations]);
+  }, [selectedId, locations, mapZoneLevel]);
 
   const selectedLocation = locations.find((l) => l.id === selectedId) ?? null;
 
@@ -276,9 +299,9 @@ export function Dashboard({ onAddLocation }: DashboardProps) {
         </div>
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
           <div className="lg:col-span-2">
-            <GoogleRiskMap />
+            <GoogleRiskMap zoneLevel={mapZoneLevel} onZoneLevelChange={setMapZoneLevel} />
           </div>
-          <SavedLocationsWidget onAddLocation={onAddLocation} />
+          <SavedLocationsWidget onAddLocation={onAddLocation} zoneKey={apiKeyForMapZone(mapZoneLevel)} />
         </div>
         <ActiveFiresMap />
       </section>
@@ -292,6 +315,7 @@ export function Dashboard({ onAddLocation }: DashboardProps) {
             lat={selectedLocation?.lat}
             lon={selectedLocation?.lon}
             locationId={selectedLocation && selectedLocation.id > 0 ? selectedLocation.id : undefined}
+            zoneKey={apiKeyForMapZone(mapZoneLevel)}
           />
         </div>
         <ActiveAlerts />

@@ -32,11 +32,16 @@ function dotForLabel(label: string): string {
   return "bg-green-500";
 }
 
+type ApiZoneKey = "county" | "zip" | "neighborhood" | "census_tract";
+
 interface SavedLocationsWidgetProps {
   onAddLocation?: () => void;
+  // Which zone's risk the badges should display. Driven by the map's selector
+  // on the Dashboard so badges + map polygons always agree.
+  zoneKey?: ApiZoneKey;
 }
 
-export function SavedLocationsWidget({ onAddLocation }: SavedLocationsWidgetProps) {
+export function SavedLocationsWidget({ onAddLocation, zoneKey = "county" }: SavedLocationsWidgetProps) {
   const [locations, setLocations] = useState<SavedLocation[]>([]);
   const [predictions, setPredictions] = useState<Record<number, PredictionResult>>({});
   const [loading, setLoading] = useState(true);
@@ -48,20 +53,27 @@ export function SavedLocationsWidget({ onAddLocation }: SavedLocationsWidgetProp
         if (r.ok) {
           const data: SavedLocation[] = await r.json();
           setLocations(data);
-          if (data.length > 0) fetchPredictions(data);
+          if (data.length > 0) fetchPredictions(data, zoneKey);
         }
       })
       .catch(() => {
         /* backend unreachable */
       })
       .finally(() => setLoading(false));
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Read each location's COUNTY risk from the cached map data so the badge
-  // matches what the user sees on the dashboard map. Same source of truth
-  // as my-locations.tsx, the Dashboard "Current Risk Level" badge, and the
-  // alert email body.
-  const fetchPredictions = async (locs: SavedLocation[]) => {
+  // When the map's zone selector changes, re-render badges from the same
+  // cached all-zones response (already fetched per location).
+  useEffect(() => {
+    if (locations.length > 0) fetchPredictions(locations, zoneKey);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [zoneKey]);
+
+  // Read each location's risk for the active zone type from the same cached
+  // map data the dashboard map renders. Re-runs whenever zoneKey changes so
+  // the badges follow the map selector live.
+  const fetchPredictions = async (locs: SavedLocation[], key: ApiZoneKey) => {
     setPredicting(true);
     try {
       const responses = await Promise.all(
@@ -77,11 +89,9 @@ export function SavedLocationsWidget({ onAddLocation }: SavedLocationsWidgetProp
       );
       const map: Record<number, PredictionResult> = {};
       responses.forEach((r, i) => {
-        if (r && r.county && r.county.label && r.county.risk_pct != null) {
-          map[locs[i].id] = {
-            risk_level: r.county.label,
-            risk_probability: r.county.risk_pct / 100,
-          };
+        const z = r?.[key];
+        if (z && z.label && z.risk_pct != null) {
+          map[locs[i].id] = { risk_level: z.label, risk_probability: z.risk_pct / 100 };
         }
       });
       setPredictions(map);
