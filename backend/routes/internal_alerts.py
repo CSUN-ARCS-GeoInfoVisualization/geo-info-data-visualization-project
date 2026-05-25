@@ -564,7 +564,7 @@ def _evac_already_alerted(session, user_id, zone_id):
     ).first() is not None, sig
 
 
-def _send_evacuation_email(to_email, contact_name, location_name, zone_props, nearest_shelters) -> tuple[str | None, str | None]:
+def _send_evacuation_email(to_email, contact_name, location_name, zone_props, nearest_shelters, match_kind: str = "polygon") -> tuple[str | None, str | None]:
     try:
         import resend
     except ImportError:
@@ -584,6 +584,18 @@ def _send_evacuation_email(to_email, contact_name, location_name, zone_props, ne
     critical = (zone_props.get("CRITICAL_INFO") or "").strip()
     public = (zone_props.get("PUBLIC_INFO") or "").strip()
     is_order = "ORDER" in status
+    # County matches are broader awareness, not "you're in the polygon" —
+    # word the body accordingly so the user knows the difference.
+    in_polygon = match_kind == "polygon"
+    proximity_line = (
+        f"Your saved location <strong>{html_escape(location_name)}</strong> sits inside an active "
+        f"{('evacuation order' if is_order else 'evacuation warning')} for <strong>{html_escape(zone_name)}</strong>."
+        if in_polygon else
+        f"An active {('evacuation order' if is_order else 'evacuation warning')} has been issued in "
+        f"<strong>{html_escape(county)} County</strong>, which contains your saved location "
+        f"<strong>{html_escape(location_name)}</strong>. The zone polygon doesn't overlap your saved point — "
+        f"this is a heads-up so you know what's happening nearby."
+    )
 
     shelter_rows = "".join(
         f"<tr><td style='padding:8px 12px;border-bottom:1px solid #eee'>{html_escape(s.get('shelter_name',''))}</td>"
@@ -606,10 +618,7 @@ def _send_evacuation_email(to_email, contact_name, location_name, zone_props, ne
     </div>
     <div style="padding:22px">
       <p style="margin:0 0 12px">Hi {html_escape(name)},</p>
-      <p style="margin:0 0 14px;font-size:15px">
-        Your saved location <strong>{html_escape(location_name)}</strong> sits inside an active {('evacuation order' if is_order else 'evacuation warning')}
-        for <strong>{html_escape(zone_name)}</strong>.
-      </p>
+      <p style="margin:0 0 14px;font-size:15px">{proximity_line}</p>
       {f'<div style="background:#fef2f2;border-left:3px solid #dc2626;padding:10px 14px;margin:0 0 14px;font-size:13px;color:#7f1d1d">{html_escape(critical)}</div>' if critical else ''}
       {f'<div style="font-size:13px;color:#444;margin:0 0 18px">{html_escape(public)}</div>' if public else ''}
       <div style="font-size:13px;font-weight:600;color:#555;margin:6px 0 6px">Nearest open shelters</div>
@@ -837,23 +846,53 @@ def run_evacuation_alerts():
             skipped_no_overlap += 1
             continue
 
-        # Find every (location, zone) intersection — one alert per zone.
-        per_zone_hits = {}  # zone_id -> (location, zone_feature)
+        # Find every (location, zone) match — one alert per zone.
+        # Match priority (highest first, both fire alerts):
+        #   1. Polygon containment — saved location is literally inside the
+        #      evac zone polygon. Life-safety, "your house is in this zone."
+        #   2. County match — evac is active in a county that contains one
+        #      of the user's saved locations. Broader situational awareness
+        #      so you know about evacs in your county even if your specific
+        #      address isn't in the polygon. Per Ido's spec.
+        per_zone_hits = {}  # zone_id -> (location, zone_feature, match_kind)
+
+        # Pre-resolve the county for each saved location once (PIP cached).
+        loc_counties = []  # [(loc, county_name_lower)]
         for loc in locs:
-            for feat in zones:
+            z = resolve_all(loc.lat, loc.lon).get("county")
+            if z:
+                loc_counties.append((loc, str(z["name"]).lower()))
+
+        for feat in zones:
+            props = (feat.get("properties") or {})
+            zid = str(props.get("ZONE_ID") or props.get("ZONE_NAME") or "")
+            if not zid:
+                continue
+            zone_county = str(props.get("COUNTY") or "").lower()
+
+            # Pass 1: polygon containment — strongest match, win the spot.
+            polygon_loc = None
+            for loc in locs:
                 if _feature_contains(feat, loc.lon, loc.lat):
-                    props = (feat.get("properties") or {})
-                    zid = str(props.get("ZONE_ID") or props.get("ZONE_NAME") or "")
-                    if not zid:
-                        continue
-                    # Keep the first matching location for this zone.
-                    per_zone_hits.setdefault(zid, (loc, feat))
+                    polygon_loc = loc
+                    break
+            if polygon_loc:
+                per_zone_hits[zid] = (polygon_loc, feat, "polygon")
+                continue
+
+            # Pass 2: county match — fire if any saved location is in this
+            # zone's county. Falls back only if no polygon match was found.
+            if zone_county:
+                for loc, county in loc_counties:
+                    if county == zone_county:
+                        per_zone_hits[zid] = (loc, feat, "county")
+                        break
 
         if not per_zone_hits:
             skipped_no_overlap += 1
             continue
 
-        for zid, (loc, feat) in per_zone_hits.items():
+        for zid, (loc, feat, match_kind) in per_zone_hits.items():
             already, sig = _evac_already_alerted(session, user.id, zid)
             if already:
                 skipped_dedup += 1
@@ -877,13 +916,14 @@ def run_evacuation_alerts():
                 location_name=loc.name,
                 zone_props=(feat.get("properties") or {}),
                 nearest_shelters=nearest,
+                match_kind=match_kind,
             )
             status = "sent" if msg_id else "failed"
             session.add(AlertActivity(
                 user_id=user.id,
                 risk_level=99 if "ORDER" in str((feat.get("properties") or {}).get("STATUS", "")).upper() else 80,
                 delivery_status=status,
-                reason=("evac_cron" if msg_id else f"evac_cron_err:{(send_err or '')[:30]}"),
+                reason=(f"evac_cron:{match_kind}" if msg_id else f"evac_cron_err:{(send_err or '')[:24]}"),
                 state_signature=sig,
             ))
             if msg_id:
