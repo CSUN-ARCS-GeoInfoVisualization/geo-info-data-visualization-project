@@ -199,6 +199,14 @@ def should_send_alert(pref, risk_level, now=None):
 
 
 def _apply_preference_updates(pref, data):
+    if 'opted_in' in data:
+        if not isinstance(data['opted_in'], bool):
+            return {'error': 'opted_in must be a boolean'}, 400
+        pref.opted_in = data['opted_in']
+        # Opting back in clears any prior unsubscribe stamp.
+        if data['opted_in']:
+            pref.unsubscribed_at = None
+
     if 'email_enabled' in data:
         if not isinstance(data['email_enabled'], bool):
             return {'error': 'email_enabled must be a boolean'}, 400
