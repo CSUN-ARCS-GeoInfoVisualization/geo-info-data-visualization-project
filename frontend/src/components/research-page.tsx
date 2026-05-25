@@ -178,11 +178,8 @@ interface UnifiedOverlayProps {
   onShelterClick?: (shelter: any) => void;
 }
 
-function getRiskColor(score: number): [number, number, number, number] {
-  if (score >= 0.66) return [220, 38, 38, 150];
-  if (score >= 0.33) return [234, 179, 8, 130];
-  return [34, 197, 94, 110];
-}
+// 9-tier shared palette — lib/riskTiers.ts
+import { riskRgba as getRiskColor } from "../lib/riskTiers";
 
 function UnifiedResearchOverlay({ features, showHeatmap, zoneGeoJson, zoneRiskData, zoneNameKey, onZoneClick, nifcPerimeters, showPerimeters, onPerimeterClick, shelters = [], showShelters = false, onShelterClick }: UnifiedOverlayProps) {
   const map = useMap();
@@ -633,10 +630,12 @@ function ResearchMapView() {
                 research page is fire-research focused and the evac legend would
                 be noise). Same component the Shelters & Evac page renders. */}
 
-            {/* Shelter info card — centered popup, full metadata, same as the
-                Shelters & Evac page so the click experience is identical. */}
+            {/* Shelter info now lives in the left sidebar (Selected shelter
+                block) only — the floating popup was redundant per Ido. Keep
+                the CenteredInfoCard tag intact but always closed so we don't
+                rip it out and risk a typo on a future re-enable. */}
             <CenteredInfoCard
-              open={!!selectedShelter}
+              open={false}
               onClose={() => setSelectedShelter(null)}
               accent="bg-emerald-600"
               title={selectedShelter?.shelter_name || 'Shelter'}

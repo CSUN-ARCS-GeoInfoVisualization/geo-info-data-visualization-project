@@ -8,11 +8,9 @@ import { GoogleMapsOverlay } from "@deck.gl/google-maps";
 import { GeoJsonLayer } from "@deck.gl/layers";
 import { apiFetch } from "../services/api";
 
-function getRiskColor(score: number): [number, number, number, number] {
-  if (score >= 0.66) return [220, 38, 38, 150];
-  if (score >= 0.33) return [234, 179, 8, 130];
-  return [34, 197, 94, 110];
-}
+import { riskRgba } from "../lib/riskTiers";
+
+const getRiskColor = riskRgba;
 
 interface ZoneRisk {
   risk_score: number;
