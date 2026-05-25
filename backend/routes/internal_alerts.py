@@ -359,13 +359,18 @@ def _send_breaking_news_email(to_email: str, contact_name: str, articles: list) 
     resend.api_key = api_key
 
     name = (contact_name or "").strip() or to_email.split("@", 1)[0]
+    # Link through firescope.dev/?page=news#article-<id> so the user lands on
+    # our News page with our summary visible + the original source one click
+    # away — not on the raw NWS/GNews JSON page.
+    def _our_news_url(a):
+        return f"https://firescope.dev/?page=news#article-{a['id']}"
     items_html = "".join(
         f"<div style='margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid #eee'>"
         f"  <div style='font-size:11px;text-transform:uppercase;color:#888;letter-spacing:.06em'>"
         f"    {html_escape(a['source_label'])} · {a['published_at'][:16].replace('T',' ')} UTC"
         f"  </div>"
         f"  <div style='font-size:15px;font-weight:600;margin:4px 0 6px'>"
-        f"    <a href='{html_escape(a['url'])}' style='color:#dc2626;text-decoration:none'>{html_escape(a['title'])}</a>"
+        f"    <a href='{html_escape(_our_news_url(a))}' style='color:#dc2626;text-decoration:none'>{html_escape(a['title'])}</a>"
         f"  </div>"
         f"  <div style='font-size:13px;color:#444;line-height:1.45'>{html_escape((a.get('summary') or '')[:280])}{'…' if len(a.get('summary') or '') > 280 else ''}</div>"
         f"</div>"
@@ -393,10 +398,10 @@ def _send_breaking_news_email(to_email: str, contact_name: str, articles: list) 
     text = (
         f"FireScope — {len(articles)} new breaking fire news {'story' if len(articles) == 1 else 'stories'}.\n\n"
         + "\n\n".join(
-            f"  {a['title']}\n    {a['source_label']} · {a['published_at'][:16]}\n    {a['url']}"
+            f"  {a['title']}\n    {a['source_label']} · {a['published_at'][:16]}\n    {_our_news_url(a)}"
             for a in articles
         )
-        + "\n\nSee all: https://firescope.dev\n"
+        + "\n\nSee all: https://firescope.dev/?page=news\n"
     )
     try:
         resp = resend.Emails.send({

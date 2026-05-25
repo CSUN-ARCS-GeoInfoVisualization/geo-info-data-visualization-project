@@ -87,8 +87,22 @@ const NAV_LINKS: { page: Page; label: string }[] = [
 const GUEST_FLAG_KEY = "firescope.guest";
 const POST_LOGIN_PAGE_KEY = "firescope.postLoginPage";
 
+// Deep-link bootstrap. Email alerts and shareable URLs land at
+// `https://firescope.dev/?page=news#article-<id>` — read the query param once
+// on mount and seed currentPage. The hash is left intact for FireNews to
+// pick up and scroll the right card into view.
+function pageFromUrl(): Page {
+  if (typeof window === "undefined") return "dashboard";
+  const p = new URLSearchParams(window.location.search).get("page");
+  const valid = new Set([
+    "dashboard", "evacuation-routes", "news", "history", "risk-map",
+    "research", "settings", "admin",
+  ]);
+  return (p && valid.has(p) ? p : "dashboard") as Page;
+}
+
 export default function App() {
-  const [currentPage, setCurrentPage] = useState<Page>("dashboard");
+  const [currentPage, setCurrentPage] = useState<Page>(() => pageFromUrl());
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [authToken, setAuthToken] = useState<string | null>(() => localStorage.getItem("token"));
   const [isGuest, setIsGuest] = useState<boolean>(() => localStorage.getItem(GUEST_FLAG_KEY) === "1");
