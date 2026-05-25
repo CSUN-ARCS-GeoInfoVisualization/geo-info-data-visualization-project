@@ -160,6 +160,9 @@ def _serialize_preference(pref):
         'blackout_end': _format_datetime(pref.blackout_end),
         'last_sent_at': _format_datetime(pref.last_sent_at),
         'unsubscribed_at': _format_datetime(pref.unsubscribed_at),
+        'breaking_news_enabled': getattr(pref, 'breaking_news_enabled', False),
+        'high_risk_enabled': getattr(pref, 'high_risk_enabled', True),
+        'evacuation_enabled': getattr(pref, 'evacuation_enabled', True),
     }
 
 
@@ -205,6 +208,12 @@ def _apply_preference_updates(pref, data):
         if not isinstance(data['sms_enabled'], bool):
             return {'error': 'sms_enabled must be a boolean'}, 400
         pref.sms_enabled = data['sms_enabled']
+
+    for channel in ('breaking_news_enabled', 'high_risk_enabled', 'evacuation_enabled'):
+        if channel in data:
+            if not isinstance(data[channel], bool):
+                return {'error': f'{channel} must be a boolean'}, 400
+            setattr(pref, channel, data[channel])
 
     if 'contact_email' in data:
         value = data['contact_email']
