@@ -440,11 +440,11 @@ export function RiskMap() {
 
                 </div>
 
-                {/* Map Legend — Risk Zones now mirror the canonical 9-tier
+                {/* Map Legend — Risk Zones mirror the canonical NFDRS 5-tier
                     model from lib/riskTiers.ts (same scale the backend uses). */}
                 <div className="mt-4 bg-gray-50 rounded-lg p-4 space-y-4">
                   <div>
-                    <h4 className="font-semibold text-sm mb-2">Risk Zones (9-tier model)</h4>
+                    <h4 className="font-semibold text-sm mb-2">Risk Zones (5-tier model)</h4>
                     <div className="grid grid-cols-2 md:grid-cols-3 gap-x-3 gap-y-1.5 text-sm">
                       {RISK_TIERS_ASC.map((t, i) => {
                         const upper = i === RISK_TIERS_ASC.length - 1 ? 1.0 : RISK_TIERS_ASC[i + 1].cutoff;
