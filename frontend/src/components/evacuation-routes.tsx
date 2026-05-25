@@ -453,7 +453,8 @@ function FireFacilitiesOverlay({
           },
           onClick: (info: any) => {
             if (info.object) {
-              setZoneTooltipRef.current?.({
+              console.log('[evac] polygon zone click', info.object?.properties);
+              setZoneTooltip({
                 x: info.x,
                 y: info.y,
                 props: info.object.properties || {},
@@ -482,7 +483,8 @@ function FireFacilitiesOverlay({
           lineWidthMinPixels: 2,
           onClick: (info: any) => {
             if (info.object) {
-              setZoneTooltipRef.current?.({ x: info.x, y: info.y, props: info.object.props });
+              console.log('[evac] centroid marker click', info.object?.props);
+              setZoneTooltip({ x: info.x, y: info.y, props: info.object.props });
               return true;
             }
             return false;
@@ -497,7 +499,8 @@ function FireFacilitiesOverlay({
           pickable: true,
           onClick: (info: any) => {
             if (info.object) {
-              setZoneTooltipRef.current?.({
+              console.log('[evac] fire perimeter click', info.object?.properties);
+              setZoneTooltip({
                 x: info.x,
                 y: info.y,
                 props: { ...(info.object.properties || {}), __kind: 'fire' },
@@ -599,9 +602,9 @@ function FireFacilitiesOverlay({
           // Add hover handler
           onHover: (info: any) => {
             if (info.object) {
-              setHoveredShelterRef.current?.(info.object.properties);
+              setHoveredShelter(info.object.properties);
             } else {
-              setHoveredShelterRef.current?.(null);
+              setHoveredShelter(null);
             }
           },
 
@@ -625,7 +628,8 @@ function FireFacilitiesOverlay({
                 // Show tooltip for individual shelter
                 const props = info.object.properties;
                 const coords = info.object.geometry?.coordinates;
-                setTooltipRef.current?.({
+                console.log('[evac] shelter click', props);
+                setTooltip({
                   x: info.x,
                   y: info.y,
                   content: {
