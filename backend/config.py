@@ -9,6 +9,18 @@ class Config:
     SECRET_KEY = os.getenv('SECRET_KEY', 'dev-secret')
     SQLALCHEMY_DATABASE_URI = os.getenv('DATABASE_URL')
     SQLALCHEMY_TRACK_MODIFICATIONS = False
+    # Bigger pool — the default (5 + 10 overflow) starves immediately when a
+    # cold cache triggers a zone-risk recompute storm. Each zone recompute
+    # opens a DB connection per parallel feature fetch (EVI / elevation /
+    # KBDI × hundreds of centroids). Bumping to 20 + 30 overflow lets the
+    # recompute fan out without blocking everyday request handlers like
+    # /login or /health behind a 30s pool timeout.
+    SQLALCHEMY_ENGINE_OPTIONS = {
+        'pool_size': 20,
+        'max_overflow': 30,
+        'pool_pre_ping': True,
+        'pool_recycle': 300,
+    }
     JWT_SECRET_KEY = os.getenv('JWT_SECRET_KEY', 'dev-jwt')
     JWT_ACCESS_TOKEN_EXPIRES = timedelta(days=7)
 
