@@ -1155,15 +1155,24 @@ export function EvacuationRoutes() {
         </Alert>
       )}
 
-      {/* Active Shelter Banner — visible only when CA has OPEN shelters */}
-      {openShelterCount > 0 && (
-        <Alert className="border-l-4 border-l-emerald-600 bg-emerald-50">
-          <Shield className="h-4 w-4 text-emerald-700" />
-          <AlertDescription>
-            <div className="flex items-center justify-between gap-3 flex-wrap">
-              <div className="text-sm">
-                <strong className="text-emerald-700">{openShelterCount} open shelter{openShelterCount === 1 ? '' : 's'}</strong> in California right now (CalOES live feed). They appear as green pins on the map below — click "Show on map" to zoom to them.
-              </div>
+      {/* Active Shelter Banner — always visible so users see the live state,
+          even when zero (the normal idle case in CalOES). */}
+      <Alert className={`border-l-4 ${openShelterCount > 0 ? 'border-l-emerald-600 bg-emerald-50' : 'border-l-zinc-300 bg-zinc-50'}`}>
+        <Shield className={`h-4 w-4 ${openShelterCount > 0 ? 'text-emerald-700' : 'text-zinc-500'}`} />
+        <AlertDescription>
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="text-sm">
+              {openShelterCount > 0 ? (
+                <>
+                  <strong className="text-emerald-700">{openShelterCount} open shelter{openShelterCount === 1 ? '' : 's'}</strong> in California right now (CalOES live feed). They appear as pins on the map below — click "Show on map" to zoom to them.
+                </>
+              ) : (
+                <>
+                  <strong className="text-zinc-700">0 open shelters</strong> in California right now (CalOES live feed). Most pre-staged shelters only activate during an emergency.
+                </>
+              )}
+            </div>
+            {openShelterCount > 0 && (
               <Button
                 size="sm"
                 className="bg-emerald-600 hover:bg-emerald-700"
@@ -1171,10 +1180,10 @@ export function EvacuationRoutes() {
               >
                 Show on map
               </Button>
-            </div>
-          </AlertDescription>
-        </Alert>
-      )}
+            )}
+          </div>
+        </AlertDescription>
+      </Alert>
 
       {/* Interactive Map with Fire Facilities */}
       <Card>
