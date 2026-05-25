@@ -8,6 +8,7 @@ import { GeoJsonLayer, IconLayer } from "@deck.gl/layers";
 import { firmsPointsToPolygonCollection } from "../utils/firmsPolygons";
 import { HeatmapLayer } from "@deck.gl/aggregation-layers";
 import { CenteredInfoCard } from "./centered-info-card";
+import { ShelterEvacLegend } from "./shelter-evac-legend";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
@@ -968,36 +969,31 @@ function ResearchMapView() {
             </div>
           </div>
 
-      {/* Map legend BELOW the map. Re-uses the canonical ShelterEvacLegend
-          component from the Shelters & Evac page (evacuation zones + shelter
-          status) and adds the risk-zone tier swatches + fire-perimeter
-          containment swatches inline using the same colors as the dashboard's
-          in-map legend. No standalone copies. No FIRMS hotspot row — we no
-          longer surface that overlay. */}
+      {/* Map legend BELOW the map. Renders the canonical
+          <ShelterEvacLegend/> for evac + shelter rows (icons-inside-swatches
+          identical to the Shelters & Evac page) PLUS the risk-zone tier
+          ramp and the NIFC containment ramp using the same color tokens
+          the dashboard uses. No FIRMS hotspot row — overlay deprecated. */}
       <div className="rounded-lg border bg-white p-4">
         <div className="text-xs font-semibold text-zinc-900 uppercase tracking-wide mb-3">Map legend</div>
-        <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 text-xs">
-          {/* Pull the canonical evac + shelter rows straight from the shared component. */}
-          <div className="space-y-2.5">
-            <div className="font-medium text-zinc-600 text-[11px]">Evacuation zones</div>
-            <LegendSwatch color="#7f1d1d" label="Order (mandatory)" />
-            <LegendSwatch color="#d97706" label="Warning (prepare)" />
-            <LegendSwatch color="#eab308" label="Advisory / shelter-in-place" />
-            <div className="font-medium text-zinc-600 text-[11px] pt-2">Shelters</div>
-            <LegendSwatch color="rgb(59,130,246)" label="Evacuation (EVAC)" />
-            <LegendSwatch color="rgb(34,197,94)" label="Post-impact (POST)" />
-            <LegendSwatch color="rgb(147,51,234)" label="Both" />
-            <LegendSwatch color="rgb(156,163,175)" label="Other facility" />
-          </div>
-          <div className="space-y-2.5">
-            <div className="font-medium text-zinc-600 text-[11px]">Risk zones (dashboard tiers)</div>
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-6 text-xs items-start">
+          {/* Column 1: shared component, exact same render as the
+              Shelters & Evac floating legend (Shield icons in evac swatches,
+              Home icons in shelter swatches, etc). */}
+          <ShelterEvacLegend />
+
+          {/* Column 2: dashboard's 4-tier risk-zone ramp. */}
+          <div className="bg-white/95 border border-zinc-200 rounded-lg shadow-sm p-3 space-y-2 max-w-[220px]">
+            <div className="font-semibold text-zinc-900 text-[11px] uppercase tracking-wide">Risk Zones</div>
             <LegendSwatch color="rgba(34,197,94,0.55)" label="Low" />
             <LegendSwatch color="rgba(234,179,8,0.65)" label="Medium" />
             <LegendSwatch color="rgba(220,38,38,0.65)" label="High" />
             <LegendSwatch color="rgba(153,27,27,0.75)" label="Extreme" />
           </div>
-          <div className="space-y-2.5">
-            <div className="font-medium text-zinc-600 text-[11px]">Fire perimeter (NIFC containment)</div>
+
+          {/* Column 3: NIFC containment ramp. */}
+          <div className="bg-white/95 border border-zinc-200 rounded-lg shadow-sm p-3 space-y-2 max-w-[230px]">
+            <div className="font-semibold text-zinc-900 text-[11px] uppercase tracking-wide">Fire Perimeter (NIFC)</div>
             <LegendSwatch color="rgb(220,38,38)" label="Uncontained (<25%)" />
             <LegendSwatch color="rgb(249,115,22)" label="25–49% contained" />
             <LegendSwatch color="rgb(250,204,21)" label="50–99% contained" />
@@ -1012,9 +1008,9 @@ function ResearchMapView() {
 
 function LegendSwatch({ color, label, border }: { color: string; label: string; border?: boolean }) {
   return (
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-2 text-xs">
       <span
-        className="inline-block h-3 w-3 rounded shrink-0"
+        className="inline-block h-4 w-4 rounded-sm shrink-0"
         style={{ background: color, border: border ? '1px solid rgb(180,180,180)' : undefined }}
         aria-hidden="true"
       />
