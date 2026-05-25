@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 internal_alerts_bp = Blueprint("internal_alerts", __name__)
 
-HIGH_RISK_THRESHOLD = 70  # "High" tier in the 9-tier scale
+HIGH_RISK_THRESHOLD = 0.70  # /predict returns risk_probability in 0..1; 0.70 = "High" tier in the 9-tier scale
 DEDUP_WINDOW_HOURS = 24   # don't re-email same user at same tier inside this window
 
 
@@ -94,7 +94,7 @@ def _send_high_risk_email(to_email: str, contact_name: str, locations_payload: l
     rows_html = "".join(
         f"<tr><td style='padding:8px 12px;border-bottom:1px solid #eee'>{html_escape(loc['name'])}</td>"
         f"<td style='padding:8px 12px;border-bottom:1px solid #eee;font-weight:600'>{loc['label']}</td>"
-        f"<td style='padding:8px 12px;border-bottom:1px solid #eee;text-align:right'>{loc['risk']:.0f}%</td></tr>"
+        f"<td style='padding:8px 12px;border-bottom:1px solid #eee;text-align:right'>{loc['risk']*100:.0f}%</td></tr>"
         for loc in locations_payload
     )
     html = f"""<!doctype html>
@@ -126,7 +126,7 @@ def _send_high_risk_email(to_email: str, contact_name: str, locations_payload: l
 </body></html>"""
 
     text = f"FireScope — high wildfire risk near your saved locations.\n\n" + "\n".join(
-        f"  • {loc['name']}: {loc['label']} ({loc['risk']:.0f}%)" for loc in locations_payload
+        f"  • {loc['name']}: {loc['label']} ({loc['risk']*100:.0f}%)" for loc in locations_payload
     ) + "\n\nLive map: https://firescope.dev\n"
 
     try:
@@ -197,9 +197,9 @@ def run_high_risk_alerts():
             skipped_below += 1
             continue
 
-        # Tier-bucketed dedup: use the max risk's tier as the bucket key.
+        # Tier-bucketed dedup: 0..1 probability → 70/80/90/100 buckets.
         max_risk = max(h["risk"] for h in hits)
-        bucket = int(max_risk // 10) * 10  # 70, 80, 90 buckets
+        bucket = int(max_risk * 100 // 10) * 10  # 70, 80, 90, 100
         if _already_alerted(session, user.id, bucket):
             skipped_dedup += 1
             continue
