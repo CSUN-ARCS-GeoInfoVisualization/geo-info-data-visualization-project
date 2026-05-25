@@ -1,0 +1,42 @@
+name: Alerts — Evacuation
+
+# Slice 1C: every 10 min, fire the evacuation cron endpoint on Render.
+# Iterates every opted-in user with evacuation_enabled, PIPs each of their
+# saved locations against the active CalOES evacuation zones, sends one
+# email per overlapping zone with the 3 nearest open shelters. Per-zone
+# dedup so a user never gets the same evac email twice for the same zone.
+#
+# Cadence is short (10 min) because this is life-safety; the upstream
+# CalOES feed updates every few minutes during active events.
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch: {}
+
+jobs:
+  fire:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: POST /api/internal/alerts/evacuation
+        env:
+          API_BASE: https://firescope-api.onrender.com
+          TOKEN: ${{ secrets.INTERNAL_CRON_TOKEN }}
+        run: |
+          set -e
+          if [ -z "$TOKEN" ]; then
+            echo "::error::INTERNAL_CRON_TOKEN repository secret is not set"
+            exit 1
+          fi
+          RESP=$(curl -sS --max-time 120 \
+            -X POST "$API_BASE/api/internal/alerts/evacuation" \
+            -H "X-Internal-Token: $TOKEN" \
+            -H "Content-Type: application/json" \
+            -w "\nHTTP_STATUS=%{http_code}")
+          echo "$RESP"
+          STATUS=$(echo "$RESP" | grep -oE 'HTTP_STATUS=[0-9]+' | cut -d= -f2)
+          if [ "$STATUS" != "200" ]; then
+            echo "::error::Cron call failed with status $STATUS"
+            exit 1
+          fi

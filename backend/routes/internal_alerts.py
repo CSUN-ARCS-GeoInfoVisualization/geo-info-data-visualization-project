@@ -4,19 +4,22 @@ Hit by GitHub Actions workflows on a schedule. Auth via the
 INTERNAL_CRON_TOKEN env var compared against the X-Internal-Token request
 header. Never exposed to end users.
 
-Slice 1A: only /high-risk is wired up. Evacuation and breaking-news endpoints
-are stubbed and return 501 so the GHA workflow surface can be designed in one
-pass without back-and-forth on the YAML side.
+Slice 1A: /high-risk (every 30 min)        — per-user/per-tier dedup
+Slice 1C: /breaking-news (every 60 min)    — per-user/per-batch dedup
+Slice 1C: /evacuation    (every 10 min)    — per-user/per-zone dedup
 """
 
 import os
+import math
 import hashlib
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
+import requests
 from flask import Blueprint, request, jsonify
 
-from models import db, User, UserLocation, NotificationPreference, AlertActivity
+from models import db, User, UserLocation, NotificationPreference, AlertActivity, NewsArticle
+from data.zone_resolver import _feature_contains
 from data.zone_resolver import resolve_all
 from routes.research import get_cached_zone_risk
 
@@ -322,12 +325,91 @@ def run_high_risk_alerts():
     })
 
 
-@internal_alerts_bp.route("/internal/alerts/evacuation", methods=["POST"])
-def run_evacuation_alerts():
-    ok, err = _require_internal_token()
-    if not ok:
-        return jsonify({"error": err}), 401
-    return jsonify({"status": "not_implemented", "slice": "1B"}), 501
+# ───────────────────────── BREAKING NEWS (Slice 1C) ─────────────────────────
+
+NEWS_LOOKBACK_HOURS = 24       # never alert on news older than this
+NEWS_MAX_PER_EMAIL = 8         # cap per email body — older items dropped
+
+
+def _last_news_send_at(session, user_id):
+    """Most recent successful news send for this user (None if never)."""
+    row = (
+        session.query(AlertActivity.created_at)
+        .filter(
+            AlertActivity.user_id == user_id,
+            AlertActivity.delivery_status == "sent",
+            AlertActivity.reason.like("breaking_news%"),
+        )
+        .order_by(AlertActivity.created_at.desc())
+        .first()
+    )
+    return row[0] if row else None
+
+
+def _send_breaking_news_email(to_email: str, contact_name: str, articles: list) -> tuple[str | None, str | None]:
+    try:
+        import resend
+    except ImportError:
+        return None, "resend SDK missing"
+    api_key = os.getenv("RESEND_API_KEY", "")
+    sender_email = os.getenv("SENDER_EMAIL", "alerts@firescope.dev")
+    sender_name = os.getenv("SENDER_NAME", "FireScope Alerts")
+    if not api_key:
+        return None, "RESEND_API_KEY not set"
+    resend.api_key = api_key
+
+    name = (contact_name or "").strip() or to_email.split("@", 1)[0]
+    items_html = "".join(
+        f"<div style='margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid #eee'>"
+        f"  <div style='font-size:11px;text-transform:uppercase;color:#888;letter-spacing:.06em'>"
+        f"    {html_escape(a['source_label'])} · {a['published_at'][:16].replace('T',' ')} UTC"
+        f"  </div>"
+        f"  <div style='font-size:15px;font-weight:600;margin:4px 0 6px'>"
+        f"    <a href='{html_escape(a['url'])}' style='color:#dc2626;text-decoration:none'>{html_escape(a['title'])}</a>"
+        f"  </div>"
+        f"  <div style='font-size:13px;color:#444;line-height:1.45'>{html_escape((a.get('summary') or '')[:280])}{'…' if len(a.get('summary') or '') > 280 else ''}</div>"
+        f"</div>"
+        for a in articles
+    )
+    html = f"""<!doctype html>
+<html><body style="font-family:system-ui,-apple-system,sans-serif;background:#f7f7f8;margin:0;padding:24px">
+  <div style="max-width:600px;margin:auto;background:white;border-radius:12px;overflow:hidden;border:1px solid #eee">
+    <div style="background:#dc2626;color:white;padding:18px 22px">
+      <div style="font-size:13px;letter-spacing:.08em;opacity:.9">FIRESCOPE • BREAKING FIRE NEWS</div>
+      <div style="font-size:22px;font-weight:700;margin-top:4px">{len(articles)} new {'story' if len(articles) == 1 else 'stories'} you should see</div>
+    </div>
+    <div style="padding:22px">
+      <p style="margin:0 0 14px">Hi {html_escape(name)},</p>
+      {items_html}
+      <p style="margin:18px 0 0;font-size:13px;color:#555">
+        See all fire news on <a href="https://firescope.dev" style="color:#dc2626">firescope.dev</a>.
+      </p>
+      <p style="margin:14px 0 0;font-size:12px;color:#888">
+        You're getting this because the Breaking Fire News channel is on. Manage at firescope.dev → Alerts.
+      </p>
+    </div>
+  </div>
+</body></html>"""
+    text = (
+        f"FireScope — {len(articles)} new breaking fire news {'story' if len(articles) == 1 else 'stories'}.\n\n"
+        + "\n\n".join(
+            f"  {a['title']}\n    {a['source_label']} · {a['published_at'][:16]}\n    {a['url']}"
+            for a in articles
+        )
+        + "\n\nSee all: https://firescope.dev\n"
+    )
+    try:
+        resp = resend.Emails.send({
+            "from": f"{sender_name} <{sender_email}>",
+            "to": [to_email],
+            "subject": f"FireScope: {len(articles)} new breaking fire {'story' if len(articles) == 1 else 'stories'}",
+            "html": html,
+            "text": text,
+        })
+        return resp.get("id"), None
+    except Exception as e:
+        logger.warning("resend send (news) failed: %s", e)
+        return None, str(e)
 
 
 @internal_alerts_bp.route("/internal/alerts/breaking-news", methods=["POST"])
@@ -335,4 +417,340 @@ def run_breaking_news_alerts():
     ok, err = _require_internal_token()
     if not ok:
         return jsonify({"error": err}), 401
-    return jsonify({"status": "not_implemented", "slice": "1C"}), 501
+
+    session = db.session
+    now = datetime.utcnow()
+    floor = now - timedelta(hours=NEWS_LOOKBACK_HOURS)
+
+    # Eligible users: opted in, email on, breaking-news channel on.
+    q = (
+        session.query(NotificationPreference, User)
+        .join(User, User.id == NotificationPreference.user_id)
+        .filter(
+            NotificationPreference.opted_in == True,
+            NotificationPreference.email_enabled == True,
+            NotificationPreference.breaking_news_enabled == True,
+            NotificationPreference.unsubscribed_at.is_(None),
+        )
+    )
+    scanned = 0
+    sent = 0
+    skipped_no_new = 0
+    errors = 0
+    sent_ids = []
+
+    for pref, user in q.all():
+        scanned += 1
+        if pref.paused_until and pref.paused_until > now:
+            continue
+
+        # Articles published since this user's last news send (or 24h floor).
+        cutoff = _last_news_send_at(session, user.id) or floor
+        # Drop subsecond/tz mismatch by clamping to floor.
+        if cutoff < floor:
+            cutoff = floor
+
+        articles_q = (
+            session.query(NewsArticle)
+            .filter(
+                NewsArticle.is_breaking == True,
+                NewsArticle.published_at > cutoff,
+            )
+            .order_by(NewsArticle.published_at.desc())
+            .limit(NEWS_MAX_PER_EMAIL)
+        )
+        articles = articles_q.all()
+        if not articles:
+            skipped_no_new += 1
+            continue
+
+        # Build the payload + a deterministic signature for the batch.
+        payload = [{
+            "id": a.article_id,
+            "title": a.title,
+            "summary": a.summary,
+            "url": a.url,
+            "source_label": a.source_label,
+            "published_at": a.published_at.isoformat() if a.published_at else "",
+        } for a in articles]
+        sig = hashlib.sha256(
+            ("news:" + ",".join(sorted(p["id"] for p in payload))).encode("utf-8")
+        ).hexdigest()[:32]
+
+        to_email = (pref.contact_email or user.email or "").strip()
+        if not to_email:
+            errors += 1
+            continue
+        msg_id, send_err = _send_breaking_news_email(
+            to_email=to_email,
+            contact_name=getattr(user, "name", None) or "",
+            articles=payload,
+        )
+        status = "sent" if msg_id else "failed"
+        session.add(AlertActivity(
+            user_id=user.id,
+            risk_level=0,
+            delivery_status=status,
+            reason=("breaking_news" if msg_id else f"breaking_news_err:{(send_err or '')[:30]}"),
+            state_signature=sig,
+        ))
+        if msg_id:
+            sent += 1
+            sent_ids.append(msg_id)
+        else:
+            errors += 1
+
+    try:
+        session.commit()
+    except Exception:
+        session.rollback()
+
+    return jsonify({
+        "scanned_users": scanned,
+        "sent": sent,
+        "skipped_no_new_articles": skipped_no_new,
+        "errors": errors,
+        "sent_message_ids": sent_ids,
+    })
+
+
+# ───────────────────────── EVACUATION (Slice 1C) ─────────────────────────
+
+EVAC_NEAREST_SHELTERS = 3
+
+
+def _haversine_km(lat1, lon1, lat2, lon2):
+    R = 6371.0
+    dlat = math.radians(lat2 - lat1)
+    dlon = math.radians(lon2 - lon1)
+    a = (math.sin(dlat / 2) ** 2
+         + math.cos(math.radians(lat1)) * math.cos(math.radians(lat2)) * math.sin(dlon / 2) ** 2)
+    return 2 * R * math.asin(math.sqrt(a))
+
+
+def _fetch_active_evac_zones():
+    """Self-call our own /evacuation-zones endpoint so we share its cache layer."""
+    base = os.getenv("INTERNAL_SELF_BASE", "http://127.0.0.1:10000")
+    try:
+        r = requests.get(f"{base}/api/evacuation-zones", timeout=20)
+        r.raise_for_status()
+        return r.json().get("features", []) or []
+    except Exception as e:
+        logger.warning("evac fetch failed: %s", e)
+        return []
+
+
+def _fetch_open_shelters():
+    base = os.getenv("INTERNAL_SELF_BASE", "http://127.0.0.1:10000")
+    try:
+        r = requests.get(f"{base}/api/shelters?state=CA", timeout=30)
+        r.raise_for_status()
+        data = r.json() or []
+        items = data.get("shelters") if isinstance(data, dict) else data
+        return [s for s in (items or [])
+                if str(s.get("shelter_status_code", "")).upper() == "OPEN"
+                and s.get("latitude") is not None and s.get("longitude") is not None]
+    except Exception as e:
+        logger.warning("shelters fetch failed: %s", e)
+        return []
+
+
+def _evac_already_alerted(session, user_id, zone_id):
+    sig = hashlib.sha256(f"evac:{zone_id}".encode("utf-8")).hexdigest()[:32]
+    return session.query(AlertActivity).filter(
+        AlertActivity.user_id == user_id,
+        AlertActivity.delivery_status == "sent",
+        AlertActivity.state_signature == sig,
+    ).first() is not None, sig
+
+
+def _send_evacuation_email(to_email, contact_name, location_name, zone_props, nearest_shelters) -> tuple[str | None, str | None]:
+    try:
+        import resend
+    except ImportError:
+        return None, "resend SDK missing"
+    api_key = os.getenv("RESEND_API_KEY", "")
+    sender_email = os.getenv("SENDER_EMAIL", "alerts@firescope.dev")
+    sender_name = os.getenv("SENDER_NAME", "FireScope Alerts")
+    if not api_key:
+        return None, "RESEND_API_KEY not set"
+    resend.api_key = api_key
+
+    name = (contact_name or "").strip() or to_email.split("@", 1)[0]
+    status = (zone_props.get("STATUS") or "").upper()
+    event = zone_props.get("EVENT_TYPE") or "Evacuation"
+    zone_name = zone_props.get("ZONE_NAME") or zone_props.get("ZONE_ID") or "Affected zone"
+    county = zone_props.get("COUNTY") or ""
+    critical = (zone_props.get("CRITICAL_INFO") or "").strip()
+    public = (zone_props.get("PUBLIC_INFO") or "").strip()
+    is_order = "ORDER" in status
+
+    shelter_rows = "".join(
+        f"<tr><td style='padding:8px 12px;border-bottom:1px solid #eee'>{html_escape(s.get('shelter_name',''))}</td>"
+        f"<td style='padding:8px 12px;border-bottom:1px solid #eee;font-size:12px;color:#666'>"
+        f"{html_escape(s.get('address_1',''))}, {html_escape(s.get('city',''))}</td>"
+        f"<td style='padding:8px 12px;border-bottom:1px solid #eee;text-align:right;font-size:12px'>{s.get('_km',0):.1f} km</td></tr>"
+        for s in nearest_shelters
+    ) or "<tr><td colspan='3' style='padding:10px;color:#888;font-size:12px'>No open shelters reported nearby right now — check CalOES.</td></tr>"
+
+    banner_color = "#7f1d1d" if is_order else "#d97706"
+    banner_label = "EVACUATION ORDER" if is_order else "EVACUATION WARNING"
+
+    html = f"""<!doctype html>
+<html><body style="font-family:system-ui,-apple-system,sans-serif;background:#f7f7f8;margin:0;padding:24px">
+  <div style="max-width:600px;margin:auto;background:white;border-radius:12px;overflow:hidden;border:1px solid #eee">
+    <div style="background:{banner_color};color:white;padding:18px 22px">
+      <div style="font-size:13px;letter-spacing:.08em;opacity:.95">FIRESCOPE • {banner_label}</div>
+      <div style="font-size:22px;font-weight:700;margin-top:4px">{html_escape(zone_name)} ({html_escape(county)})</div>
+      <div style="font-size:13px;margin-top:4px;opacity:.95">{html_escape(event)}</div>
+    </div>
+    <div style="padding:22px">
+      <p style="margin:0 0 12px">Hi {html_escape(name)},</p>
+      <p style="margin:0 0 14px;font-size:15px">
+        Your saved location <strong>{html_escape(location_name)}</strong> sits inside an active {('evacuation order' if is_order else 'evacuation warning')}
+        for <strong>{html_escape(zone_name)}</strong>.
+      </p>
+      {f'<div style="background:#fef2f2;border-left:3px solid #dc2626;padding:10px 14px;margin:0 0 14px;font-size:13px;color:#7f1d1d">{html_escape(critical)}</div>' if critical else ''}
+      {f'<div style="font-size:13px;color:#444;margin:0 0 18px">{html_escape(public)}</div>' if public else ''}
+      <div style="font-size:13px;font-weight:600;color:#555;margin:6px 0 6px">Nearest open shelters</div>
+      <table style="width:100%;border-collapse:collapse">{shelter_rows}</table>
+      <p style="margin:18px 0 0;font-size:13px;color:#555">
+        See live evacuation map: <a href="https://firescope.dev" style="color:#dc2626">firescope.dev</a>.
+      </p>
+      <p style="margin:14px 0 0;font-size:12px;color:#888">
+        Manage the Evacuation channel at firescope.dev → Alerts.
+      </p>
+    </div>
+  </div>
+</body></html>"""
+    text = (
+        f"{banner_label}\n"
+        f"{zone_name} ({county}) — {event}\n"
+        f"Your saved location \"{location_name}\" is inside this zone.\n\n"
+        + (f"{critical}\n\n" if critical else "")
+        + "Nearest open shelters:\n"
+        + ("\n".join(f"  - {s.get('shelter_name','')} ({s.get('city','')}) — {s.get('_km',0):.1f} km"
+                     for s in nearest_shelters) or "  (none reported nearby)")
+        + "\n\nLive map: https://firescope.dev\n"
+    )
+    try:
+        resp = resend.Emails.send({
+            "from": f"{sender_name} <{sender_email}>",
+            "to": [to_email],
+            "subject": f"FireScope: {banner_label} — {zone_name}",
+            "html": html,
+            "text": text,
+        })
+        return resp.get("id"), None
+    except Exception as e:
+        logger.warning("resend send (evac) failed: %s", e)
+        return None, str(e)
+
+
+@internal_alerts_bp.route("/internal/alerts/evacuation", methods=["POST"])
+def run_evacuation_alerts():
+    ok, err = _require_internal_token()
+    if not ok:
+        return jsonify({"error": err}), 401
+
+    session = db.session
+    now = datetime.utcnow()
+
+    zones = _fetch_active_evac_zones()
+    shelters = _fetch_open_shelters() if zones else []
+
+    q = (
+        session.query(NotificationPreference, User)
+        .join(User, User.id == NotificationPreference.user_id)
+        .filter(
+            NotificationPreference.opted_in == True,
+            NotificationPreference.email_enabled == True,
+            NotificationPreference.evacuation_enabled == True,
+            NotificationPreference.unsubscribed_at.is_(None),
+        )
+    )
+    scanned = 0
+    sent = 0
+    skipped_dedup = 0
+    skipped_no_overlap = 0
+    errors = 0
+    sent_ids = []
+
+    for pref, user in q.all():
+        scanned += 1
+        if pref.paused_until and pref.paused_until > now:
+            continue
+        locs = session.query(UserLocation).filter(UserLocation.user_id == user.id).all()
+        if not locs or not zones:
+            skipped_no_overlap += 1
+            continue
+
+        # Find every (location, zone) intersection — one alert per zone.
+        per_zone_hits = {}  # zone_id -> (location, zone_feature)
+        for loc in locs:
+            for feat in zones:
+                if _feature_contains(feat, loc.lon, loc.lat):
+                    props = (feat.get("properties") or {})
+                    zid = str(props.get("ZONE_ID") or props.get("ZONE_NAME") or "")
+                    if not zid:
+                        continue
+                    # Keep the first matching location for this zone.
+                    per_zone_hits.setdefault(zid, (loc, feat))
+
+        if not per_zone_hits:
+            skipped_no_overlap += 1
+            continue
+
+        for zid, (loc, feat) in per_zone_hits.items():
+            already, sig = _evac_already_alerted(session, user.id, zid)
+            if already:
+                skipped_dedup += 1
+                continue
+
+            # Three nearest open shelters to the saved location.
+            ranked = []
+            for s in shelters:
+                d = _haversine_km(loc.lat, loc.lon, float(s["latitude"]), float(s["longitude"]))
+                ranked.append({**s, "_km": d})
+            ranked.sort(key=lambda r: r["_km"])
+            nearest = ranked[:EVAC_NEAREST_SHELTERS]
+
+            to_email = (pref.contact_email or user.email or "").strip()
+            if not to_email:
+                errors += 1
+                continue
+            msg_id, send_err = _send_evacuation_email(
+                to_email=to_email,
+                contact_name=getattr(user, "name", None) or "",
+                location_name=loc.name,
+                zone_props=(feat.get("properties") or {}),
+                nearest_shelters=nearest,
+            )
+            status = "sent" if msg_id else "failed"
+            session.add(AlertActivity(
+                user_id=user.id,
+                risk_level=99 if "ORDER" in str((feat.get("properties") or {}).get("STATUS", "")).upper() else 80,
+                delivery_status=status,
+                reason=("evac_cron" if msg_id else f"evac_cron_err:{(send_err or '')[:30]}"),
+                state_signature=sig,
+            ))
+            if msg_id:
+                sent += 1
+                sent_ids.append(msg_id)
+            else:
+                errors += 1
+
+    try:
+        session.commit()
+    except Exception:
+        session.rollback()
+
+    return jsonify({
+        "scanned_users": scanned,
+        "active_zones": len(zones),
+        "sent": sent,
+        "skipped_dedup": skipped_dedup,
+        "skipped_no_overlap": skipped_no_overlap,
+        "errors": errors,
+        "sent_message_ids": sent_ids,
+    })

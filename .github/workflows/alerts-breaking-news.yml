@@ -1,0 +1,39 @@
+name: Alerts — Breaking News
+
+# Slice 1C: every 60 min, fire the breaking-news cron endpoint on Render.
+# Iterates every opted-in user with breaking_news_enabled, sends one batched
+# email per user listing every is_breaking article published since their
+# last news send (24h floor). Per-user dedup via state_signature so the
+# same batch never goes out twice.
+
+on:
+  schedule:
+    - cron: '0 * * * *'
+  workflow_dispatch: {}
+
+jobs:
+  fire:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: POST /api/internal/alerts/breaking-news
+        env:
+          API_BASE: https://firescope-api.onrender.com
+          TOKEN: ${{ secrets.INTERNAL_CRON_TOKEN }}
+        run: |
+          set -e
+          if [ -z "$TOKEN" ]; then
+            echo "::error::INTERNAL_CRON_TOKEN repository secret is not set"
+            exit 1
+          fi
+          RESP=$(curl -sS --max-time 120 \
+            -X POST "$API_BASE/api/internal/alerts/breaking-news" \
+            -H "X-Internal-Token: $TOKEN" \
+            -H "Content-Type: application/json" \
+            -w "\nHTTP_STATUS=%{http_code}")
+          echo "$RESP"
+          STATUS=$(echo "$RESP" | grep -oE 'HTTP_STATUS=[0-9]+' | cut -d= -f2)
+          if [ "$STATUS" != "200" ]; then
+            echo "::error::Cron call failed with status $STATUS"
+            exit 1
+          fi
