@@ -232,12 +232,21 @@ interface SelectedZone {
   level: string;
 }
 
+// Canonical 9-tier colors — matches lib/riskTiers.ts hex values so the
+// chip in the popup is the exact same color as the polygon underneath it.
 function labelColor(label: string) {
-  const l = label.toLowerCase();
-  if (l.includes("extreme")) return "#7f1d1d";
-  if (l.includes("high")) return "#dc2626";
-  if (l.includes("moderate") || l.includes("medium")) return "#ca8a04";
-  return "#16a34a";
+  switch ((label || "").trim()) {
+    case "Catastrophic": return "#991b1b";
+    case "Critical":     return "#dc2626";
+    case "Extreme":      return "#f87171";
+    case "Severe":       return "#c2410c";
+    case "Very High":    return "#f97316";
+    case "High":         return "#fb923c";
+    case "Elevated":     return "#ca8a04";
+    case "Guarded":      return "#facc15";
+    case "Low":          return "#22c55e";
+    default:             return "#9ca3af"; // unknown label — gray
+  }
 }
 
 export function GoogleRiskMap({
