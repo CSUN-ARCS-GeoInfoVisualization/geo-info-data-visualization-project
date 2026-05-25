@@ -2,6 +2,25 @@
   command = "cd frontend && npm ci && npm run build"
   publish = "frontend/build"
 
+# Permanent 301 from the legacy *.netlify.app subdomain to the canonical
+# firescope.dev domain. Anyone with the old link in their bookmarks or in
+# a search-engine result lands on the canonical URL with the path intact.
+# force = true is required — without it Netlify only fires the redirect
+# when no static file matches, which for SPA index.html never triggers.
+[[redirects]]
+  from = "https://firescope.netlify.app/*"
+  to = "https://firescope.dev/:splat"
+  status = 301
+  force = true
+
+[[redirects]]
+  from = "http://firescope.netlify.app/*"
+  to = "https://firescope.dev/:splat"
+  status = 301
+  force = true
+
+# SPA fallback — every other path serves index.html so the client-side
+# router can take over.
 [[redirects]]
   from = "/*"
   to = "/index.html"
