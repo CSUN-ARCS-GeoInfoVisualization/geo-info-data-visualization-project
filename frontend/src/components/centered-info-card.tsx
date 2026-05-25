@@ -46,18 +46,39 @@ export function CenteredInfoCard({
   if (typeof document === "undefined") return null;
 
   return createPortal(
+    // Inline styles so a parent's `transform`, `filter`, or Tailwind purge
+    // can't change positioning — earlier the card was rendering at the
+    // bottom of the page on the Shelters & Evac map because `fixed inset-0`
+    // was getting overridden somehow.
     <div
       role="dialog"
       aria-modal="true"
-      className="fixed inset-0 z-[10000] flex items-center justify-center px-4"
       onClick={onClose}
+      style={{
+        position: 'fixed',
+        top: 0, right: 0, bottom: 0, left: 0,
+        zIndex: 10000,
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        padding: '0 16px',
+      }}
     >
       {/* Scrim */}
-      <div className="absolute inset-0 bg-black/30 backdrop-blur-[2px]" aria-hidden="true" />
+      <div
+        aria-hidden="true"
+        style={{
+          position: 'absolute',
+          top: 0, right: 0, bottom: 0, left: 0,
+          background: 'rgba(0, 0, 0, 0.35)',
+          backdropFilter: 'blur(2px)',
+        }}
+      />
 
       {/* Card */}
       <div
         className={`relative w-full ${width} bg-white rounded-xl shadow-2xl overflow-hidden border border-zinc-200 max-h-[85vh] flex flex-col`}
+        style={{ position: 'relative', zIndex: 1 }}
         onClick={(e) => e.stopPropagation()}
       >
         {accent && <div className={`h-1 w-full ${accent}`} />}
