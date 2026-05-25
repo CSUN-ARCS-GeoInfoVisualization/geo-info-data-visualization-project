@@ -17,8 +17,8 @@ from datetime import datetime
 from flask import Blueprint, request, jsonify
 
 from models import db, User, UserLocation, NotificationPreference, AlertActivity
-from routes.predict import _run as predict_at
 from data.zone_resolver import resolve_all
+from routes.research import get_cached_zone_risk
 
 
 _ZONE_LABEL = {"county": "County", "zip": "ZIP", "neighborhood": "Neighborhood", "census_tract": "Census tract"}
@@ -26,7 +26,12 @@ _ZONE_LABEL = {"county": "County", "zip": "ZIP", "neighborhood": "Neighborhood",
 
 def _zones_for_location(loc):
     """Return list of {'kind','zone_name','pct','label'} for the 4 zone types.
-    Skips a zone if resolve fails (out of California, etc)."""
+
+    Reads from the same cached zone-risk data the dashboard map uses — so
+    the email's numbers always match what the user sees on firescope.dev
+    for the same county/ZIP/neighborhood/tract. Skips a zone if PIP misses
+    (point outside California) or the zone is somehow missing from the cache.
+    """
     from routes.locations import _label_for
     zones = resolve_all(loc.lat, loc.lon)
     out = []
@@ -34,16 +39,15 @@ def _zones_for_location(loc):
         z = zones.get(key)
         if not z:
             continue
-        try:
-            r = predict_at(z["centroid_lat"], z["centroid_lon"])
-            pct = float(r["prediction"]["risk_probability"])
-        except Exception:
+        cached = get_cached_zone_risk(key, z["id"])
+        if not cached or cached.get("risk_score") is None:
             continue
+        pct = float(cached["risk_score"])
         out.append({
             "kind": _ZONE_LABEL[key],
             "zone_name": z["name"],
             "pct": pct,
-            "label": _label_for(pct),
+            "label": cached.get("label") or _label_for(pct),
         })
     return out
 

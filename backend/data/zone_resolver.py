@@ -113,6 +113,19 @@ def _resolve_polygon_zone(lat: float, lon: float, zone_type: str, id_key: str) -
     return None
 
 
+def _resolve_county_polygon(lat: float, lon: float) -> Optional[ZoneHit]:
+    """Polygon PIP for CA counties. Nearest-centroid fallback for points just
+    over coastlines / simplification artifacts."""
+    data = _load("counties")
+    for feat in data.get("features", []):
+        if _feature_contains(feat, lon, lat):
+            name = (feat.get("properties") or {}).get("name", "")
+            clat, clon = _feature_centroid(feat)
+            return {"id": name, "name": name, "centroid_lat": clat, "centroid_lon": clon}
+    # Fallback: nearest county centroid (handles points just over the coast).
+    return _nearest_county(lat, lon)
+
+
 # California county centroids (mirrors backend/routes/research.py CA_COUNTY_CENTROIDS).
 # Kept here so the resolver has no cross-package imports.
 CA_COUNTY_CENTROIDS = [
@@ -154,7 +167,7 @@ def _nearest_county(lat: float, lon: float) -> ZoneHit:
 def resolve_all(lat: float, lon: float) -> dict[str, Optional[ZoneHit]]:
     """Return one ZoneHit per zone type (county/zip/neighborhood/census), or None if not found."""
     return {
-        "county":       _nearest_county(lat, lon),
+        "county":       _resolve_county_polygon(lat, lon),
         "zip":          _resolve_polygon_zone(lat, lon, "zip-codes",      "zip"),
         "neighborhood": _resolve_polygon_zone(lat, lon, "neighborhoods",  "id"),
         "census_tract": _resolve_polygon_zone(lat, lon, "census-tracts",  "tract"),
