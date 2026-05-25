@@ -169,6 +169,9 @@ def resolve_all(lat: float, lon: float) -> dict[str, Optional[ZoneHit]]:
     return {
         "county":       _resolve_county_polygon(lat, lon),
         "zip":          _resolve_polygon_zone(lat, lon, "zip-codes",      "zip"),
-        "neighborhood": _resolve_polygon_zone(lat, lon, "neighborhoods",  "id"),
+        # Cache keys neighborhoods by the 'name' property, not 'id' — see
+        # _compute_zone_risk's name_key selector. Using 'id' here meant the
+        # cache lookup always missed for neighborhoods.
+        "neighborhood": _resolve_polygon_zone(lat, lon, "neighborhoods",  "name"),
         "census_tract": _resolve_polygon_zone(lat, lon, "census-tracts",  "tract"),
     }
