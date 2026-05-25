@@ -58,7 +58,7 @@ logger = logging.getLogger(__name__)
 
 internal_alerts_bp = Blueprint("internal_alerts", __name__)
 
-HIGH_RISK_THRESHOLD = 0.70  # /predict returns risk_probability in 0..1; 0.70 = "High" tier in the 9-tier scale
+HIGH_RISK_THRESHOLD = 0.60  # /predict returns risk_probability in 0..1; 0.60 = "Very High"+ in the NFDRS 5-tier scale (matches the old 9-tier "High" trigger volume)
 
 
 def _require_internal_token():
