@@ -18,6 +18,17 @@ import { Alert, AlertDescription } from "./ui/alert";
 import { Map, Marker, useMap } from '@vis.gl/react-google-maps';
 import { GoogleMapsOverlay } from '@deck.gl/google-maps';
 import { IconLayer, GeoJsonLayer, ScatterplotLayer } from '@deck.gl/layers';
+import { CenteredInfoCard } from './centered-info-card';
+import { ShelterEvacLegend, SHELTER_EVAC_COLORS } from './shelter-evac-legend';
+
+// Defensive CA bounding box — drop any shelter point upstream may have
+// included with a non-CA lat/lon. Catches feed bugs without trusting the
+// `state` field alone.
+const CA_BBOX = { latMin: 32.5, latMax: 42.0, lonMin: -124.5, lonMax: -114.1 };
+const isInCA = (lat?: number, lon?: number) =>
+  typeof lat === 'number' && typeof lon === 'number'
+  && lat >= CA_BBOX.latMin && lat <= CA_BBOX.latMax
+  && lon >= CA_BBOX.lonMin && lon <= CA_BBOX.lonMax;
 import Supercluster from 'supercluster';
 import { apiFetch } from '../services/api';
 import { SavedLocationsOverlay } from './GoogleRiskMap';
@@ -133,7 +144,12 @@ function FireFacilitiesOverlay({
   fitBoundsRef?: React.MutableRefObject<(() => void) | null>;
 }) {
   const map = useMap();
-  const [overlay, setOverlay] = useState<GoogleMapsOverlay | null>(null);
+  // Ref-based overlay (v2.7 GoogleRiskMap pattern): create the deck.gl
+  // overlay ONCE on mount, then call setProps({layers}) on every state
+  // change. Was useState before — that recreated the GoogleMapsOverlay on
+  // every render, which tore down the canvas + caused the jumpy zoom flash
+  // users were seeing.
+  const overlayRef = useRef<GoogleMapsOverlay | null>(null);
   const [tooltip, setTooltip] = useState<any>(null);
   const [zoneTooltip, setZoneTooltip] = useState<any>(null);
   const [hoveredShelter, setHoveredShelter] = useState<any>(null);
@@ -230,13 +246,19 @@ function FireFacilitiesOverlay({
     apiFetch('/shelters?state=CA')
       .then(response => response.json())
       .then(data => {
-        console.log('Loaded shelters:', data.features.length);
-        // Filter for California only
-        const californiaFeatures = data.features.filter(
-          (f: any) => f.properties.state === 'CA' && f.properties.shelter_status_code !== 'DECOMMISSIONED'
-        );
-        console.log('California shelters:', californiaFeatures.length);
-        setFacilitiesData(californiaFeatures);
+        // User-facing page shows ONLY shelters that are currently active.
+        // Defensive CA-bbox filter on top of the server-side state=CA filter
+        // guards against any upstream feed bugs that slip a non-CA row in.
+        const filtered = (data.features || []).filter((f: any) => {
+          const p = f.properties || {};
+          if (p.state !== 'CA') return false;
+          if (String(p.shelter_status_code || '').toUpperCase() !== 'OPEN') return false;
+          const coords = f.geometry?.coordinates;
+          const lon = coords?.[0], lat = coords?.[1];
+          return isInCA(lat, lon);
+        });
+        console.log('Active CA shelters:', filtered.length, '/', (data.features || []).length, 'total');
+        setFacilitiesData(filtered);
       })
       .catch(error => {
         console.error('Error loading shelter data:', error);
@@ -331,11 +353,7 @@ function FireFacilitiesOverlay({
       !evacZones?.features?.length
     ) return;
 
-    // Clean up old overlay first
-    if (overlay) {
-      overlay.setMap(null);
-      overlay.finalize();
-    }
+    // No teardown — we update the existing overlay below via setProps.
 
     const colorForPct = (raw: any): [number, number, number, number] => {
       const pct = raw == null ? 0 : Number(raw);
@@ -449,10 +467,9 @@ function FireFacilitiesOverlay({
         })
       : null;
 
-    // Create new deck.gl overlay — order matters: bottom-up
+    // Build the layer list — order matters: bottom-up
     // (zone polygons → fire perimeters → shelters → zone pins on top so they're never hidden)
-    const deckOverlay = new GoogleMapsOverlay({
-      layers: [
+    const layers = [
         ...(evacZonePolygonLayer ? [evacZonePolygonLayer] : []),
         ...(fireLayer ? [fireLayer] : []),
         new IconLayer({
@@ -570,201 +587,166 @@ function FireFacilitiesOverlay({
           }
         }),
         ...(evacZoneMarkerLayer ? [evacZoneMarkerLayer] : []),
-      ]
-    });
+      ];
 
-    deckOverlay.setMap(map);
-    setOverlay(deckOverlay);
+    // Smooth path: reuse the existing overlay if we have one.
+    if (overlayRef.current) {
+      overlayRef.current.setProps({ layers });
+    } else {
+      overlayRef.current = new GoogleMapsOverlay({ layers });
+      overlayRef.current.setMap(map);
+    }
+    // No per-effect cleanup — the overlay lives for the lifetime of the
+    // component; an unmount-only effect (below) tears it down.
+  }, [map, clusteredData, firePerimeters, evacZones, showFires, showEvacZones]);
 
+  // Unmount-only teardown for the deck.gl overlay.
+  useEffect(() => {
     return () => {
-      if (deckOverlay) {
-        deckOverlay.setMap(null);
-        deckOverlay.finalize();
+      if (overlayRef.current) {
+        overlayRef.current.setMap(null);
+        overlayRef.current.finalize();
+        overlayRef.current = null;
       }
     };
-  }, [map, clusteredData, firePerimeters, evacZones, showFires, showEvacZones]);
+  }, []);
 
   return (
     <>
-      {zoneTooltip && (
-        <div
-          style={{
-            position: 'absolute',
-            zIndex: 1001,
-            left: zoneTooltip.x + 10,
-            top: zoneTooltip.y + 10,
-            backgroundColor: 'white',
-            padding: '12px',
-            borderRadius: '8px',
-            boxShadow: '0 4px 6px rgba(0,0,0,0.15)',
-            maxWidth: '320px',
-            border: '1px solid #e5e7eb',
-            fontSize: '12px',
-            lineHeight: '1.5',
-          }}
-        >
-          <button
-            onClick={() => setZoneTooltip(null)}
-            style={{
-              position: 'absolute', top: 6, right: 8,
-              background: 'none', border: 'none', cursor: 'pointer',
-              fontSize: 18, color: '#6b7280',
-            }}
-          >×</button>
-          <div style={{ fontWeight: 700, fontSize: 14, marginBottom: 4, paddingRight: 16 }}>
-            {zoneTooltip.props.ZONE_NAME || zoneTooltip.props.ZONE_ID || 'Evacuation Zone'}
-          </div>
-          {zoneTooltip.props.STATUS && (
-            <div style={{
-              display: 'inline-block', padding: '2px 8px', borderRadius: 4,
-              fontWeight: 600, marginBottom: 6,
-              backgroundColor:
-                zoneTooltip.props.STATUS.toLowerCase().includes('order')   ? '#fee2e2' :
-                zoneTooltip.props.STATUS.toLowerCase().includes('warning') ? '#ffedd5' :
-                zoneTooltip.props.STATUS.toLowerCase().includes('shelter') ? '#f3e8ff' : '#fef3c7',
-              color:
-                zoneTooltip.props.STATUS.toLowerCase().includes('order')   ? '#991b1b' :
-                zoneTooltip.props.STATUS.toLowerCase().includes('warning') ? '#9a3412' :
-                zoneTooltip.props.STATUS.toLowerCase().includes('shelter') ? '#6b21a8' : '#92400e',
-            }}>
-              {zoneTooltip.props.STATUS}
-            </div>
-          )}
-          {zoneTooltip.props.COUNTY && <div><strong>County:</strong> {zoneTooltip.props.COUNTY}</div>}
-          {zoneTooltip.props.EVENT_TYPE && <div><strong>Event:</strong> {zoneTooltip.props.EVENT_TYPE}</div>}
-          {zoneTooltip.props.CRITICAL_INFO && (
-            <div style={{ marginTop: 6, color: '#374151' }}>{zoneTooltip.props.CRITICAL_INFO}</div>
-          )}
-          {zoneTooltip.props.STATEWIDE_LAST_UPDATED && (
-            <div style={{ marginTop: 6, color: '#6b7280', fontSize: 11 }}>
-              Updated: {new Date(zoneTooltip.props.STATEWIDE_LAST_UPDATED).toLocaleString()}
-            </div>
-          )}
-          <div style={{ marginTop: 6, color: '#9ca3af', fontSize: 10 }}>
-            Source: Cal OES statewide aggregation
-          </div>
-        </div>
-      )}
+      {/* Floating legend — top-right of the map, shared with Research page. */}
+      <div className="absolute top-3 right-3 z-[5] pointer-events-auto">
+        <ShelterEvacLegend />
+      </div>
 
-      {tooltip && (
-        <div
-          style={{
-            position: 'absolute',
-            zIndex: 1000,
-            pointerEvents: 'auto',
-            left: tooltip.x + 10,
-            top: tooltip.y + 10,
-            backgroundColor: 'white',
-            padding: '12px',
-            borderRadius: '8px',
-            boxShadow: '0 4px 6px rgba(0,0,0,0.1)',
-            maxWidth: '300px',
-            border: '1px solid #e5e7eb',
-          }}
-        >
-          {/* Close button */}
-          <button
-            onClick={() => setTooltip(null)}
-            style={{
-              position: 'absolute',
-              top: '8px',
-              right: '8px',
-              background: 'none',
-              border: 'none',
-              cursor: 'pointer',
-              fontSize: '18px',
-              color: '#6b7280',
-              padding: '0',
-              width: '20px',
-              height: '20px',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-            }}
-          >
-            ×
-          </button>
-
-          <div style={{ marginBottom: '8px', paddingBottom: '8px', borderBottom: '1px solid #e5e7eb' }}>
-            <div style={{ fontWeight: 'bold', fontSize: '14px', marginBottom: '4px', paddingRight: '20px' }}>
-              {tooltip.content.shelter_name}
-            </div>
-            <div style={{ fontSize: '12px', color: '#6b7280' }}>
-              {getFacilityTypeName(tooltip.content.facility_usage_code)}
-            </div>
-          </div>
-
-          <div style={{ fontSize: '12px', lineHeight: '1.6' }}>
-            {tooltip.content.address_1 && (
-              <div><strong>Address:</strong> {tooltip.content.address_1}</div>
-            )}
-            {tooltip.content.city && (
-              <div><strong>City:</strong> {tooltip.content.city}, {tooltip.content.state} {tooltip.content.zip}</div>
-            )}
-            {tooltip.content.county_parish && (
-              <div><strong>County:</strong> {tooltip.content.county_parish}</div>
-            )}
-            {tooltip.content.evacuation_capacity > 0 && (
-              <div><strong>Evac Capacity:</strong> {tooltip.content.evacuation_capacity} people</div>
-            )}
-            {tooltip.content.post_impact_capacity > 0 && (
-              <div><strong>Post-Impact Capacity:</strong> {tooltip.content.post_impact_capacity} people</div>
-            )}
-            {tooltip.content.wheelchair_accessible === 'YES' && (
-              <div style={{color: '#16a34a'}}>♿ Wheelchair Accessible</div>
-            )}
-            {tooltip.content.generator_onsite === 'YES' && (
-              <div style={{color: '#16a34a'}}>⚡ Generator On-Site</div>
-            )}
-          </div>
-          {tooltip.content.latitude != null && tooltip.content.longitude != null && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 10 }}>
-              {onRouteTo && (
-                <button
-                  onClick={() => {
-                    onRouteTo({
-                      lat: tooltip.content.latitude,
-                      lng: tooltip.content.longitude,
-                      label: tooltip.content.shelter_name || 'Shelter',
-                    });
-                    setTooltip(null);
-                  }}
-                  style={{
-                    background: '#16a34a',
-                    color: 'white',
-                    padding: '8px 12px',
-                    borderRadius: 6,
-                    fontSize: 12,
-                    fontWeight: 600,
-                    border: 'none',
-                    cursor: 'pointer',
-                  }}
-                >
-                  Route on this map
-                </button>
+      {/* Evacuation zone info — centered card with every CalOES field we have. */}
+      <CenteredInfoCard
+        open={!!zoneTooltip}
+        onClose={() => setZoneTooltip(null)}
+        accent={
+          zoneTooltip?.props?.STATUS?.toLowerCase().includes('order')   ? 'bg-red-700'    :
+          zoneTooltip?.props?.STATUS?.toLowerCase().includes('warning') ? 'bg-amber-600'  :
+          zoneTooltip?.props?.STATUS?.toLowerCase().includes('shelter') ? 'bg-purple-600' :
+          'bg-yellow-500'
+        }
+        title={zoneTooltip?.props?.ZONE_NAME || zoneTooltip?.props?.ZONE_ID || 'Evacuation Zone'}
+        subtitle={zoneTooltip?.props?.COUNTY ? `${zoneTooltip.props.COUNTY} County` : undefined}
+      >
+        {zoneTooltip?.props && (() => {
+          const p = zoneTooltip.props;
+          const status: string = p.STATUS || '';
+          const lower = status.toLowerCase();
+          const statusBg =
+            lower.includes('order')   ? 'bg-red-100 text-red-900 border-red-200' :
+            lower.includes('warning') ? 'bg-amber-100 text-amber-900 border-amber-200' :
+            lower.includes('shelter') ? 'bg-purple-100 text-purple-900 border-purple-200' :
+            'bg-yellow-100 text-yellow-900 border-yellow-200';
+          return (
+            <div className="space-y-3">
+              {status && (
+                <span className={`inline-block px-2.5 py-1 rounded-md text-xs font-semibold border ${statusBg}`}>
+                  {status}
+                </span>
               )}
-              <a
-                href={`https://www.google.com/maps/dir/?api=1&destination=${tooltip.content.latitude},${tooltip.content.longitude}`}
-                target="_blank"
-                rel="noopener noreferrer"
-                style={{
-                  display: 'block',
-                  textAlign: 'center',
-                  background: '#2563eb',
-                  color: 'white',
-                  padding: '8px 12px',
-                  borderRadius: 6,
-                  fontSize: 12,
-                  fontWeight: 600,
-                  textDecoration: 'none',
-                }}
-              >
-                Open in Google Maps
-              </a>
+              <dl className="grid grid-cols-3 gap-x-3 gap-y-2 text-xs">
+                {p.ZONE_ID && (<><dt className="col-span-1 text-zinc-500">Zone ID</dt><dd className="col-span-2 font-mono text-[11px]">{p.ZONE_ID}</dd></>)}
+                {p.COUNTY && (<><dt className="col-span-1 text-zinc-500">County</dt><dd className="col-span-2">{p.COUNTY}</dd></>)}
+                {p.EVENT_TYPE && (<><dt className="col-span-1 text-zinc-500">Event</dt><dd className="col-span-2">{p.EVENT_TYPE}</dd></>)}
+                {p.STATEWIDE_LAST_UPDATED && (
+                  <>
+                    <dt className="col-span-1 text-zinc-500">Last updated</dt>
+                    <dd className="col-span-2">
+                      {new Date(p.STATEWIDE_LAST_UPDATED).toLocaleString()}
+                      {' '}
+                      <span className="text-zinc-400">({Math.max(1, Math.round((Date.now() - new Date(p.STATEWIDE_LAST_UPDATED).getTime()) / 60000))} min ago)</span>
+                    </dd>
+                  </>
+                )}
+              </dl>
+              {p.CRITICAL_INFO && (
+                <div className="border-l-3 border-red-500 pl-3 py-1 bg-red-50/60 text-zinc-900 text-sm rounded-r">
+                  <div className="font-semibold text-xs text-red-800 mb-0.5">Critical info</div>
+                  {p.CRITICAL_INFO}
+                </div>
+              )}
+              {p.PUBLIC_INFO && (
+                <div className="text-sm text-zinc-700">
+                  <div className="font-semibold text-xs text-zinc-500 mb-0.5">Public info</div>
+                  {p.PUBLIC_INFO}
+                </div>
+              )}
+              <div className="pt-2 border-t border-zinc-100 text-[11px] text-zinc-400">
+                Source: Cal OES statewide aggregation (CA_EVACUATIONS_PROD) — the same feed Watch Duty consumes.
+              </div>
             </div>
-          )}
-        </div>
-      )}
+          );
+        })()}
+      </CenteredInfoCard>
+
+      {/* Shelter info — centered card with every metadata field we have. */}
+      <CenteredInfoCard
+        open={!!tooltip}
+        onClose={() => setTooltip(null)}
+        accent="bg-emerald-600"
+        title={tooltip?.content?.shelter_name || 'Shelter'}
+        subtitle={getFacilityTypeName(tooltip?.content?.facility_usage_code) + (tooltip?.content?.facility_type ? ` · ${tooltip.content.facility_type}` : '')}
+      >
+        {tooltip?.content && (() => {
+          const s = tooltip.content;
+          const fields: Array<[string, string | number | undefined | null]> = [
+            ['Status', s.shelter_status_code],
+            ['Address', s.address_1],
+            ['City / ZIP', s.city ? `${s.city}, ${s.state || 'CA'} ${s.zip || ''}` : null],
+            ['County', s.county_parish],
+            ['Facility type', s.facility_type],
+            ['Facility usage', s.facility_usage_code],
+            ['Evac capacity', s.evacuation_capacity ? `${s.evacuation_capacity} people` : null],
+            ['Post-impact capacity', s.post_impact_capacity ? `${s.post_impact_capacity} people` : null],
+            ['Wheelchair accessible', s.wheelchair_accessible === 'YES' ? 'Yes' : null],
+            ['Generator on-site', s.generator_onsite === 'YES' ? 'Yes' : null],
+            ['Shelter ID', s.shelter_id ? String(s.shelter_id) : null],
+            ['Coordinates', s.latitude != null && s.longitude != null ? `${Number(s.latitude).toFixed(4)}, ${Number(s.longitude).toFixed(4)}` : null],
+          ];
+          return (
+            <div className="space-y-3">
+              <dl className="grid grid-cols-3 gap-x-3 gap-y-2 text-xs">
+                {fields.filter(([, v]) => v !== null && v !== undefined && v !== '').map(([k, v]) => (
+                  <div key={k} className="contents">
+                    <dt className="col-span-1 text-zinc-500">{k}</dt>
+                    <dd className="col-span-2 text-zinc-800 break-words">{v}</dd>
+                  </div>
+                ))}
+              </dl>
+              {s.latitude != null && s.longitude != null && (
+                <div className="grid grid-cols-2 gap-2 pt-2 border-t border-zinc-100">
+                  {onRouteTo && (
+                    <Button
+                      size="sm"
+                      className="bg-emerald-600 hover:bg-emerald-700"
+                      onClick={() => {
+                        onRouteTo({ lat: s.latitude, lng: s.longitude, label: s.shelter_name || 'Shelter' });
+                        setTooltip(null);
+                      }}
+                    >
+                      Route on this map
+                    </Button>
+                  )}
+                  <a
+                    href={`https://www.google.com/maps/dir/?api=1&destination=${s.latitude},${s.longitude}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center justify-center rounded-md bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-3 py-2"
+                  >
+                    Open in Google Maps
+                  </a>
+                </div>
+              )}
+              <div className="pt-2 border-t border-zinc-100 text-[11px] text-zinc-400">
+                Source: CalOES California Shelter system mirror of the FEMA NSS inventory.
+              </div>
+            </div>
+          );
+        })()}
+      </CenteredInfoCard>
 
       {/* Hover Tooltip - small tooltip on hover */}
       {hoveredShelter && !hoveredShelter.cluster && !tooltip && (
