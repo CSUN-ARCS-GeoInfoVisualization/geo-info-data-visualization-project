@@ -3,12 +3,27 @@ import { MapPin, Loader2, Plus } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { apiFetch } from "../services/api";
 
+interface ZoneRisk {
+  id: string;
+  name: string;
+  risk_pct: number | null;
+  label: string | null;
+}
+
+interface AllZones {
+  county: ZoneRisk | null;
+  zip: ZoneRisk | null;
+  neighborhood: ZoneRisk | null;
+  census_tract: ZoneRisk | null;
+}
+
 interface SavedLocation {
   id: number;
   name: string;
   address: string | null;
   lat: number;
   lon: number;
+  risk?: AllZones;
 }
 
 interface PredictionResult {
@@ -39,16 +54,38 @@ interface SavedLocationsWidgetProps {
   // Which zone's risk the badges should display. Driven by the map's selector
   // on the Dashboard so badges + map polygons always agree.
   zoneKey?: ApiZoneKey;
+  // Optional: parent already fetched locations with ?include=risk. When
+  // provided, skip our own fetch entirely so the badge isn't waiting on a
+  // duplicate /me/locations round trip.
+  locations?: SavedLocation[];
 }
 
-export function SavedLocationsWidget({ onAddLocation, zoneKey = "county" }: SavedLocationsWidgetProps) {
-  const [locations, setLocations] = useState<SavedLocation[]>([]);
+export function SavedLocationsWidget({ onAddLocation, zoneKey = "county", locations: locationsProp }: SavedLocationsWidgetProps) {
+  const [locations, setLocations] = useState<SavedLocation[]>(locationsProp ?? []);
   const [predictions, setPredictions] = useState<Record<number, PredictionResult>>({});
-  const [loading, setLoading] = useState(true);
+  const [loading, setLoading] = useState(locationsProp === undefined);
   const [predicting, setPredicting] = useState(false);
 
+  // Two render paths:
+  // 1. Parent provided `locations` (with .risk inlined): use those directly,
+  //    no fetch. Recompute badges whenever zoneKey or the list changes.
+  // 2. Parent didn't (legacy callers): fall back to fetching ourselves.
   useEffect(() => {
-    apiFetch("/me/locations")
+    if (locationsProp !== undefined) {
+      setLocations(locationsProp);
+      // Use inlined risk straight off each row — no extra round trip.
+      const map: Record<number, PredictionResult> = {};
+      for (const l of locationsProp) {
+        const z = l.risk?.[zoneKey];
+        if (z && z.label && z.risk_pct != null) {
+          map[l.id] = { risk_level: z.label, risk_probability: z.risk_pct / 100 };
+        }
+      }
+      setPredictions(map);
+      setLoading(false);
+      return;
+    }
+    apiFetch("/me/locations?include=risk")
       .then(async (r) => {
         if (r.ok) {
           const data: SavedLocation[] = await r.json();
@@ -56,19 +93,10 @@ export function SavedLocationsWidget({ onAddLocation, zoneKey = "county" }: Save
           if (data.length > 0) fetchPredictions(data, zoneKey);
         }
       })
-      .catch(() => {
-        /* backend unreachable */
-      })
+      .catch(() => {})
       .finally(() => setLoading(false));
   // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // When the map's zone selector changes, re-render badges from the same
-  // cached all-zones response (already fetched per location).
-  useEffect(() => {
-    if (locations.length > 0) fetchPredictions(locations, zoneKey);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [zoneKey]);
+  }, [locationsProp, zoneKey]);
 
   // Read each location's risk for the active zone type from the same cached
   // map data the dashboard map renders. Re-runs whenever zoneKey changes so

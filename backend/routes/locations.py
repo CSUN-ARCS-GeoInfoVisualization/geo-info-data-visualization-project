@@ -46,11 +46,45 @@ def _serialize(loc: UserLocation) -> dict:
 @locations_bp.route('/me/locations', methods=['GET'])
 @jwt_required()
 def get_locations():
+    """List the user's saved locations.
+
+    With ?include=risk, each row carries a `risk` object holding the same
+    four-zone payload that GET /me/locations/<id>/risk-by-all-zones returns.
+    The dashboard uses this to collapse a locations → risk waterfall into a
+    single round trip; without ?include=risk the response shape is unchanged.
+    """
     user_id = _coerce_user_id()
     if not user_id:
         return jsonify({'error': 'Invalid token'}), 401
     locs = UserLocation.query.filter_by(user_id=user_id).order_by(UserLocation.created_at).all()
-    return jsonify([_serialize(l) for l in locs])
+    include_risk = request.args.get('include') == 'risk'
+    if not include_risk:
+        return jsonify([_serialize(l) for l in locs])
+
+    out = []
+    for loc in locs:
+        row = _serialize(loc)
+        zones = resolve_all(loc.lat, loc.lon)
+        risk_obj = {}
+        for key in ('county', 'zip', 'neighborhood', 'census_tract'):
+            z = zones.get(key)
+            if not z:
+                risk_obj[key] = None
+                continue
+            cached = get_cached_zone_risk(key, z['id'])
+            if not cached or cached.get('risk_score') is None:
+                risk_obj[key] = {'id': z['id'], 'name': z['name'], 'risk_pct': None, 'label': None}
+                continue
+            pct = float(cached['risk_score'])
+            risk_obj[key] = {
+                'id':       z['id'],
+                'name':     z['name'],
+                'risk_pct': round(pct * 100, 1),
+                'label':    cached.get('label') or _label_for(pct),
+            }
+        row['risk'] = risk_obj
+        out.append(row)
+    return jsonify(out)
 
 
 @locations_bp.route('/me/locations', methods=['POST'])
