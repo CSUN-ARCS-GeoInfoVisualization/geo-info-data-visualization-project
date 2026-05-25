@@ -642,19 +642,19 @@ function FireFacilitiesOverlay({
         ...(evacZoneMarkerLayer ? [evacZoneMarkerLayer] : []),
       ];
 
-    // Smooth path: reuse the existing overlay if we have one.
+    // Dashboard GoogleRiskMap pattern: tear down and recreate on every
+    // effect. setProps({layers}) is smoother but appears to lose deck.gl
+    // picking event registration after the first round on this overlay
+    // (zone/shelter/fire onClicks stopped firing). Recreate-on-change is
+    // proven-working there; trade smoothness for reliable clicks here.
     if (overlayRef.current) {
-      overlayRef.current.setProps({ layers });
-    } else {
-      overlayRef.current = new GoogleMapsOverlay({ layers });
-      overlayRef.current.setMap(map);
+      overlayRef.current.setMap(null);
+      overlayRef.current.finalize();
+      overlayRef.current = null;
     }
-    // No per-effect cleanup — the overlay lives for the lifetime of the
-    // component; an unmount-only effect (below) tears it down.
-  }, [map, clusteredData, firePerimeters, evacZones, showFires, showEvacZones]);
-
-  // Unmount-only teardown for the deck.gl overlay.
-  useEffect(() => {
+    const fresh = new GoogleMapsOverlay({ layers });
+    fresh.setMap(map);
+    overlayRef.current = fresh;
     return () => {
       if (overlayRef.current) {
         overlayRef.current.setMap(null);
@@ -662,7 +662,7 @@ function FireFacilitiesOverlay({
         overlayRef.current = null;
       }
     };
-  }, []);
+  }, [map, clusteredData, firePerimeters, evacZones, showFires, showEvacZones]);
 
   return (
     <>
