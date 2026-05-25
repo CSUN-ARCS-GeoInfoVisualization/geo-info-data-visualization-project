@@ -494,7 +494,18 @@ function FireFacilitiesOverlay({
       ? new GeoJsonLayer({
           id: 'evac-nifc-perimeters',
           data: firePerimeters,
-          pickable: false,
+          pickable: true,
+          onClick: (info: any) => {
+            if (info.object) {
+              setZoneTooltipRef.current?.({
+                x: info.x,
+                y: info.y,
+                props: { ...(info.object.properties || {}), __kind: 'fire' },
+              });
+              return true;
+            }
+            return false;
+          },
           stroked: true,
           filled: true,
           lineWidthMinPixels: 3,
@@ -1153,15 +1164,24 @@ export function EvacuationRoutes() {
         routeTarget={routeTarget}
       />
 
-      {/* Active Evacuation Banner — visible only when CA has active orders */}
-      {activeZoneCount > 0 && (
-        <Alert className="border-l-4 border-l-red-500 bg-red-50">
-          <AlertTriangle className="h-4 w-4 text-red-600" />
-          <AlertDescription>
-            <div className="flex items-center justify-between gap-3 flex-wrap">
-              <div className="text-sm">
-                <strong className="text-red-700">{activeZoneCount} active evacuation order{activeZoneCount === 1 ? '' : 's'}</strong> in California right now (Cal OES live feed). They appear as red dots on the map below — click "Show on map" to zoom to them.
-              </div>
+      {/* Active Evacuation Banner — always visible so users see the live state,
+          even when zero. Matches the always-on shelter banner below. */}
+      <Alert className={`border-l-4 ${activeZoneCount > 0 ? 'border-l-red-500 bg-red-50' : 'border-l-zinc-300 bg-zinc-50'}`}>
+        <AlertTriangle className={`h-4 w-4 ${activeZoneCount > 0 ? 'text-red-600' : 'text-zinc-500'}`} />
+        <AlertDescription>
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <div className="text-sm">
+              {activeZoneCount > 0 ? (
+                <>
+                  <strong className="text-red-700">{activeZoneCount} active evacuation order{activeZoneCount === 1 ? '' : 's'}</strong> in California right now (Cal OES live feed). They appear as red dots on the map below — click "Show on map" to zoom to them.
+                </>
+              ) : (
+                <>
+                  <strong className="text-zinc-700">0 active evacuation orders</strong> in California right now (Cal OES live feed). When an order or warning is issued, it'll appear here automatically.
+                </>
+              )}
+            </div>
+            {activeZoneCount > 0 && (
               <Button
                 size="sm"
                 variant="destructive"
@@ -1169,10 +1189,10 @@ export function EvacuationRoutes() {
               >
                 Show on map
               </Button>
-            </div>
-          </AlertDescription>
-        </Alert>
-      )}
+            )}
+          </div>
+        </AlertDescription>
+      </Alert>
 
       {/* Active Shelter Banner — always visible so users see the live state,
           even when zero (the normal idle case in CalOES). */}

@@ -709,7 +709,7 @@ function ResearchMapView() {
                 left: 12,
                 bottom: 12,
                 width: 280,
-                zIndex: 50,
+                zIndex: 40, // below the top nav (z-100) so it doesn't cover Dashboard/News/etc links
                 pointerEvents: 'auto',
               }}
             >
@@ -733,20 +733,17 @@ function ResearchMapView() {
                     role="switch"
                     aria-checked={showShelters}
                     onClick={() => setShowShelters(v => !v)}
-                    className={`relative shrink-0 h-7 w-[68px] rounded-full transition-colors ${
-                      showShelters ? 'bg-emerald-600' : 'bg-red-500'
-                    }`}
+                    // Inline style for the background color so it can never be
+                    // overridden by a UI library's <button> reset stylesheet.
+                    style={{ background: showShelters ? '#16a34a' : '#ef4444' }}
+                    className="relative shrink-0 h-7 w-[68px] rounded-full transition-colors border-2 border-white shadow-inner"
                   >
-                    {/* Both labels always rendered (one hidden via opacity)
-                        so the layout is stable and the thumb's absolute
-                        position stays predictable across states. */}
                     <span className={`absolute left-2.5 top-1/2 -translate-y-1/2 text-[10px] font-bold text-white transition-opacity ${showShelters ? 'opacity-100' : 'opacity-0'}`}>ON</span>
                     <span className={`absolute right-2 top-1/2 -translate-y-1/2 text-[10px] font-bold text-white transition-opacity ${showShelters ? 'opacity-0' : 'opacity-100'}`}>OFF</span>
                     <span
                       aria-hidden="true"
-                      className={`absolute top-1 block h-5 w-5 rounded-full bg-white shadow transition-transform ${
-                        showShelters ? 'translate-x-[42px]' : 'translate-x-1'
-                      }`}
+                      style={{ transform: showShelters ? 'translateX(40px)' : 'translateX(2px)' }}
+                      className="absolute top-[2px] block h-[18px] w-[18px] rounded-full bg-white shadow transition-transform"
                     />
                   </button>
                 </div>
@@ -814,6 +811,42 @@ function ResearchMapView() {
                         <div>Discovered: <span className="font-medium text-foreground">{new Date(Number(selectedPerimeter.attr_FireDiscoveryDateTime)).toLocaleString()}</span></div>
                       )}
                       <div className="pt-1">Source: <a href="https://data-nifc.opendata.arcgis.com/" target="_blank" rel="noopener noreferrer" className="underline">NIFC WFIGS</a></div>
+                    </div>
+                  </div>
+                )}
+
+                {/* Selected shelter — same sidebar pattern as Selected fire,
+                    populated when a shelter pin is clicked. */}
+                {showShelters && selectedShelter && (
+                  <div className="pt-3 border-t">
+                    <div className="flex items-center justify-between mb-2">
+                      <div className="text-[10px] uppercase tracking-wider text-muted-foreground">Selected shelter</div>
+                      <button onClick={() => setSelectedShelter(null)} className="text-[10px] text-muted-foreground hover:text-foreground">clear</button>
+                    </div>
+                    <div className="font-bold text-sm mb-1.5">{selectedShelter.shelter_name || 'Shelter'}</div>
+                    <div className="space-y-1 text-xs text-muted-foreground">
+                      {selectedShelter.shelter_status_code && (
+                        <div>Status: <span className={`font-medium ${String(selectedShelter.shelter_status_code).toUpperCase() === 'OPEN' ? 'text-emerald-700' : 'text-zinc-700'}`}>{selectedShelter.shelter_status_code}</span></div>
+                      )}
+                      {selectedShelter.address_1 && <div>Address: <span className="font-medium text-foreground">{selectedShelter.address_1}</span></div>}
+                      {selectedShelter.city && <div>City / ZIP: <span className="font-medium text-foreground">{selectedShelter.city}, {selectedShelter.state || 'CA'} {selectedShelter.zip || ''}</span></div>}
+                      {selectedShelter.county_parish && <div>County: <span className="font-medium text-foreground">{selectedShelter.county_parish}</span></div>}
+                      {selectedShelter.facility_type && <div>Facility: <span className="font-medium text-foreground">{selectedShelter.facility_type}</span></div>}
+                      {selectedShelter.facility_usage_code && <div>Usage: <span className="font-medium text-foreground">{selectedShelter.facility_usage_code}</span></div>}
+                      {selectedShelter.evacuation_capacity ? <div>Evac capacity: <span className="font-medium text-foreground">{selectedShelter.evacuation_capacity} people</span></div> : null}
+                      {selectedShelter.post_impact_capacity ? <div>Post-impact capacity: <span className="font-medium text-foreground">{selectedShelter.post_impact_capacity} people</span></div> : null}
+                      {selectedShelter.wheelchair_accessible === 'YES' && <div className="text-emerald-700">♿ Wheelchair accessible</div>}
+                      {selectedShelter.generator_onsite === 'YES' && <div className="text-emerald-700">⚡ Generator on-site</div>}
+                      {selectedShelter.latitude != null && selectedShelter.longitude != null && (
+                        <div className="pt-1">
+                          <a
+                            href={`https://www.google.com/maps/dir/?api=1&destination=${selectedShelter.latitude},${selectedShelter.longitude}`}
+                            target="_blank" rel="noopener noreferrer"
+                            className="text-xs underline text-blue-600"
+                          >Open in Google Maps</a>
+                        </div>
+                      )}
+                      <div className="pt-1">Source: <a href="https://data.ca.gov/" target="_blank" rel="noopener noreferrer" className="underline">CalOES CA Shelter system</a></div>
                     </div>
                   </div>
                 )}
@@ -928,25 +961,57 @@ function ResearchMapView() {
                 )}
               </div>
             </div>
-            {/* Map overlay legend */}
-            <div className="absolute bottom-3 left-3 bg-white/90 backdrop-blur-sm rounded-lg p-3 shadow-lg text-xs">
-              <div className="font-medium mb-1">Risk Zones</div>
-              <div className="flex gap-1 mb-1">
-                {[
-                  { c: "rgba(34,197,94,0.5)", l: "Low" },
-                  { c: "rgba(234,179,8,0.6)", l: "Med" },
-                  { c: "rgba(220,38,38,0.6)", l: "High" },
-                  { c: "rgba(153,27,27,0.7)", l: "Ext" },
-                ].map(({ c, l }) => (
-                  <div key={l} className="flex items-center gap-1">
-                    <div className="w-4 h-3 border border-gray-300" style={{ backgroundColor: c }} />
-                    <span>{l}</span>
-                  </div>
-                ))}
-              </div>
-            </div>
           </div>
 
+      {/* Full map legend BELOW the map — comprehensive key covering every
+          layer that can currently be on, mirrors what other pages show. */}
+      <div className="rounded-lg border bg-white p-4">
+        <div className="text-xs font-semibold text-zinc-900 uppercase tracking-wide mb-3">Map legend</div>
+        <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 text-xs">
+          <LegendBlock title="Risk zones" items={[
+            { color: 'rgb(220,38,38)', label: 'Very High (≥0.66)' },
+            { color: 'rgb(234,179,8)', label: 'Moderate (0.33–0.66)' },
+            { color: 'rgb(34,197,94)', label: 'Low (<0.33)' },
+          ]} />
+          <LegendBlock title="Fire perimeter" items={[
+            { color: 'rgb(220,38,38)', label: 'Uncontained (<25%)' },
+            { color: 'rgb(249,115,22)', label: '25–49% contained' },
+            { color: 'rgb(250,204,21)', label: '50–99% contained' },
+            { color: 'rgb(229,231,235)', label: 'Contained (≥100%)' },
+          ]} />
+          <LegendBlock title="FIRMS hotspots" gradient />
+          <LegendBlock title="Shelters" items={[
+            { color: 'rgb(59,130,246)', label: 'Evacuation (EVAC)' },
+            { color: 'rgb(34,197,94)',  label: 'Post-impact (POST)' },
+            { color: 'rgb(147,51,234)', label: 'Both' },
+            { color: 'rgb(156,163,175)', label: 'Other facility' },
+          ]} />
+        </div>
+      </div>
+
+    </div>
+  );
+}
+
+function LegendBlock({ title, items, gradient }: { title: string; items?: { color: string; label: string }[]; gradient?: boolean }) {
+  return (
+    <div>
+      <div className="text-[11px] font-medium text-zinc-600 mb-1.5">{title}</div>
+      {gradient ? (
+        <>
+          <div className="h-2 rounded" style={{ background: 'linear-gradient(to right, rgb(34,197,94), rgb(234,179,8), rgb(234,88,12), rgb(220,38,38), rgb(153,27,27))' }} />
+          <div className="flex justify-between text-[10px] text-zinc-500 mt-0.5"><span>low</span><span>high</span></div>
+        </>
+      ) : (
+        <div className="space-y-1">
+          {items?.map(({ color, label }) => (
+            <div key={label} className="flex items-center gap-2">
+              <span className="inline-block h-3 w-3 rounded shrink-0" style={{ background: color }} aria-hidden="true" />
+              <span className="text-zinc-700">{label}</span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
