@@ -223,6 +223,44 @@ def serve_cached(
     return _respond(entry, cache_control)
 
 
+def get_cached_data(
+    cache_key: str,
+    ttl_seconds: int,
+    compute_fn: Callable[[], object],
+    *,
+    db_freshness_seconds: int | None = None,
+):
+    """Same 3-tier cache as serve_cached, but returns the raw data dict
+    instead of a Flask Response. Use from background jobs / cron endpoints
+    that need to consume the cached payload internally without doing an
+    HTTP self-call (which would deadlock the gunicorn worker)."""
+    db_freshness = db_freshness_seconds if db_freshness_seconds is not None else ttl_seconds * 5
+    now = _time.time()
+
+    cached = _mem.get(cache_key)
+    if cached and cached['expires'] > now and 'data' in cached:
+        return cached['data']
+
+    db_entry = _load_from_db(cache_key)
+    if db_entry is not None and 'data' in db_entry:
+        age = now - (db_entry.get('computed_at') or 0)
+        if age <= db_freshness:
+            db_entry['expires'] = now + ttl_seconds
+            _mem[cache_key] = db_entry
+            return db_entry['data']
+
+    lock = _get_lock(cache_key)
+    with lock:
+        cached = _mem.get(cache_key)
+        if cached and cached['expires'] > now and 'data' in cached:
+            return cached['data']
+        data = compute_fn()
+        entry = _make_entry(data, ttl_seconds)
+        _mem[cache_key] = entry
+        _save_to_db(cache_key, entry)
+    return data
+
+
 def invalidate(cache_key: str) -> None:
     """Force-evict from both tiers. Used by admin endpoints or migrations."""
     _mem.pop(cache_key, None)

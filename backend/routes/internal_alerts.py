@@ -534,33 +534,57 @@ def _haversine_km(lat1, lon1, lat2, lon2):
 
 
 def _fetch_active_evac_zones():
-    """Self-call our own /evacuation-zones endpoint so we share its cache layer.
+    """Direct in-process call to the same cache layer the HTTP endpoint uses.
 
-    Generous timeout (90s) because the self-call can queue behind concurrent
-    user traffic on gunicorn. A 20s timeout was silently returning [] and the
-    cron decided 'no active zones' when in fact CalOES had 10. We'd rather
-    block the cron a bit than miss alerts.
+    Self-calling /api/evacuation-zones over HTTP from within a gunicorn
+    worker risks a self-deadlock (worker calls itself, hits its own
+    request queue, times out at gunicorn's --timeout=90, dies). Pulling
+    via the cache helper avoids the network hop entirely + still shares
+    the 60s in-memory and 10min DB cache the public endpoint uses.
     """
-    base = os.getenv("INTERNAL_SELF_BASE", "http://127.0.0.1:10000")
     try:
-        r = requests.get(f"{base}/api/evacuation-zones", timeout=90)
-        r.raise_for_status()
-        return r.json().get("features", []) or []
+        from services.cache import get_cached_data
+        from routes.predict import _compute_evac_zones
+        data = get_cached_data(
+            cache_key='evac_zones',
+            ttl_seconds=60,
+            compute_fn=_compute_evac_zones,
+            db_freshness_seconds=600,
+        )
+        return (data or {}).get("features", []) or []
     except Exception as e:
         logger.error("evac fetch failed: %s — alerts will skip this tick", e)
         return []
 
 
 def _fetch_open_shelters():
-    base = os.getenv("INTERNAL_SELF_BASE", "http://127.0.0.1:10000")
+    """Direct in-process call to the shelters cache helper. Same rationale
+    as _fetch_active_evac_zones — no HTTP self-call from inside a gunicorn
+    worker."""
     try:
-        # 120s — shelters payload is 8014 rows / ~400KB. The self-call can
-        # queue behind concurrent user traffic. Silent timeout = missed alerts.
-        r = requests.get(f"{base}/api/shelters?state=CA", timeout=120)
-        r.raise_for_status()
-        data = r.json() or []
-        items = data.get("shelters") if isinstance(data, dict) else data
-        return [s for s in (items or [])
+        from services.cache import get_cached_data
+        from routes.shelters import _compute_shelters, CACHE_TTL
+        data = get_cached_data(
+            cache_key='shelters_ca',
+            ttl_seconds=CACHE_TTL,
+            compute_fn=_compute_shelters,
+            db_freshness_seconds=CACHE_TTL * 2,
+        )
+        # /api/shelters returns GeoJSON features OR a flat list depending on
+        # the cache helper shape; handle both. Normalize to the flat row
+        # format internal_alerts expects (lat/lon at top level).
+        feats = (data or {}).get("features") if isinstance(data, dict) else None
+        if feats is not None:
+            rows = []
+            for f in feats:
+                p = (f.get("properties") or {}).copy()
+                c = (f.get("geometry") or {}).get("coordinates") or []
+                if len(c) >= 2:
+                    p["latitude"], p["longitude"] = c[1], c[0]
+                rows.append(p)
+        else:
+            rows = data if isinstance(data, list) else []
+        return [s for s in rows
                 if str(s.get("shelter_status_code", "")).upper() == "OPEN"
                 and s.get("latitude") is not None and s.get("longitude") is not None]
     except Exception as e:
