@@ -224,22 +224,22 @@ export function NotificationSettings({ onNavigateToLocations }: NotificationSett
           <ChannelRow
             icon={<Newspaper className="h-4 w-4 text-amber-500" />}
             title="Breaking fire news"
-            description="Email when major new wildfire stories are published."
+            description="Hourly email when new is_breaking=true wildfire stories are published (NWS Red Flag Warnings, GNews feed)."
             checked={prefs.breaking_news_enabled && prefs.opted_in && prefs.email_enabled}
             onChange={(c) => setPrefs({ ...prefs, breaking_news_enabled: c })}
             disabled={!prefs.opted_in || !prefs.email_enabled}
-            badge="Coming soon"
+            badge={null}
           />
 
           {/* Evacuation */}
           <ChannelRow
             icon={<Siren className="h-4 w-4 text-orange-600" />}
             title="Evacuation warnings & orders"
-            description="Email when an active evacuation zone overlaps any of your saved locations, plus nearby open shelters."
+            description="Every 10 min — email when an active CalOES evacuation zone overlaps any of your saved locations (or is in the same county), plus the 3 nearest open shelters."
             checked={prefs.evacuation_enabled && prefs.opted_in && prefs.email_enabled}
             onChange={(c) => setPrefs({ ...prefs, evacuation_enabled: c })}
             disabled={!prefs.opted_in || !prefs.email_enabled}
-            badge="Coming soon"
+            badge={null}
           />
         </CardContent>
       </Card>
