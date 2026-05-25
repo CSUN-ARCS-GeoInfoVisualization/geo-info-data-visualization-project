@@ -84,6 +84,22 @@ migrations/versions/c0d1e2f3a4b5_alert_state_signature.py                 (NEW)
 scripts/predeploy.sh                (helper for Render preDeploy)
 ```
 
+### Runbook — DO NOT manually clear zone_risk_cache
+
+**Forbidden:** `DELETE FROM zone_risk_cache;` or any psql/SQLA invalidation of those four rows. It causes a thundering-herd recompute storm that exhausts the SQLAlchemy pool and looks like a full outage from the user side (`/health` and `/login` block behind 30-second pool timeouts while gunicorn workers wait for free connections).
+
+**Allowed instead:**
+
+```bash
+bash scripts/refresh-zone-cache.sh
+```
+
+That script hits each `/risk-by-*` endpoint sequentially (not in parallel), waits for each compute to finish before triggering the next, and bails on the first failure. Once it finishes the cache is warm; user requests serve from it instantly.
+
+If you really need to drop the cached payloads (schema change, label scheme change), run the refresh script **first** so the new compute is already running, then invalidate — that way no user ever sees a cold-cache request.
+
+The DB pool was bumped to `pool_size=20, max_overflow=30, pool_pre_ping=True, pool_recycle=300` in `backend/config.py` so a single cold zone won't starve everyone, but the script discipline is the durable fix — don't rely on the pool ceiling alone.
+
 ### Verify the v2.8 alerts stack is healthy
 
 ```bash
