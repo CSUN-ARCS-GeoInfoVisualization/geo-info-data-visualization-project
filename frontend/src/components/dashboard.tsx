@@ -54,14 +54,25 @@ async function fetchWeather(lat: number, lng: number): Promise<WeatherData> {
   };
 }
 
-function toRiskLevel(apiLevel: string): RiskLevel {
-  const map: Record<string, RiskLevel> = {
-    Low: "low",
-    Medium: "moderate",
-    High: "high",
-    Extreme: "extreme",
-  };
-  return map[apiLevel] ?? "low";
+function toRiskLevel(apiLevel: string | null | undefined): RiskLevel {
+  // Compress the server's 9-tier scale into the 4 visual badge buckets.
+  switch (apiLevel) {
+    case "Catastrophic":
+    case "Critical":
+    case "Extreme":
+      return "extreme";
+    case "Severe":
+    case "Very High":
+    case "High":
+      return "high";
+    case "Elevated":
+    case "Guarded":
+    case "Medium":
+      return "moderate";
+    case "Low":
+    default:
+      return "low";
+  }
 }
 
 const DEFAULT_LOCATION: SavedLocation = {
@@ -127,18 +138,31 @@ export function Dashboard({ onAddLocation }: DashboardProps) {
       .finally(() => setWeatherLoading(false));
 
     setRiskLevel(null);
-    apiFetch("/predict/batch", {
-      method: "POST",
-      body: JSON.stringify({ items: [{ lat: loc.lat, lon: loc.lon }] }),
-    })
-      .then(async (r) => {
-        if (r.ok) {
-          const data = await r.json();
-          const level = data.results[0]?.prediction?.risk_level;
-          if (level) setRiskLevel(toRiskLevel(level));
-        }
-      })
-      .catch(() => {});
+    // Single source of truth: same cached zone-risk the map shows.
+    // For saved locations, hit risk-by-all-zones and read .county.label.
+    // For the LA default (no DB row), look up Los Angeles County in the
+    // public /research/risk-by-county cache directly.
+    if (loc.id > 0) {
+      apiFetch(`/me/locations/${loc.id}/risk-by-all-zones`)
+        .then(async (r) => {
+          if (r.ok) {
+            const data = await r.json();
+            const label = data.county?.label;
+            if (label) setRiskLevel(toRiskLevel(label));
+          }
+        })
+        .catch(() => {});
+    } else {
+      apiFetch("/research/risk-by-county")
+        .then(async (r) => {
+          if (r.ok) {
+            const data = await r.json();
+            const label = data.counties?.["Los Angeles"]?.label;
+            if (label) setRiskLevel(toRiskLevel(label));
+          }
+        })
+        .catch(() => {});
+    }
   }, [selectedId, locations]);
 
   const selectedLocation = locations.find((l) => l.id === selectedId) ?? null;
