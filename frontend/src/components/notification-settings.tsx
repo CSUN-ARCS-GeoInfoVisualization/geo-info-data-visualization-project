@@ -213,7 +213,7 @@ export function NotificationSettings({ onNavigateToLocations }: NotificationSett
           <ChannelRow
             icon={<Flame className="h-4 w-4 text-red-500" />}
             title="High risk near your saved locations"
-            description="Email when one of your saved locations is at High risk (70%+) or above."
+            description="Email when one of your saved locations is at Very High risk (60%+) or above on the 5-tier NFDRS scale."
             checked={prefs.high_risk_enabled && prefs.opted_in && prefs.email_enabled}
             onChange={tryToggleHighRisk}
             disabled={!prefs.opted_in || !prefs.email_enabled}

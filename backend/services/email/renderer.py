@@ -6,67 +6,46 @@ from typing import Any, Dict, List, Optional, Tuple
 
 
 def _risk_level_from_score(score: float) -> str:
-    """Map numeric score (0-100) to a user-facing tier label."""
-    if score >= 95: return "Catastrophic"
-    if score >= 90: return "Critical"
-    if score >= 85: return "Extreme"
-    if score >= 80: return "Severe"
-    if score >= 75: return "Very High"
-    if score >= 70: return "High"
-    if score >= 65: return "Elevated"
-    if score >= 55: return "Guarded"
-    if score >= 50: return "Moderate"
-    if score >= 25: return "Low"
-    return "Very Low"
+    """Map numeric score (0-100) to NFDRS 5-tier label. Matches
+    backend/ml/inference.risk_label and frontend lib/riskTiers.ts.
+    """
+    if score >= 80: return "Extreme"
+    if score >= 60: return "Very High"
+    if score >= 40: return "High"
+    if score >= 20: return "Moderate"
+    return "Low"
 
 
 def _risk_badge_color(score: float) -> str:
-    if score >= 95: return "#991b1b"
-    if score >= 90: return "#dc2626"
-    if score >= 85: return "#f87171"
-    if score >= 80: return "#c2410c"
-    if score >= 75: return "#f97316"
-    if score >= 70: return "#fb923c"
-    if score >= 65: return "#ca8a04"
-    if score >= 55: return "#facc15"
-    if score >= 50: return "#84cc16"
-    if score >= 25: return "#16a34a"
+    if score >= 80: return "#7f1d1d"
+    if score >= 60: return "#dc2626"
+    if score >= 40: return "#f97316"
+    if score >= 20: return "#facc15"
     return "#22c55e"
 
 
-# Tier-specific urgency copy — drives subject, headline, and body.
-# Keyed by floor score; resolve by first matching threshold top-down.
+# Tier-specific urgency copy — keyed by floor score, resolved top-down.
 _TIER_TEMPLATES = [
-    (95, {
-        "urgency":  "IMMEDIATE ACTION MAY BE REQUIRED",
-        "headline": "Catastrophic fire conditions — evacuate if ordered",
+    (80, {
+        "urgency":  "EXTREME — IMMEDIATE ACTION MAY BE REQUIRED",
+        "headline": "Extreme fire risk — evacuate if ordered",
         "body": (
-            "Conditions in your area are at the highest risk tier FireScope tracks. "
+            "Conditions in your area are at the highest tier of the National Fire Danger Rating System. "
             "If local authorities issue an evacuation order, LEAVE IMMEDIATELY. "
             "Do not wait for further confirmation."
         ),
         "cta": "Check the live map now",
     }),
-    (90, {
-        "urgency":  "CRITICAL — PREPARE TO LEAVE",
-        "headline": "Critical fire risk in your area",
+    (60, {
+        "urgency":  "VERY HIGH RISK — PREPARE TO LEAVE",
+        "headline": "Very High fire risk in your area",
         "body": (
-            "Fire conditions are critical. Pack a go-bag, keep your phone charged, "
-            "and monitor official evacuation channels. Vehicles should be fueled and "
-            "facing outward."
+            "Multiple fire-weather drivers are converging. Pack a go-bag, keep your phone charged, "
+            "fuel vehicles facing outward, and monitor official evacuation channels."
         ),
         "cta": "View current perimeters",
     }),
-    (80, {
-        "urgency":  "SEVERE — STAY VIGILANT",
-        "headline": "Severe fire risk — be ready to act",
-        "body": (
-            "Multiple risk drivers are converging in your area. Review your evacuation route, "
-            "move flammable material away from your home, and stay alert for updates."
-        ),
-        "cta": "Open FireScope",
-    }),
-    (70, {
+    (40, {
         "urgency":  "HIGH RISK ALERT",
         "headline": "High fire risk — stay alert",
         "body": (
@@ -75,19 +54,19 @@ _TIER_TEMPLATES = [
         ),
         "cta": "See what changed",
     }),
-    (50, {
-        "urgency":  "ELEVATED RISK",
-        "headline": "Elevated fire risk in your area",
+    (20, {
+        "urgency":  "MODERATE RISK",
+        "headline": "Moderate fire risk in your area",
         "body": (
-            "Conditions have crossed your alert threshold. This is a reminder to stay situationally "
-            "aware — clear debris from around your home and review your family's evacuation plan."
+            "Conditions are above baseline but not yet critical. Clear debris from around your home "
+            "and review your family's evacuation plan."
         ),
         "cta": "View details",
     }),
     (0, {
-        "urgency":  "INFORMATIONAL",
+        "urgency":  "LOW RISK — INFORMATIONAL",
         "headline": "Fire risk update",
-        "body": "Conditions in your area are currently below elevated risk levels.",
+        "body": "Conditions in your area are currently low.",
         "cta": "Open FireScope",
     }),
 ]
