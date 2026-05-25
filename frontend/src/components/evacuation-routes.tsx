@@ -135,6 +135,8 @@ function FireFacilitiesOverlay({
   showEvacZones = true,
   onZonesLoaded,
   fitBoundsRef,
+  onSheltersLoaded,
+  fitSheltersRef,
 }: {
   smallDots?: boolean;
   onRouteTo?: (target: { lat: number; lng: number; label: string }) => void;
@@ -142,6 +144,8 @@ function FireFacilitiesOverlay({
   showEvacZones?: boolean;
   onZonesLoaded?: (count: number) => void;
   fitBoundsRef?: React.MutableRefObject<(() => void) | null>;
+  onSheltersLoaded?: (count: number) => void;
+  fitSheltersRef?: React.MutableRefObject<(() => void) | null>;
 }) {
   const map = useMap();
   // Ref-based overlay (v2.7 GoogleRiskMap pattern): create the deck.gl
@@ -221,6 +225,29 @@ function FireFacilitiesOverlay({
     };
   }, [map, evacZones, fitBoundsRef]);
 
+  // Same pattern for shelters — fit map to all open shelter points.
+  useEffect(() => {
+    if (!fitSheltersRef) return;
+    if (!map || facilitiesData.length === 0) {
+      fitSheltersRef.current = null;
+      return;
+    }
+    fitSheltersRef.current = () => {
+      const bounds = new google.maps.LatLngBounds();
+      for (const f of facilitiesData) {
+        const c = f.geometry?.coordinates;
+        if (c && typeof c[0] === 'number') bounds.extend({ lng: c[0], lat: c[1] });
+      }
+      if (!bounds.isEmpty()) {
+        map.fitBounds(bounds, 80);
+        const listener = google.maps.event.addListenerOnce(map, 'idle', () => {
+          if ((map.getZoom() || 0) > 11) map.setZoom(11);
+        });
+        void listener;
+      }
+    };
+  }, [map, facilitiesData, fitSheltersRef]);
+
   // Shelter facility type icons and colors based on usage code
   const getFacilityStyle = (usageCode: string, facilityType: string) => {
     // EVAC = Evacuation only, POST = Post-impact only, BOTH = Both uses
@@ -259,6 +286,7 @@ function FireFacilitiesOverlay({
         });
         console.log('Active CA shelters:', filtered.length, '/', (data.features || []).length, 'total');
         setFacilitiesData(filtered);
+        onSheltersLoaded?.(filtered.length);
       })
       .catch(error => {
         console.error('Error loading shelter data:', error);
@@ -1039,6 +1067,8 @@ export function EvacuationRoutes() {
   const [showEvacZones, setShowEvacZones] = useState(true);
   const [activeZoneCount, setActiveZoneCount] = useState(0);
   const fitZonesRef = useRef<(() => void) | null>(null);
+  const [openShelterCount, setOpenShelterCount] = useState(0);
+  const fitSheltersRef = useRef<(() => void) | null>(null);
 
   const handleRouteTo = (target: { lat: number; lng: number; label: string }) => {
     setRouteTarget(target);
@@ -1125,6 +1155,27 @@ export function EvacuationRoutes() {
         </Alert>
       )}
 
+      {/* Active Shelter Banner — visible only when CA has OPEN shelters */}
+      {openShelterCount > 0 && (
+        <Alert className="border-l-4 border-l-emerald-600 bg-emerald-50">
+          <Shield className="h-4 w-4 text-emerald-700" />
+          <AlertDescription>
+            <div className="flex items-center justify-between gap-3 flex-wrap">
+              <div className="text-sm">
+                <strong className="text-emerald-700">{openShelterCount} open shelter{openShelterCount === 1 ? '' : 's'}</strong> in California right now (CalOES live feed). They appear as green pins on the map below — click "Show on map" to zoom to them.
+              </div>
+              <Button
+                size="sm"
+                className="bg-emerald-600 hover:bg-emerald-700"
+                onClick={() => fitSheltersRef.current?.()}
+              >
+                Show on map
+              </Button>
+            </div>
+          </AlertDescription>
+        </Alert>
+      )}
+
       {/* Interactive Map with Fire Facilities */}
       <Card>
         <CardHeader className="flex flex-row items-center justify-between flex-wrap gap-3">
@@ -1180,6 +1231,8 @@ export function EvacuationRoutes() {
                 showEvacZones={showEvacZones}
                 onZonesLoaded={setActiveZoneCount}
                 fitBoundsRef={fitZonesRef}
+                onSheltersLoaded={setOpenShelterCount}
+                fitSheltersRef={fitSheltersRef}
               />
               <SavedLocationsOverlay />
             </Map>

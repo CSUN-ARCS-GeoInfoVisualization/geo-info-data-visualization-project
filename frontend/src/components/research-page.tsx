@@ -732,22 +732,36 @@ function ResearchMapView() {
               }}
             >
               <div className="p-4 space-y-4 text-sm">
-                {/* Researcher-only shelter overlay toggle. Default OFF. */}
-                <div className="rounded-md border bg-zinc-50/50 px-3 py-2 flex items-center justify-between gap-3">
-                  <div className="min-w-0">
-                    <div className="text-xs font-medium text-zinc-900">Shelter overlay</div>
-                    <div className="text-[11px] text-zinc-500">All {shelters.length || '8,014'} CA shelters as density. Zoom in for pins.</div>
+                {/* Researcher-only shelter overlay toggle. Default OFF.
+                    More prominent styling so users notice it. */}
+                <button
+                  type="button"
+                  onClick={() => setShowShelters(v => !v)}
+                  className={`w-full rounded-md border-2 px-3 py-2.5 flex items-center justify-between gap-3 transition-colors ${
+                    showShelters
+                      ? 'border-emerald-500 bg-emerald-50'
+                      : 'border-zinc-300 bg-white hover:border-emerald-400 hover:bg-emerald-50/30'
+                  }`}
+                  aria-pressed={showShelters}
+                >
+                  <div className="min-w-0 text-left">
+                    <div className={`text-xs font-semibold flex items-center gap-1.5 ${showShelters ? 'text-emerald-900' : 'text-zinc-900'}`}>
+                      <span className={`inline-block h-2 w-2 rounded-full ${showShelters ? 'bg-emerald-600 animate-pulse' : 'bg-zinc-400'}`} />
+                      Shelter overlay
+                    </div>
+                    <div className={`text-[11px] mt-0.5 ${showShelters ? 'text-emerald-700' : 'text-zinc-500'}`}>
+                      {showShelters
+                        ? `${shelters.length || 'Loading…'} CA shelters — zoom for pins`
+                        : 'Show all 8,014 CA shelters'}
+                    </div>
                   </div>
-                  <button
-                    type="button"
-                    role="switch"
-                    aria-checked={showShelters}
-                    onClick={() => setShowShelters(v => !v)}
-                    className={`h-5 w-9 shrink-0 rounded-full transition-colors ${showShelters ? 'bg-emerald-600' : 'bg-zinc-300'}`}
+                  <span
+                    className={`h-5 w-9 shrink-0 rounded-full transition-colors relative ${showShelters ? 'bg-emerald-600' : 'bg-zinc-300'}`}
+                    aria-hidden="true"
                   >
-                    <span className={`block h-4 w-4 rounded-full bg-white shadow transition-transform ${showShelters ? 'translate-x-4' : 'translate-x-0.5'}`} />
-                  </button>
-                </div>
+                    <span className={`absolute top-0.5 block h-4 w-4 rounded-full bg-white shadow transition-transform ${showShelters ? 'translate-x-[1.125rem]' : 'translate-x-0.5'}`} />
+                  </span>
+                </button>
 
                 <div>
                   <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">Map view</div>
