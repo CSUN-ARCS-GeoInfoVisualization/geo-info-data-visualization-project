@@ -160,22 +160,6 @@ function RequestAccessView({ isGuest, onLoginRequired }: { isGuest?: boolean; on
 }
 
 /* ------------------------------------------------------------------ */
-/*  Tiny zoom watcher — exposes the live map zoom to React state so    */
-/*  the shelter heatmap → pins crossfade can react to it.              */
-/* ------------------------------------------------------------------ */
-function ZoomTracker({ onZoom }: { onZoom: (z: number) => void }) {
-  const map = useMap();
-  useEffect(() => {
-    if (!map) return;
-    const fire = () => { const z = map.getZoom(); if (typeof z === 'number') onZoom(z); };
-    fire();
-    const lis = map.addListener('zoom_changed', fire);
-    return () => { lis.remove(); };
-  }, [map, onZoom]);
-  return null;
-}
-
-/* ------------------------------------------------------------------ */
 /*  deck.gl overlay — renders inside <Map> using useMap()              */
 /* ------------------------------------------------------------------ */
 interface UnifiedOverlayProps {
@@ -191,8 +175,6 @@ interface UnifiedOverlayProps {
   /** Researcher-only: all 8014 CA shelters. */
   shelters?: any[];
   showShelters?: boolean;
-  /** Current map zoom — drives the heatmap → pins crossfade. */
-  zoom?: number;
   onShelterClick?: (shelter: any) => void;
 }
 
@@ -202,7 +184,7 @@ function getRiskColor(score: number): [number, number, number, number] {
   return [34, 197, 94, 110];
 }
 
-function UnifiedResearchOverlay({ features, showHeatmap, zoneGeoJson, zoneRiskData, zoneNameKey, onZoneClick, nifcPerimeters, showPerimeters, onPerimeterClick, shelters = [], showShelters = false, zoom = 6, onShelterClick }: UnifiedOverlayProps) {
+function UnifiedResearchOverlay({ features, showHeatmap, zoneGeoJson, zoneRiskData, zoneNameKey, onZoneClick, nifcPerimeters, showPerimeters, onPerimeterClick, shelters = [], showShelters = false, onShelterClick }: UnifiedOverlayProps) {
   const map = useMap();
   const overlayRef = useRef<GoogleMapsOverlay | null>(null);
   // Refs so callback identity changes don't tear down the overlay (was a major flicker source)
@@ -341,59 +323,52 @@ function UnifiedResearchOverlay({ features, showHeatmap, zoneGeoJson, zoneRiskDa
       );
     }
 
-    // 5. Shelters (researcher-only). Heatmap fades out, pins fade in, around zoom 12.
+    // 5. Shelters (researcher-only). Same SVG-circle-with-emoji icons as the
+    // user-facing Shelters & Evac page, colored by facility_usage_code:
+    //   EVAC = blue, POST = green, BOTH = purple, default = gray.
+    // 8014 icons in one deck.gl IconLayer is well within budget — no
+    // clustering, no heatmap. Smooth because UnifiedResearchOverlay's ref
+    // pattern only calls setProps on data change, never rebuilds the canvas.
     if (showShelters && shelters.length > 0) {
-      const HEATMAP_FADE_END = 12;   // heatmap fully invisible at zoom >= 12
-      const PINS_FADE_START = 11;    // pins start appearing at zoom 11
-      const PINS_FADE_END = 13;      // pins fully visible at zoom >= 13
-      const heatmapOpacity = Math.max(0, Math.min(1, (HEATMAP_FADE_END - zoom) / 2));
-      const pinsOpacity = Math.max(0, Math.min(1, (zoom - PINS_FADE_START) / (PINS_FADE_END - PINS_FADE_START)));
-
-      if (heatmapOpacity > 0.01) {
-        layers.push(
-          new HeatmapLayer({
-            id: "shelter-heatmap",
-            data: shelters,
-            getPosition: (s: any) => [s.longitude, s.latitude],
-            getWeight: () => 1,
-            radiusPixels: 40, intensity: 1.0, threshold: 0.04, opacity: heatmapOpacity,
-            // Same green->amber->red ramp the legend speaks.
-            colorRange: [
-              [22, 163, 74, 60], [22, 163, 74, 120], [234, 179, 8, 160],
-              [217, 119, 6, 180], [127, 29, 29, 200],
-            ],
-          })
-        );
-      }
-      if (pinsOpacity > 0.01) {
-        layers.push(
-          new IconLayer({
-            id: "shelter-pins",
-            data: shelters,
-            pickable: true,
-            opacity: pinsOpacity,
-            getPosition: (s: any) => [s.longitude, s.latitude],
-            getSize: 22,
-            getIcon: () => ({
+      const usageStyle = (usageCode: string): { color: string; emoji: string } => {
+        switch ((usageCode || '').toUpperCase()) {
+          case 'EVAC': return { color: 'rgb(59,130,246)',  emoji: '🏃' };  // blue
+          case 'POST': return { color: 'rgb(34,197,94)',   emoji: '🏠' };  // green
+          case 'BOTH': return { color: 'rgb(147,51,234)',  emoji: '🏛️' };  // purple
+          default:     return { color: 'rgb(156,163,175)', emoji: '🏢' };  // gray
+        }
+      };
+      layers.push(
+        new IconLayer({
+          id: 'shelter-pins',
+          data: shelters,
+          pickable: true,
+          getPosition: (s: any) => [s.longitude, s.latitude],
+          getSize: 32,
+          getIcon: (s: any) => {
+            const { color, emoji } = usageStyle(s.facility_usage_code);
+            const size = 32, radius = 14, fontSize = 14;
+            return {
               url: 'data:image/svg+xml;utf8,' + encodeURIComponent(
-                '<svg width="22" height="22" xmlns="http://www.w3.org/2000/svg">' +
-                '<circle cx="11" cy="11" r="9" fill="#16a34a" stroke="white" stroke-width="2"/>' +
-                '<path d="M6 11l4 4 6-7" fill="none" stroke="white" stroke-width="2"/>' +
-                '</svg>'
+                `<svg width="${size}" height="${size}" xmlns="http://www.w3.org/2000/svg">` +
+                `<circle cx="${size/2}" cy="${size/2}" r="${radius}" fill="${color}" stroke="white" stroke-width="2"/>` +
+                `<text x="${size/2}" y="${size/2 + fontSize/2.5}" font-size="${fontSize}" text-anchor="middle" fill="white">${emoji}</text>` +
+                `</svg>`
               ),
-              width: 22, height: 22, anchorY: 22,
-            }),
-            onClick: (info: any) => {
-              const cb = onShelterClickRef.current;
-              if (cb && info.object) cb(info.object);
-            },
-          })
-        );
-      }
+              width: size, height: size, anchorY: size,
+            };
+          },
+          onClick: (info: any) => {
+            const cb = onShelterClickRef.current;
+            if (cb && info.object) cb(info.object);
+          },
+          updateTriggers: { getIcon: [shelters.length] },
+        })
+      );
     }
 
     overlayRef.current.setProps({ layers });
-  }, [features, showHeatmap, zoneGeoJson, zoneRiskData, zoneNameKey, nifcPerimeters, showPerimeters, shelters, showShelters, zoom]);
+  }, [features, showHeatmap, zoneGeoJson, zoneRiskData, zoneNameKey, nifcPerimeters, showPerimeters, shelters, showShelters]);
 
   return null;
 }
@@ -408,7 +383,6 @@ function ResearchMapView() {
   const [showShelters, setShowShelters] = useState(false);
   const [shelters, setShelters] = useState<any[]>([]);
   const [selectedShelter, setSelectedShelter] = useState<any | null>(null);
-  const [mapZoom, setMapZoom] = useState(6);
   useEffect(() => {
     if (!showShelters || shelters.length > 0) return;
     apiFetch('/shelters?state=CA').then(r => r.ok ? r.json() : { features: [] }).then(data => {
@@ -621,13 +595,11 @@ function ResearchMapView() {
               gestureHandling="greedy"
               mapTypeId="terrain"
             >
-              <ZoomTracker onZoom={setMapZoom} />
               <UnifiedResearchOverlay
                 features={features}
                 showHeatmap={showHeatmap}
                 shelters={shelters}
                 showShelters={showShelters}
-                zoom={mapZoom}
                 onShelterClick={setSelectedShelter}
                 zoneGeoJson={showZones ? zoneGeoJson : null}
                 zoneRiskData={zoneRiskData}
