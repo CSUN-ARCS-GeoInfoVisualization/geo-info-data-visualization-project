@@ -129,6 +129,25 @@ export function FireNews() {
     loadRecent();
   }, [loadRecent]);
 
+  // Deep-link to a specific article via `#article-<id>` (set by breaking-news
+  // alert emails). Wait until the relevant card has rendered, then scroll it
+  // into view and pulse a ring so the user can find it.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const hash = window.location.hash;
+    if (!hash.startsWith("#article-")) return;
+    if (items.length === 0) return; // wait for the list to render
+    const id = hash.slice("#article-".length);
+    const el = document.getElementById(`article-${id}`);
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "start" });
+    el.classList.add("ring-2", "ring-red-400", "ring-offset-2");
+    const t = setTimeout(() => {
+      el.classList.remove("ring-2", "ring-red-400", "ring-offset-2");
+    }, 4000);
+    return () => clearTimeout(t);
+  }, [items]);
+
   const loadOlder = useCallback(async () => {
     if (!hasMoreToLoad) return;
     setLoadingOlder(true);
@@ -215,7 +234,11 @@ export function FireNews() {
   const renderArticleCard = (article: NewsArticleDTO) => {
     const bucket = SOURCE_BUCKET_COPY[article.source_bucket] ?? SOURCE_BUCKET_COPY.emergency;
     return (
-      <Card key={article.id} className={article.is_breaking ? "border-red-200 bg-red-50/30" : ""}>
+      <Card
+        key={article.id}
+        id={`article-${article.id}`}
+        className={`scroll-mt-20 transition-shadow ${article.is_breaking ? "border-red-200 bg-red-50/30" : ""}`}
+      >
         <CardHeader>
           <div className="flex items-start justify-between gap-4">
             <div className="flex-1 min-w-0">
