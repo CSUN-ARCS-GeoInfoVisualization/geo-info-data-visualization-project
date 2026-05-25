@@ -534,21 +534,29 @@ def _haversine_km(lat1, lon1, lat2, lon2):
 
 
 def _fetch_active_evac_zones():
-    """Self-call our own /evacuation-zones endpoint so we share its cache layer."""
+    """Self-call our own /evacuation-zones endpoint so we share its cache layer.
+
+    Generous timeout (90s) because the self-call can queue behind concurrent
+    user traffic on gunicorn. A 20s timeout was silently returning [] and the
+    cron decided 'no active zones' when in fact CalOES had 10. We'd rather
+    block the cron a bit than miss alerts.
+    """
     base = os.getenv("INTERNAL_SELF_BASE", "http://127.0.0.1:10000")
     try:
-        r = requests.get(f"{base}/api/evacuation-zones", timeout=20)
+        r = requests.get(f"{base}/api/evacuation-zones", timeout=90)
         r.raise_for_status()
         return r.json().get("features", []) or []
     except Exception as e:
-        logger.warning("evac fetch failed: %s", e)
+        logger.error("evac fetch failed: %s — alerts will skip this tick", e)
         return []
 
 
 def _fetch_open_shelters():
     base = os.getenv("INTERNAL_SELF_BASE", "http://127.0.0.1:10000")
     try:
-        r = requests.get(f"{base}/api/shelters?state=CA", timeout=30)
+        # 120s — shelters payload is 8014 rows / ~400KB. The self-call can
+        # queue behind concurrent user traffic. Silent timeout = missed alerts.
+        r = requests.get(f"{base}/api/shelters?state=CA", timeout=120)
         r.raise_for_status()
         data = r.json() or []
         items = data.get("shelters") if isinstance(data, dict) else data
@@ -556,7 +564,7 @@ def _fetch_open_shelters():
                 if str(s.get("shelter_status_code", "")).upper() == "OPEN"
                 and s.get("latitude") is not None and s.get("longitude") is not None]
     except Exception as e:
-        logger.warning("shelters fetch failed: %s", e)
+        logger.error("shelters fetch failed: %s — shelter-opened alerts will skip this tick", e)
         return []
 
 
