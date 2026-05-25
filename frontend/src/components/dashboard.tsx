@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Thermometer, Droplets, Wind, Eye, MapPin } from "lucide-react";
+import { Thermometer, Droplets, Wind, Eye, MapPin, Info } from "lucide-react";
 import { RiskLevelBadge, RiskLevel } from "./risk-level-badge";
 import { ConditionCard } from "./condition-card";
 import { RiskChart } from "./risk-chart";
@@ -201,6 +201,32 @@ export function Dashboard({ onAddLocation }: DashboardProps) {
           <MapPin className="h-4 w-4 text-blue-500 shrink-0" />
           <p className="text-sm text-blue-800">
             Showing data for <strong>Los Angeles</strong> (default). Save a location to see personalized weather and fire risk for your area.
+          </p>
+        </div>
+      )}
+
+      {/* Zone-selector note — only meaningful for users with saved locations
+          who are switching the map's zone level. Stays out of the way for
+          default-LA users (who get the bigger banner above instead). */}
+      {!usingDefault && mapZoneLevel !== "counties" && (
+        <div className="rounded-lg bg-zinc-50 border border-zinc-200 px-4 py-2.5 flex items-start gap-2">
+          <Info className="h-4 w-4 text-zinc-500 shrink-0 mt-0.5" />
+          <p className="text-xs text-zinc-700 leading-relaxed">
+            Risk values on this page now reflect the{" "}
+            <strong>{mapZoneLevel === "zip-codes" ? "ZIP code" : mapZoneLevel === "neighborhoods" ? "neighborhood" : "census tract"}</strong>{" "}
+            your saved location sits inside — the same value shown on the map polygon. Switch the dropdown above the map to compare different scopes.
+          </p>
+        </div>
+      )}
+
+      {/* Default-LA users get a smaller note when they pick a non-county
+          zone: we can't resolve their ZIP/neighborhood/tract without a
+          saved point, so the badge stays county-level. */}
+      {usingDefault && mapZoneLevel !== "counties" && (
+        <div className="rounded-lg bg-amber-50 border border-amber-200 px-4 py-2.5 flex items-start gap-2">
+          <Info className="h-4 w-4 text-amber-600 shrink-0 mt-0.5" />
+          <p className="text-xs text-amber-800 leading-relaxed">
+            Risk badges below stay at <strong>county</strong> level until you save a location. ZIP-, neighborhood-, and census-tract-level personalization needs an exact point to look up.
           </p>
         </div>
       )}
