@@ -1,7 +1,7 @@
 # FireScope
 
-**Live site:** https://firescope.netlify.app
-**Latest stable:** [`v2.7-stable`](https://github.com/CSUN-ARCS-GeoInfoVisualization/geo-info-data-visualization-project/releases/tag/v2.7-stable) — site-wide performance overhaul. 16 endpoints under 1 s, 11 under 500 ms. See [`docs/SESSION_HANDOFF.md`](docs/SESSION_HANDOFF.md) to pick up where the team left off.
+**Live site:** https://firescope.dev (custom domain) · https://firescope.netlify.app
+**Latest stable:** [`v2.8-stable`](https://github.com/CSUN-ARCS-GeoInfoVisualization/geo-info-data-visualization-project/releases/tag/v2.8-stable) — full alerts system end-to-end: custom domain + Resend email (DKIM/SPF verified) + three opt-in channels (high-risk zones, breaking fire news, evacuation orders with nearest shelters) + three GitHub-Actions cron workflows + change-driven dedup. Every risk surface on the site now reads from one cached source of truth. See [`docs/SESSION_HANDOFF.md`](docs/SESSION_HANDOFF.md) to pick up where the team left off.
 
 California wildfire risk visualization and prediction platform. Senior research project at California State University, Northridge (2025–2026).
 
@@ -12,7 +12,7 @@ FireScope aggregates open-source wildfire data from government agencies, satelli
 - **Geospatial ingestion** — CAL FIRE, NIFC WFIGS, NASA FIRMS, NASA MODIS EVI, Open-Meteo, FEMA NSS
 - **Machine-learning risk prediction** — calibrated scikit-learn random forest over 6 live features (EVI, air temperature, wind, humidity, elevation, KBDI drought index). Sigmoid-calibrated with spatial-block cross-validation; per-feature SHAP attribution in `backend/ml/RESULTS.md`
 - **Map-based visualization** — deck.gl + Google Maps with risk zones, active fire perimeters, historical perimeters (1950–present), evacuation routes, and emergency shelters
-- **Alerts and notifications** — user-defined risk thresholds with email delivery
+- **Alerts and notifications** — three opt-in email channels (high-risk zones for your saved locations, breaking fire news, evacuation orders with nearest open shelters), powered by Resend on `alerts@firescope.dev`, scheduled via three GitHub-Actions cron workflows (every 30/60/10 min). State-driven dedup so users only get re-emailed when the situation actually changes.
 
 ## Team
 
@@ -29,7 +29,7 @@ FireScope aggregates open-source wildfire data from government agencies, satelli
 - **History page** — 22k+ CAL FIRE perimeters back to 1878, year selector, fire search dropdown, click-to-inspect info card with decoded CAUSE codes, and per-year **CAL FIRE DINS structure damage** (2013→present) overlaid on each year's perimeters with a per-fire damage breakdown (Destroyed / Major / Minor / Affected / No Damage) so users immediately see whether a fire was a 0-structure wildland burn or a catastrophic urban-interface event. Year-aggregate card surfaces totals (e.g., "22,701 destroyed across 35 fires" for 2018)
 - **Shelters & Evacuation** — 8,014 California pre-staged emergency shelters (CalOES mirror of the FEMA NSS dataset) with click-to-route both inside the FireScope map (Google DirectionsService polyline) and via "Open in Google Maps" turn-by-turn. Live statewide active **evacuation orders / warnings / advisories / shelter-in-place** zones from the Cal OES `CA_EVACUATIONS_PROD` aggregation (the same source Watch Duty consumes — pulls Genasys PROTECT zones plus county sheriffs). Always-visible centroid pins, "Show on map" zoom-to-fit banner, 60 s auto-refresh.
 - **Active Fires** — NIFC year-to-date perimeters with CAL FIRE + WFIGS containment enrichment
-- **Alerts** — NWS Red Flag Warnings, GNews wildfire articles, user-threshold email notifications
+- **Alerts page** — Per-user opt-in with master switch + three channel toggles (high-risk zones / breaking news / evacuation). No-saved-location guard for the high-risk toggle. Real backend, no localStorage stub. NWS Red Flag Warnings + GNews wildfire articles flow into the breaking-news channel.
 - **Admin** — User management, refresh schedules, model configuration
 
 ## Repository Structure
