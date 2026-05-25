@@ -152,7 +152,10 @@ export function SettingsPage({ defaultTab = "profile" }: SettingsPageProps) {
 
           {/* Alert Preferences — reuses the full NotificationSettings component */}
           {activeTab === "notifications" && (
-            <NotificationSettings token={localStorage.getItem("token") || ""} />
+            <NotificationSettings
+              token={localStorage.getItem("token") || ""}
+              onNavigateToLocations={() => setActiveTab("locations")}
+            />
           )}
 
           {/* About — Data Sources & Credits */}
