@@ -155,8 +155,17 @@ function FireFacilitiesOverlay({
   // users were seeing.
   const overlayRef = useRef<GoogleMapsOverlay | null>(null);
   const [tooltip, setTooltip] = useState<any>(null);
+  // Callback refs so the layer onClicks in setProps keep firing even when
+  // the layer instances get recreated. Without this, after the first
+  // setProps round the closures pointed at stale React state setters.
+  const setTooltipRef = useRef(setTooltip);
+  const setZoneTooltipRef = useRef<any>(null);
+  const setHoveredShelterRef = useRef<any>(null);
+  useEffect(() => { setTooltipRef.current = setTooltip; }, []);
   const [zoneTooltip, setZoneTooltip] = useState<any>(null);
+  useEffect(() => { setZoneTooltipRef.current = setZoneTooltip; }, []);
   const [hoveredShelter, setHoveredShelter] = useState<any>(null);
+  useEffect(() => { setHoveredShelterRef.current = setHoveredShelter; }, []);
   const [facilitiesData, setFacilitiesData] = useState<any[]>([]);
   const [clusteredData, setClusteredData] = useState<any[]>([]);
   const [firePerimeters, setFirePerimeters] = useState<any>(null);
@@ -444,12 +453,14 @@ function FireFacilitiesOverlay({
           },
           onClick: (info: any) => {
             if (info.object) {
-              setZoneTooltip({
+              setZoneTooltipRef.current?.({
                 x: info.x,
                 y: info.y,
                 props: info.object.properties || {},
               });
+              return true;
             }
+            return false;
           },
         })
       : null;
@@ -471,8 +482,10 @@ function FireFacilitiesOverlay({
           lineWidthMinPixels: 2,
           onClick: (info: any) => {
             if (info.object) {
-              setZoneTooltip({ x: info.x, y: info.y, props: info.object.props });
+              setZoneTooltipRef.current?.({ x: info.x, y: info.y, props: info.object.props });
+              return true;
             }
+            return false;
           },
         })
       : null;
@@ -575,9 +588,9 @@ function FireFacilitiesOverlay({
           // Add hover handler
           onHover: (info: any) => {
             if (info.object) {
-              setHoveredShelter(info.object.properties);
+              setHoveredShelterRef.current?.(info.object.properties);
             } else {
-              setHoveredShelter(null);
+              setHoveredShelterRef.current?.(null);
             }
           },
 
@@ -601,7 +614,7 @@ function FireFacilitiesOverlay({
                 // Show tooltip for individual shelter
                 const props = info.object.properties;
                 const coords = info.object.geometry?.coordinates;
-                setTooltip({
+                setTooltipRef.current?.({
                   x: info.x,
                   y: info.y,
                   content: {
@@ -611,6 +624,7 @@ function FireFacilitiesOverlay({
                   }
                 });
               }
+              return true;
             }
           }
         }),
@@ -641,9 +655,14 @@ function FireFacilitiesOverlay({
 
   return (
     <>
-      {/* Floating legend — top-right of the map, shared with Research page. */}
-      <div className="absolute top-3 right-3 z-[5] pointer-events-auto">
-        <ShelterEvacLegend />
+      {/* Floating legend — top-right of the map, shared with Research page.
+          Wrapper is pointer-events-none so map clicks pass through the empty
+          space beside the legend; the legend card itself re-enables pointer
+          events so users can still interact with any links inside it. */}
+      <div className="absolute top-3 right-3 z-[5] pointer-events-none">
+        <div className="pointer-events-auto">
+          <ShelterEvacLegend />
+        </div>
       </div>
 
       {/* Evacuation zone info — centered card with every CalOES field we have. */}
