@@ -1,0 +1,38 @@
+name: Alerts — High-Risk Sweep
+
+# Slice 1A: every 30 min, hit the internal high-risk cron endpoint on Render.
+# It iterates every opted-in user with high_risk_enabled=true, scores each of
+# their saved locations through the ML model, and emails them if any location
+# is at the "High" tier (≥70) or above. Per-user/per-tier dedup inside 24h.
+
+on:
+  schedule:
+    - cron: '*/30 * * * *'
+  workflow_dispatch: {}  # manual trigger from the Actions tab
+
+jobs:
+  fire:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: POST /api/internal/alerts/high-risk
+        env:
+          API_BASE: https://firescope-api.onrender.com
+          TOKEN: ${{ secrets.INTERNAL_CRON_TOKEN }}
+        run: |
+          set -e
+          if [ -z "$TOKEN" ]; then
+            echo "::error::INTERNAL_CRON_TOKEN repository secret is not set"
+            exit 1
+          fi
+          RESP=$(curl -sS --max-time 120 \
+            -X POST "$API_BASE/api/internal/alerts/high-risk" \
+            -H "X-Internal-Token: $TOKEN" \
+            -H "Content-Type: application/json" \
+            -w "\nHTTP_STATUS=%{http_code}")
+          echo "$RESP"
+          STATUS=$(echo "$RESP" | grep -oE 'HTTP_STATUS=[0-9]+' | cut -d= -f2)
+          if [ "$STATUS" != "200" ]; then
+            echo "::error::Cron call failed with status $STATUS"
+            exit 1
+          fi
