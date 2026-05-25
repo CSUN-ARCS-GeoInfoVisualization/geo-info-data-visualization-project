@@ -14,12 +14,27 @@ interface DashboardProps {
   onAddLocation?: () => void;
 }
 
+interface ZoneRisk {
+  id: string;
+  name: string;
+  risk_pct: number | null;
+  label: string | null;
+}
+
+interface AllZones {
+  county: ZoneRisk | null;
+  zip: ZoneRisk | null;
+  neighborhood: ZoneRisk | null;
+  census_tract: ZoneRisk | null;
+}
+
 interface SavedLocation {
   id: number;
   name: string;
   address: string | null;
   lat: number;
   lon: number;
+  risk?: AllZones;
 }
 
 interface WeatherData {
@@ -117,7 +132,9 @@ export function Dashboard({ onAddLocation }: DashboardProps) {
   }, []);
 
   useEffect(() => {
-    apiFetch("/me/locations")
+    // include=risk inlines the 4-zone risk payload on every row so the
+    // badge + 'My Locations' widget don't need a second waterfall fetch.
+    apiFetch("/me/locations?include=risk")
       .then(async (r) => {
         if (r.ok) {
           const data: SavedLocation[] = await r.json();
@@ -156,26 +173,13 @@ export function Dashboard({ onAddLocation }: DashboardProps) {
       .finally(() => setWeatherLoading(false));
 
     setRiskLevel(null);
-    // Single source of truth: same cached zone-risk the map shows. Badge
-    // follows the map's zone selector (counties / ZIPs / neighborhoods /
-    // census tracts) so the number on the page always matches the polygon
-    // the user is currently looking at.
+    // Risk is already inlined on `loc` via ?include=risk — no extra fetch.
+    // Falls back to the public county cache only for the default-LA case.
     const apiKey = apiKeyForMapZone(mapZoneLevel);
     if (loc.id > 0) {
-      apiFetch(`/me/locations/${loc.id}/risk-by-all-zones`)
-        .then(async (r) => {
-          if (r.ok) {
-            const data = await r.json();
-            const label = data[apiKey]?.label;
-            if (label) setRiskLevel(toRiskLevel(label));
-          }
-        })
-        .catch(() => {});
+      const label = loc.risk?.[apiKey]?.label;
+      if (label) setRiskLevel(toRiskLevel(label));
     } else {
-      // Default LA: only county is trivially derivable without a saved
-      // location (we don't know which ZIP / neighborhood / tract you're in).
-      // Show county-tier risk regardless of map zone choice — saving a
-      // real location unlocks the rest.
       apiFetch("/research/risk-by-county")
         .then(async (r) => {
           if (r.ok) {
@@ -327,7 +331,11 @@ export function Dashboard({ onAddLocation }: DashboardProps) {
           <div className="lg:col-span-2">
             <GoogleRiskMap zoneLevel={mapZoneLevel} onZoneLevelChange={setMapZoneLevel} />
           </div>
-          <SavedLocationsWidget onAddLocation={onAddLocation} zoneKey={apiKeyForMapZone(mapZoneLevel)} />
+          <SavedLocationsWidget
+            onAddLocation={onAddLocation}
+            zoneKey={apiKeyForMapZone(mapZoneLevel)}
+            locations={usingDefault ? [] : locations}
+          />
         </div>
         <ActiveFiresMap />
       </section>
