@@ -1,11 +1,119 @@
 # FireScope — Session Handoff
 
-**Stable tag:** `v2.7-stable` (commit `b7de089`, 2026-05-21)
-**Live URL:** https://firescope.netlify.app
+**Stable tag:** `v2.8-stable` (commit `f7fa324`, 2026-05-25)
+**Live URL:** https://firescope.dev (custom domain, HTTPS) · https://firescope.netlify.app
 **API:** https://firescope-api.onrender.com/api
-**GitHub Release:** https://github.com/CSUN-ARCS-GeoInfoVisualization/geo-info-data-visualization-project/releases/tag/v2.7-stable
+**GitHub Release:** https://github.com/CSUN-ARCS-GeoInfoVisualization/geo-info-data-visualization-project/releases/tag/v2.8-stable
 
 This document is the single source of truth for picking up FireScope work in a fresh session. Read this first, then `README.md`, then jump in.
+
+---
+
+## What v2.8-stable adds (on top of v2.7)
+
+### Custom domain + production email pipeline
+
+1. **`firescope.dev`** purchased on Porkbun, DNS pointed at Netlify (`ALIAS @ → apex-loadbalancer.netlify.com`, `CNAME www → firescope.netlify.app`). Both apex and `www` serve HTTPS via Let's Encrypt; `www` 301s to apex.
+2. **Resend on the domain** — `alerts@firescope.dev` verified with DKIM TXT + SPF TXT + SPF MX records in Porkbun DNS. Render env now carries `RESEND_API_KEY`, `SENDER_EMAIL`, `SENDER_NAME`, `EMAIL_PROVIDER=resend`.
+3. **`flask db upgrade` on every deploy** — Render's `preDeployCommand` runs it before traffic shifts. A `backend/__init__.py` sys-path shim makes `from models import db` resolve both when the gunicorn `startCommand` runs from `backend/` (uses `rootDir`) and when `flask db upgrade` runs from project root during preDeploy (where `rootDir` is ignored). Failed migrations roll the deploy back automatically.
+
+### Alerts system — three pipelines end-to-end
+
+| Channel | Endpoint | GHA cron | Cadence | Per-event behavior |
+|---|---|---|---|---|
+| **High Risk Zone** | `POST /api/internal/alerts/high-risk` | `alerts-high-risk.yml` | `*/30 * * * *` | Email when any of the user's saved locations crosses tier 0.70 (High) across any of the 4 zone types. Body lists county / ZIP / neighborhood / census tract risk per location. |
+| **Breaking Fire News** | `POST /api/internal/alerts/breaking-news` | `alerts-breaking-news.yml` | `0 * * * *` | Up to 8 newest `is_breaking=true` articles since the user's last news send. Source: `news_articles` table (NWS Red Flag Warnings + GNews feed). |
+| **Evacuation** | `POST /api/internal/alerts/evacuation` | `alerts-evacuation.yml` | `*/10 * * * *` | Ray-casting PIP of each saved location against CalOES active zones. One email per (user × zone). Body: zone name, county, `CRITICAL_INFO`, `PUBLIC_INFO`, plus the 3 nearest **open** shelters by haversine. Red banner for ORDER, amber for WARNING. |
+
+Auth on all three: `X-Internal-Token` header compared against the `INTERNAL_CRON_TOKEN` env var (stored both on Render and as a GitHub Actions repo secret). Endpoints `401` on missing/wrong token.
+
+**Dedup model.** `alert_activity.state_signature` is a SHA-256 hash of the alert state. The cron skips re-sending only when the signature is unchanged:
+
+- High-risk: `(tier_bucket, sorted_at_risk_location_ids)` — a tier jump or a new at-risk location both produce a fresh hash and re-fire.
+- Breaking news: sorted article IDs in the current batch — no new article = no email.
+- Evacuation: `evac:{ZONE_ID}` — each new active zone triggers exactly one email per affected user, never repeats for the same zone.
+
+**Perf short-circuit on quiet days.** When CalOES has zero active zones the evac cron returns immediately without scanning users or fetching the 8014-row shelters payload — drops the response from ~20 s to ~200 ms.
+
+### Single source of truth for risk numbers
+
+The map's cached zone-risk data (`/api/research/risk-by-county` + `/api/research/risk-by-zone/<type>`) is now the canonical risk for every surface on the site:
+
+4. **`backend/data/zone_resolver.py`** — pure-Python ray-casting PIP against the boundary GeoJSON files; resolves (lat, lon) → county / ZIP / neighborhood / census tract. CA county polygons come from `backend/data/boundaries/counties.json` (TIGER-derived, 416 KB).
+5. **`backend/routes/research.get_cached_zone_risk(zone_type, zone_id)`** — internal lookup that hits the same `_zone_risk_cache` chain the public endpoints serve from. Memory → Postgres → fresh compute fallback. Microseconds on hit.
+6. **`GET /api/me/locations/<id>/risk-by-all-zones`** — for a saved location, returns the cached risk for all four zone types in one shot. Lazily resolves and persists the four zone IDs onto `user_locations` (`county_fips`, `zip_code`, `neighborhood_id`, `census_tract_id`).
+7. **`GET /api/me/locations?include=risk`** — inlines the four-zone risk on every row, **eliminating the dashboard's risk-fetch waterfall** (badge + 'My Locations' widget + 7-day chart now render with the locations list, ~3× faster than the pre-1B parallel-per-location fetch).
+
+### Frontend — alerts UI + zone-aware risk display
+
+8. **`notification-settings.tsx` full rewrite** — strips the localStorage shim, slider, blackout / pause-until / phone fields. Down from 548 → 280 lines. Master switch + three channel toggles + contact-email override, wired to `GET/PUT /api/me/notifications`. The High Risk toggle is gated by saved-location count: enabling it with zero locations pops a Dialog with a clickable "location" link that switches the settings tab to Locations.
+9. **`my-locations.tsx`** — zone-aware risk display. Pill selector (Counties / ZIP / Neighborhood / Census Tract) drives which zone's risk shows on every card; defaults to county.
+10. **Dashboard widgets follow the map's zone selector.** Lifted `GoogleRiskMap`'s zone dropdown to Dashboard state — changing it now also re-renders the "Current Risk Level" badge, the "My Locations" sidebar widget, and the 7-Day Forecast baseline against whichever zone you picked. Contextual notes appear when you go off Counties (grey note for saved-location users, amber note for default-LA users since we can't resolve ZIP/neighborhood/tract without a saved point).
+11. **`saved-locations-widget.tsx` + `risk-chart.tsx` + dashboard badge** all moved off `/predict` / `/predict/batch` and onto the cached zone data — the badges, the sidebar list, the chart's day-0 baseline, the side panel on the Locations page, and the alert email body all show **bit-identical numbers** for the same zone.
+
+### Hygiene
+
+12. **680 lines of orphan dead code removed.** `FirePerimetersLayer.tsx`, `map-placeholder.tsx`, `settings-panel.tsx`, `PredictionPanel.tsx`, `ui/PredictionConditionCard.tsx` — verified via grep + GitNexus audit (including dynamic imports). Build still green.
+
+### Files touched in v2.8
+
+```
+README.md
+docs/SESSION_HANDOFF.md            (this file)
+render.yaml                        (preDeployCommand)
+backend/__init__.py                (sys.path shim)
+backend/models.py                  (NotificationPreference channel toggles, UserLocation zone IDs, AlertActivity.state_signature)
+backend/data/zone_resolver.py      (NEW — pure-Python PIP)
+backend/data/boundaries/counties.json  (NEW — CA county polygons)
+backend/routes/research.py         (get_cached_zone_risk)
+backend/routes/locations.py        (/risk-by-all-zones + ?include=risk)
+backend/routes/notifications.py    (channel toggles in serialize/parse, opted_in handler)
+backend/routes/internal_alerts.py  (NEW — the cron-triggered dispatcher for all 3 channels)
+frontend/src/services/AuthService.ts  (NotificationPreference shape)
+frontend/src/components/notification-settings.tsx  (full rewrite)
+frontend/src/components/my-locations.tsx           (zone-aware)
+frontend/src/components/saved-locations-widget.tsx (cached lookup, inlined risk)
+frontend/src/components/risk-chart.tsx             (cached baseline, follows zoneKey)
+frontend/src/components/GoogleRiskMap.tsx          (controlled zoneLevel)
+frontend/src/components/dashboard.tsx              (lifted zone state, contextual notes)
+.github/workflows/alerts-high-risk.yml      (NEW — every 30 min)
+.github/workflows/alerts-breaking-news.yml  (NEW — hourly)
+.github/workflows/alerts-evacuation.yml     (NEW — every 10 min)
+migrations/versions/b9c0d1e2f3a4_alert_channels_and_location_zone_ids.py  (NEW)
+migrations/versions/c0d1e2f3a4b5_alert_state_signature.py                 (NEW)
+scripts/predeploy.sh                (helper for Render preDeploy)
+```
+
+### Verify the v2.8 alerts stack is healthy
+
+```bash
+# 1. Domain + SSL
+curl -sI https://firescope.dev | head -1
+# → HTTP/2 200
+
+# 2. Resend domain verified
+# Visit https://resend.com/domains — firescope.dev should be green.
+
+# 3. Cron endpoints respond (replace TOKEN with the INTERNAL_CRON_TOKEN secret)
+for path in high-risk breaking-news evacuation; do
+  curl -s -X POST "https://firescope-api.onrender.com/api/internal/alerts/$path" \
+    -H "X-Internal-Token: $TOKEN" \
+    -w "$path  HTTP=%{http_code}  %{time_total}s\n" -o /dev/null
+done
+
+# 4. GHA workflows scheduled + last runs
+for wf in alerts-high-risk.yml alerts-breaking-news.yml alerts-evacuation.yml; do
+  echo "--- $wf ---"
+  gh run list --workflow=$wf --limit 2
+done
+
+# 5. Risk numbers consistent across map ↔ side panel ↔ alert email
+curl -s https://firescope-api.onrender.com/api/research/risk-by-county \
+  | python3 -c "import json,sys; d=json.load(sys.stdin)['counties']; print('LA:', d['Los Angeles']['risk_score'], d['Los Angeles']['label'])"
+# Saved-location lookup for the same county should produce the same risk_score:
+# curl -H "Authorization: Bearer $JWT" \
+#   https://firescope-api.onrender.com/api/me/locations/<id>/risk-by-all-zones | jq '.county'
+```
 
 ---
 
@@ -82,7 +190,8 @@ gh run list --workflow=daily-prewarm.yml --limit 3
 
 | Tag | Date | Headline |
 |---|---|---|
-| **v2.7-stable** | 2026-05-21 | Site-wide perf overhaul (this section) |
+| **v2.8-stable** | 2026-05-25 | Full alerts system (3 channels) + custom domain `firescope.dev` + Resend email + cached-zone single source of truth across map / badge / widget / email (this section) |
+| **v2.7-stable** | 2026-05-21 | Site-wide perf overhaul — 16 endpoints under 1 s, 11 under 500 ms |
 | **v2.6-v2-merged** | 2026-05-20 | Sania's calibrated KBDI random forest + KBDI slider + SHAP attribution charts + spatial-block CV |
 | **v2.5-inputs-only** | 2026-05-20 | Real EVI (GEE) + real elevation (USGS 3DEP) + per-tile DB cache + IDW safety net for cold-tile fetches |
 | **v2.4-stable** | 2026-05-20 | Self-healing `sync-domain-deployment` workflow + dropped news-sourced fire-perimeter circles (polygon-only) |
