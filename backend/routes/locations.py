@@ -9,11 +9,14 @@ locations_bp = Blueprint('locations', __name__)
 CA_LAT_MIN, CA_LAT_MAX = 32.5, 42.0
 CA_LON_MIN, CA_LON_MAX = -124.5, -114.1
 
-# 9-tier scale used across the app — keep aligned with notification-settings.tsx.
+# 5-tier NFDRS-style scale used across the app. Single source of truth —
+# matches backend/ml/inference.risk_label and frontend/src/lib/riskTiers.ts.
 _TIER_THRESHOLDS = [
-    (0.95, "Catastrophic"), (0.90, "Critical"), (0.85, "Extreme"),
-    (0.80, "Severe"),       (0.75, "Very High"), (0.70, "High"),
-    (0.65, "Elevated"),     (0.55, "Guarded"),  (0.0,  "Low"),
+    (0.80, "Extreme"),
+    (0.60, "Very High"),
+    (0.40, "High"),
+    (0.20, "Moderate"),
+    (0.0,  "Low"),
 ]
 
 

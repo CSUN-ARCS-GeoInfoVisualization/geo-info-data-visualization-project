@@ -27,23 +27,23 @@ interface SavedLocation {
 }
 
 interface PredictionResult {
-  risk_level: string;       // 9-tier label, normalized into the 4 visual buckets via colorForLabel
+  risk_level: string;       // 5-tier NFDRS label
   risk_probability: number; // 0..1
 }
 
-// Server returns a 9-tier label; compress to 4 visual buckets to keep the
-// badge scannable and consistent with my-locations.tsx + dashboard badge.
+// 5-tier NFDRS scale → badge colors. Same buckets as my-locations.tsx +
+// dashboard badge so a saved location reads identically everywhere.
 function colorForLabel(label: string): string {
-  if (["Catastrophic", "Critical", "Extreme"].includes(label)) return "bg-red-100 text-red-700 border-red-200";
-  if (["Severe", "Very High", "High"].includes(label)) return "bg-orange-100 text-orange-700 border-orange-200";
-  if (["Elevated", "Guarded", "Medium"].includes(label)) return "bg-yellow-100 text-yellow-700 border-yellow-200";
+  if (label === "Extreme") return "bg-red-100 text-red-700 border-red-200";
+  if (label === "Very High" || label === "High") return "bg-orange-100 text-orange-700 border-orange-200";
+  if (label === "Moderate") return "bg-yellow-100 text-yellow-700 border-yellow-200";
   return "bg-green-100 text-green-700 border-green-200";
 }
 
 function dotForLabel(label: string): string {
-  if (["Catastrophic", "Critical", "Extreme"].includes(label)) return "bg-red-500";
-  if (["Severe", "Very High", "High"].includes(label)) return "bg-orange-500";
-  if (["Elevated", "Guarded", "Medium"].includes(label)) return "bg-yellow-500";
+  if (label === "Extreme") return "bg-red-500";
+  if (label === "Very High" || label === "High") return "bg-orange-500";
+  if (label === "Moderate") return "bg-yellow-500";
   return "bg-green-500";
 }
 
