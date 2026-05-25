@@ -4,9 +4,11 @@ import {
 } from "lucide-react";
 import { Map, useMap } from "@vis.gl/react-google-maps";
 import { GoogleMapsOverlay } from "@deck.gl/google-maps";
-import { GeoJsonLayer } from "@deck.gl/layers";
+import { GeoJsonLayer, IconLayer } from "@deck.gl/layers";
 import { firmsPointsToPolygonCollection } from "../utils/firmsPolygons";
 import { HeatmapLayer } from "@deck.gl/aggregation-layers";
+import { CenteredInfoCard } from "./centered-info-card";
+import { ShelterEvacLegend } from "./shelter-evac-legend";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Badge } from "./ui/badge";
 import { Button } from "./ui/button";
@@ -158,6 +160,22 @@ function RequestAccessView({ isGuest, onLoginRequired }: { isGuest?: boolean; on
 }
 
 /* ------------------------------------------------------------------ */
+/*  Tiny zoom watcher — exposes the live map zoom to React state so    */
+/*  the shelter heatmap → pins crossfade can react to it.              */
+/* ------------------------------------------------------------------ */
+function ZoomTracker({ onZoom }: { onZoom: (z: number) => void }) {
+  const map = useMap();
+  useEffect(() => {
+    if (!map) return;
+    const fire = () => { const z = map.getZoom(); if (typeof z === 'number') onZoom(z); };
+    fire();
+    const lis = map.addListener('zoom_changed', fire);
+    return () => { lis.remove(); };
+  }, [map, onZoom]);
+  return null;
+}
+
+/* ------------------------------------------------------------------ */
 /*  deck.gl overlay — renders inside <Map> using useMap()              */
 /* ------------------------------------------------------------------ */
 interface UnifiedOverlayProps {
@@ -170,6 +188,12 @@ interface UnifiedOverlayProps {
   nifcPerimeters?: any;
   showPerimeters?: boolean;
   onPerimeterClick?: (props: any) => void;
+  /** Researcher-only: all 8014 CA shelters. */
+  shelters?: any[];
+  showShelters?: boolean;
+  /** Current map zoom — drives the heatmap → pins crossfade. */
+  zoom?: number;
+  onShelterClick?: (shelter: any) => void;
 }
 
 function getRiskColor(score: number): [number, number, number, number] {
@@ -178,15 +202,17 @@ function getRiskColor(score: number): [number, number, number, number] {
   return [34, 197, 94, 110];
 }
 
-function UnifiedResearchOverlay({ features, showHeatmap, zoneGeoJson, zoneRiskData, zoneNameKey, onZoneClick, nifcPerimeters, showPerimeters, onPerimeterClick }: UnifiedOverlayProps) {
+function UnifiedResearchOverlay({ features, showHeatmap, zoneGeoJson, zoneRiskData, zoneNameKey, onZoneClick, nifcPerimeters, showPerimeters, onPerimeterClick, shelters = [], showShelters = false, zoom = 6, onShelterClick }: UnifiedOverlayProps) {
   const map = useMap();
   const overlayRef = useRef<GoogleMapsOverlay | null>(null);
   // Refs so callback identity changes don't tear down the overlay (was a major flicker source)
   const onZoneClickRef = useRef(onZoneClick);
   const onPerimeterClickRef = useRef(onPerimeterClick);
+  const onShelterClickRef = useRef(onShelterClick);
   const zoneRiskDataRef = useRef(zoneRiskData);
   useEffect(() => { onZoneClickRef.current = onZoneClick; }, [onZoneClick]);
   useEffect(() => { onPerimeterClickRef.current = onPerimeterClick; }, [onPerimeterClick]);
+  useEffect(() => { onShelterClickRef.current = onShelterClick; }, [onShelterClick]);
   useEffect(() => { zoneRiskDataRef.current = zoneRiskData; }, [zoneRiskData]);
 
   // Create overlay ONCE per map mount — survives data changes
@@ -315,8 +341,59 @@ function UnifiedResearchOverlay({ features, showHeatmap, zoneGeoJson, zoneRiskDa
       );
     }
 
+    // 5. Shelters (researcher-only). Heatmap fades out, pins fade in, around zoom 12.
+    if (showShelters && shelters.length > 0) {
+      const HEATMAP_FADE_END = 12;   // heatmap fully invisible at zoom >= 12
+      const PINS_FADE_START = 11;    // pins start appearing at zoom 11
+      const PINS_FADE_END = 13;      // pins fully visible at zoom >= 13
+      const heatmapOpacity = Math.max(0, Math.min(1, (HEATMAP_FADE_END - zoom) / 2));
+      const pinsOpacity = Math.max(0, Math.min(1, (zoom - PINS_FADE_START) / (PINS_FADE_END - PINS_FADE_START)));
+
+      if (heatmapOpacity > 0.01) {
+        layers.push(
+          new HeatmapLayer({
+            id: "shelter-heatmap",
+            data: shelters,
+            getPosition: (s: any) => [s.longitude, s.latitude],
+            getWeight: () => 1,
+            radiusPixels: 40, intensity: 1.0, threshold: 0.04, opacity: heatmapOpacity,
+            // Same green->amber->red ramp the legend speaks.
+            colorRange: [
+              [22, 163, 74, 60], [22, 163, 74, 120], [234, 179, 8, 160],
+              [217, 119, 6, 180], [127, 29, 29, 200],
+            ],
+          })
+        );
+      }
+      if (pinsOpacity > 0.01) {
+        layers.push(
+          new IconLayer({
+            id: "shelter-pins",
+            data: shelters,
+            pickable: true,
+            opacity: pinsOpacity,
+            getPosition: (s: any) => [s.longitude, s.latitude],
+            getSize: 22,
+            getIcon: () => ({
+              url: 'data:image/svg+xml;utf8,' + encodeURIComponent(
+                '<svg width="22" height="22" xmlns="http://www.w3.org/2000/svg">' +
+                '<circle cx="11" cy="11" r="9" fill="#16a34a" stroke="white" stroke-width="2"/>' +
+                '<path d="M6 11l4 4 6-7" fill="none" stroke="white" stroke-width="2"/>' +
+                '</svg>'
+              ),
+              width: 22, height: 22, anchorY: 22,
+            }),
+            onClick: (info: any) => {
+              const cb = onShelterClickRef.current;
+              if (cb && info.object) cb(info.object);
+            },
+          })
+        );
+      }
+    }
+
     overlayRef.current.setProps({ layers });
-  }, [features, showHeatmap, zoneGeoJson, zoneRiskData, zoneNameKey, nifcPerimeters, showPerimeters]);
+  }, [features, showHeatmap, zoneGeoJson, zoneRiskData, zoneNameKey, nifcPerimeters, showPerimeters, shelters, showShelters, zoom]);
 
   return null;
 }
@@ -325,6 +402,29 @@ function UnifiedResearchOverlay({ features, showHeatmap, zoneGeoJson, zoneRiskDa
 /*  Researcher / Admin view — interactive map with sliders             */
 /* ------------------------------------------------------------------ */
 function ResearchMapView() {
+  // Shelter overlay state — opt-in researcher tool, default OFF.
+  // Lazy-load shelters only the first time the toggle is flipped on so the
+  // page paint isn't paying for the 8014-row payload up front.
+  const [showShelters, setShowShelters] = useState(false);
+  const [shelters, setShelters] = useState<any[]>([]);
+  const [selectedShelter, setSelectedShelter] = useState<any | null>(null);
+  const [mapZoom, setMapZoom] = useState(6);
+  useEffect(() => {
+    if (!showShelters || shelters.length > 0) return;
+    apiFetch('/shelters?state=CA').then(r => r.ok ? r.json() : { features: [] }).then(data => {
+      const CA = { latMin: 32.5, latMax: 42.0, lonMin: -124.5, lonMax: -114.1 };
+      const flat = (data.features || []).map((f: any) => {
+        const p = f.properties || {};
+        const c = f.geometry?.coordinates || [];
+        return { ...p, latitude: Number(c[1]), longitude: Number(c[0]) };
+      }).filter((s: any) => (
+        s.latitude >= CA.latMin && s.latitude <= CA.latMax &&
+        s.longitude >= CA.lonMin && s.longitude <= CA.lonMax
+      ));
+      setShelters(flat);
+    }).catch(() => {});
+  }, [showShelters, shelters.length]);
+
   const [days, setDays] = useState(7);
   const [confidenceMin, setConfidenceMin] = useState(0);
   const [frpMin, setFrpMin] = useState(0);
@@ -521,9 +621,14 @@ function ResearchMapView() {
               gestureHandling="greedy"
               mapTypeId="terrain"
             >
+              <ZoomTracker onZoom={setMapZoom} />
               <UnifiedResearchOverlay
                 features={features}
                 showHeatmap={showHeatmap}
+                shelters={shelters}
+                showShelters={showShelters}
+                zoom={mapZoom}
+                onShelterClick={setSelectedShelter}
                 zoneGeoJson={showZones ? zoneGeoJson : null}
                 zoneRiskData={zoneRiskData}
                 zoneNameKey={zoneNameKey}
@@ -551,6 +656,68 @@ function ResearchMapView() {
                 }}
               />
             </Map>
+
+            {/* Floating legend — only shown when shelters are on (otherwise the
+                research page is fire-research focused and the evac legend would
+                be noise). Same component the Shelters & Evac page renders. */}
+            {showShelters && (
+              <div className="absolute top-3 right-3 z-[5] pointer-events-auto">
+                <ShelterEvacLegend showEvacZones={false} />
+              </div>
+            )}
+
+            {/* Shelter info card — centered popup, full metadata, same as the
+                Shelters & Evac page so the click experience is identical. */}
+            <CenteredInfoCard
+              open={!!selectedShelter}
+              onClose={() => setSelectedShelter(null)}
+              accent="bg-emerald-600"
+              title={selectedShelter?.shelter_name || 'Shelter'}
+              subtitle={selectedShelter?.facility_type}
+            >
+              {selectedShelter && (() => {
+                const s = selectedShelter;
+                const fields: Array<[string, string | number | undefined | null]> = [
+                  ['Status', s.shelter_status_code],
+                  ['Address', s.address_1],
+                  ['City / ZIP', s.city ? `${s.city}, ${s.state || 'CA'} ${s.zip || ''}` : null],
+                  ['County', s.county_parish],
+                  ['Facility type', s.facility_type],
+                  ['Facility usage', s.facility_usage_code],
+                  ['Evac capacity', s.evacuation_capacity ? `${s.evacuation_capacity} people` : null],
+                  ['Post-impact capacity', s.post_impact_capacity ? `${s.post_impact_capacity} people` : null],
+                  ['Wheelchair accessible', s.wheelchair_accessible === 'YES' ? 'Yes' : null],
+                  ['Generator on-site', s.generator_onsite === 'YES' ? 'Yes' : null],
+                  ['Shelter ID', s.shelter_id ? String(s.shelter_id) : null],
+                  ['Coordinates', s.latitude != null && s.longitude != null ? `${Number(s.latitude).toFixed(4)}, ${Number(s.longitude).toFixed(4)}` : null],
+                ];
+                return (
+                  <div className="space-y-3">
+                    <dl className="grid grid-cols-3 gap-x-3 gap-y-2 text-xs">
+                      {fields.filter(([, v]) => v !== null && v !== undefined && v !== '').map(([k, v]) => (
+                        <div key={k} className="contents">
+                          <dt className="col-span-1 text-zinc-500">{k}</dt>
+                          <dd className="col-span-2 text-zinc-800 break-words">{v}</dd>
+                        </div>
+                      ))}
+                    </dl>
+                    {s.latitude != null && s.longitude != null && (
+                      <div className="pt-2 border-t border-zinc-100">
+                        <a
+                          href={`https://www.google.com/maps/dir/?api=1&destination=${s.latitude},${s.longitude}`}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="inline-flex items-center justify-center rounded-md bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-3 py-2"
+                        >
+                          Open in Google Maps
+                        </a>
+                      </div>
+                    )}
+                  </div>
+                );
+              })()}
+            </CenteredInfoCard>
+
             {/* Always-on left in-map control navbar */}
             <div
               className="bg-white/95 backdrop-blur-sm rounded-xl shadow-lg border overflow-y-auto"
@@ -565,6 +732,23 @@ function ResearchMapView() {
               }}
             >
               <div className="p-4 space-y-4 text-sm">
+                {/* Researcher-only shelter overlay toggle. Default OFF. */}
+                <div className="rounded-md border bg-zinc-50/50 px-3 py-2 flex items-center justify-between gap-3">
+                  <div className="min-w-0">
+                    <div className="text-xs font-medium text-zinc-900">Shelter overlay</div>
+                    <div className="text-[11px] text-zinc-500">All {shelters.length || '8,014'} CA shelters as density. Zoom in for pins.</div>
+                  </div>
+                  <button
+                    type="button"
+                    role="switch"
+                    aria-checked={showShelters}
+                    onClick={() => setShowShelters(v => !v)}
+                    className={`h-5 w-9 shrink-0 rounded-full transition-colors ${showShelters ? 'bg-emerald-600' : 'bg-zinc-300'}`}
+                  >
+                    <span className={`block h-4 w-4 rounded-full bg-white shadow transition-transform ${showShelters ? 'translate-x-4' : 'translate-x-0.5'}`} />
+                  </button>
+                </div>
+
                 <div>
                   <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-1.5">Map view</div>
                   <div className="grid grid-cols-3 gap-1 p-1 bg-muted rounded-md">
