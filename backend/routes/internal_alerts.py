@@ -76,6 +76,161 @@ def _require_internal_token():
     return True, None
 
 
+def _encode_polyline(coords: list) -> str:
+    """Google polyline encoding algorithm — used by Mapbox Static Images
+    API to compress polygon overlays into the URL.
+
+    Input:  [(lat, lon), (lat, lon), ...]
+    Output: ASCII-safe string per https://developers.google.com/maps/documentation/utilities/polylinealgorithm
+
+    Inlined instead of `pip install polyline` to keep the email subsystem
+    dependency-free.
+    """
+    result = []
+    prev_lat = 0
+    prev_lon = 0
+    for lat, lon in coords:
+        ilat = int(round(lat * 1e5))
+        ilon = int(round(lon * 1e5))
+        for delta in (ilat - prev_lat, ilon - prev_lon):
+            value = delta << 1
+            if delta < 0:
+                value = ~value
+            while value >= 0x20:
+                result.append(chr((0x20 | (value & 0x1f)) + 63))
+                value >>= 5
+            result.append(chr(value + 63))
+        prev_lat = ilat
+        prev_lon = ilon
+    return "".join(result)
+
+
+# Match the live FireScope dashboard exactly — source of truth is
+# frontend/src/components/shelter-evac-legend.tsx + evacuation-routes.tsx
+# colorForZoneStatus. Keep these in sync if the dashboard changes.
+_EVAC_STATUS_COLORS = {
+    # status keyword -> (stroke_hex, fill_hex)  — Mapbox hex without `#`
+    "order":     ("7f1d1d", "dc2626"),  # red-900 stroke / red-600 fill
+    "warning":   ("d97706", "f97316"),  # amber-600 stroke / orange-500 fill
+    "shelter":   ("6b21a8", "9333ea"),  # purple-800 stroke / purple-600 fill (shelter-in-place)
+    "advisory":  ("ca8a04", "eab308"),  # yellow-600 stroke / yellow-500 fill
+    "default":   ("4b5563", "6b7280"),  # grey-600 stroke / grey-500 fill
+}
+# Fill opacity 0.35 / stroke opacity 0.9 — matches the live deck.gl alphas
+# of 90/255 and 230/255 from evacuation-routes.tsx.colorForZoneStatus.
+_EVAC_FILL_OPACITY = 0.35
+_EVAC_STROKE_OPACITY = 0.9
+_SHELTER_OPEN_COLOR = "16a34a"   # green-600, matches SHELTER_ICON_OPEN
+_USER_LOC_COLOR = "dc2626"        # red-600 — your saved location pin
+
+
+def _evac_status_colors(status: str) -> tuple[str, str]:
+    """Pick (stroke_hex, fill_hex) from a CalOES STATUS string. Mirrors
+    colorForZoneStatus in evacuation-routes.tsx."""
+    s = (status or "").lower()
+    for key in ("order", "warning", "shelter", "advisory"):
+        if key in s:
+            return _EVAC_STATUS_COLORS[key]
+    return _EVAC_STATUS_COLORS["default"]
+
+
+def _static_map_url(center_lat: float, center_lon: float,
+                    zone_overlays: list | None = None,
+                    shelter_pins: list | None = None,
+                    zoom: int = 11,
+                    width: int = 600, height: int = 300) -> str:
+    """Build a Mapbox Static Images API URL matching the live FireScope
+    dashboard layering (zone colors, shelter icons, user location).
+
+    zone_overlays: list of dicts {
+        "rings": [[(lat, lon), ...], ...],   # polygon rings from _polygon_rings_from_feature
+        "status": str,                        # CalOES STATUS string ('ORDER', 'WARNING', etc.)
+    } — colors picked per-status to match the live legend.
+
+    shelter_pins: list of (lat, lon) tuples — open shelters near the user.
+                  Rendered as small green Maki "home" pins (same icon the
+                  live shelter overlay uses).
+
+    Uses MAPBOX_PUBLIC_TOKEN env var (free tier: 50k loads/month). Falls
+    back to a visible grey placeholder when the token isn't configured so
+    the email still ships.
+
+    URL cap: Mapbox limits to 8192 chars. Rings are pre-downsampled by
+    _polygon_rings_from_feature and shelter list is capped at 3 by the
+    caller, so we stay well under the limit for typical evac scenarios.
+    """
+    token = os.getenv("MAPBOX_PUBLIC_TOKEN", "")
+    if not token:
+        return (
+            f"https://via.placeholder.com/{width}x{height}/eeeeee/666666"
+            f"?text=Map+pending+(MAPBOX_PUBLIC_TOKEN+unset)"
+        )
+
+    from urllib.parse import quote
+    overlays = []
+
+    # Zone polygons FIRST so pins draw on top. Color per STATUS to match
+    # the live dashboard exactly.
+    for zo in (zone_overlays or []):
+        rings = zo.get("rings") or []
+        stroke_hex, fill_hex = _evac_status_colors(zo.get("status", ""))
+        for ring in rings:
+            if len(ring) < 3:
+                continue
+            encoded = _encode_polyline(ring)
+            overlays.append(
+                f"path-2+{stroke_hex}-{_EVAC_STROKE_OPACITY}+{fill_hex}-{_EVAC_FILL_OPACITY}"
+                f"({quote(encoded, safe='')})"
+            )
+
+    # Open-shelter pins (green) using the Maki "home" icon — matches the
+    # live shelter overlay's Lucide Home icon by visual analogy. The
+    # Maki "home" glyph is a small house silhouette.
+    for slat, slon in (shelter_pins or []):
+        overlays.append(f"pin-s-home+{_SHELTER_OPEN_COLOR}({slon:.5f},{slat:.5f})")
+
+    # User location pin LAST so it's on top of everything (red, larger).
+    overlays.append(f"pin-l+{_USER_LOC_COLOR}({center_lon:.5f},{center_lat:.5f})")
+
+    overlay_str = ",".join(overlays)
+    return (
+        f"https://api.mapbox.com/styles/v1/mapbox/streets-v12/static/"
+        f"{overlay_str}/"
+        f"{center_lon:.5f},{center_lat:.5f},{zoom}/"
+        f"{width}x{height}@2x"
+        f"?access_token={token}"
+    )
+
+
+def _polygon_rings_from_feature(feat: dict) -> list:
+    """Extract polygon rings from a GeoJSON feature as [(lat, lon), ...] lists.
+
+    Handles both Polygon and MultiPolygon. Returns a list of rings (outer
+    rings only — Google Static Maps' &path= doesn't support holes).
+    Coordinates are converted from GeoJSON's (lon, lat) order to (lat, lon)
+    which is what Static Maps API expects in &path= params.
+    """
+    geom = (feat or {}).get("geometry") or {}
+    gtype = geom.get("type")
+    rings = []
+    if gtype == "Polygon":
+        coords_list = [geom.get("coordinates") or []]
+    elif gtype == "MultiPolygon":
+        coords_list = geom.get("coordinates") or []
+    else:
+        return rings
+    for poly in coords_list:
+        if not poly:
+            continue
+        outer = poly[0]  # outer ring only, skip holes
+        # Downsample very dense rings so the URL stays under Google's 8KB cap.
+        # Keep at most ~40 points per ring — plenty for an email-thumb map.
+        step = max(1, len(outer) // 40)
+        downsampled = outer[::step]
+        rings.append([(float(lat), float(lon)) for lon, lat in downsampled])
+    return rings
+
+
 def _email_shell(
     *,
     header_bg: str,
@@ -740,6 +895,224 @@ def _evac_already_alerted(session, user_id, zone_id):
     ).first() is not None, sig
 
 
+def _evac_bundle_signature(sorted_zone_ids: list) -> str:
+    """SHA-256 of the sorted zone-id set that triggered this bundled email.
+    Same set of zones => same signature => dedup => no duplicate email."""
+    joined = "|".join(str(z) for z in sorted_zone_ids)
+    return hashlib.sha256(f"evac_bundle:{joined}".encode("utf-8")).hexdigest()[:32]
+
+
+def _evac_bundle_already_alerted(session, user_id, sig: str) -> bool:
+    return session.query(AlertActivity).filter(
+        AlertActivity.user_id == user_id,
+        AlertActivity.delivery_status == "sent",
+        AlertActivity.state_signature == sig,
+    ).first() is not None
+
+
+def _send_multizone_evac_email(
+    to_email: str,
+    contact_name: str,
+    location_name: str,
+    location_lat: float,
+    location_lon: float,
+    county_name: str,
+    zone_hits: list,           # [{"props":..., "feature":..., "match":"polygon|county"}]
+    nearest_shelters: list,
+) -> tuple[str | None, str | None]:
+    """Send ONE consolidated evacuation alert listing every zone that
+    triggered for this user in the current cron tick, with a static map
+    showing the user's location + every zone polygon.
+
+    Replaces the previous per-zone-per-email approach. Bundling is the
+    user-requested behavior: 3 zones popping at the same time should
+    arrive as 1 email, not 3."""
+    try:
+        import resend
+    except ImportError:
+        return None, "resend SDK missing"
+    api_key = os.getenv("RESEND_API_KEY", "")
+    sender_email = os.getenv("SENDER_EMAIL", "alerts@firescope.dev")
+    sender_name = os.getenv("SENDER_NAME", "FireScope Alerts")
+    if not api_key:
+        return None, "RESEND_API_KEY not set"
+    resend.api_key = api_key
+
+    name = (contact_name or "").strip() or to_email.split("@", 1)[0]
+
+    # Map overlays: per-zone polygons (colored by STATUS so warning vs
+    # order matches the live legend) + nearest open shelter pins + user
+    # location pin. Same coloring/icons the live dashboard uses.
+    zone_overlays = [
+        {
+            "rings":  _polygon_rings_from_feature(zh.get("feature") or {}),
+            "status": str((zh.get("props") or {}).get("STATUS", "")),
+        }
+        for zh in zone_hits
+    ]
+    shelter_pins = [
+        (float(s["latitude"]), float(s["longitude"]))
+        for s in (nearest_shelters or [])
+        if s.get("latitude") is not None and s.get("longitude") is not None
+    ]
+    map_url = _static_map_url(
+        location_lat, location_lon,
+        zone_overlays=zone_overlays,
+        shelter_pins=shelter_pins,
+        zoom=10,
+    )
+
+    # Per-zone card: order vs warning, zone name, event, match reason.
+    def _zone_card(zh):
+        p = zh.get("props") or {}
+        is_order = "ORDER" in str(p.get("STATUS", "")).upper()
+        banner = "#7f1d1d" if is_order else "#d97706"
+        label = "EVACUATION ORDER" if is_order else "EVACUATION WARNING"
+        zone_name = p.get("ZONE_NAME") or p.get("ZONE_ID") or "Zone"
+        event = p.get("EVENT") or p.get("HEADLINE") or ""
+        match_text = ("contains your saved location (polygon match)"
+                      if zh.get("match") == "polygon"
+                      else f"adjacent zone in {county_name} County")
+        return (
+            '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" '
+            f'style="margin:0 0 12px 0;border:1px solid #eeeeee;border-left:4px solid {banner};">'
+            '<tr><td style="padding:10px 14px;font-family:Arial,Helvetica,sans-serif;">'
+            f'<p style="margin:0;font-size:11px;font-weight:bold;color:{banner};letter-spacing:1px;text-transform:uppercase">{label}</p>'
+            f'<p style="margin:4px 0 0;font-size:15px;font-weight:bold;color:#222222">{html_escape(zone_name)}</p>'
+            f'<p style="margin:2px 0 0;font-size:13px;color:#555555">{html_escape(event)}</p>'
+            f'<p style="margin:6px 0 0;font-size:12px;color:#888888">{html_escape(match_text)}</p>'
+            '</td></tr></table>'
+        )
+
+    # Order: polygon matches first (most urgent), then county matches; orders before warnings.
+    def _zone_sort_key(zh):
+        p = zh.get("props") or {}
+        polygon_first = 0 if zh.get("match") == "polygon" else 1
+        order_first = 0 if "ORDER" in str(p.get("STATUS", "")).upper() else 1
+        return (polygon_first, order_first)
+    zone_hits = sorted(zone_hits, key=_zone_sort_key)
+    zone_cards = "".join(_zone_card(zh) for zh in zone_hits)
+
+    n_orders = sum(1 for zh in zone_hits if "ORDER" in str((zh.get("props") or {}).get("STATUS", "")).upper())
+    n_warnings = len(zone_hits) - n_orders
+    zone_count_summary = (
+        f"{n_orders} order{'s' if n_orders != 1 else ''}, "
+        f"{n_warnings} warning{'s' if n_warnings != 1 else ''}"
+    )
+    has_polygon_match = any(zh.get("match") == "polygon" for zh in zone_hits)
+
+    critical = (
+        "LEAVE NOW. Take pets, medications, and important documents. Do not return until evacuation orders are lifted."
+        if has_polygon_match else
+        "Active evacuation orders in your county. Stay alert — be prepared to evacuate if conditions change."
+    )
+
+    # Shelter rows
+    shelter_rows = "".join(
+        '<tr>'
+        f'<td style="padding:8px 12px;border-bottom:1px solid #eeeeee;font-family:Arial,Helvetica,sans-serif">{html_escape(s.get("shelter_name",""))}</td>'
+        f'<td style="padding:8px 12px;border-bottom:1px solid #eeeeee;font-size:12px;color:#666666;font-family:Arial,Helvetica,sans-serif">'
+        f'{html_escape(s.get("address_1",""))}, {html_escape(s.get("city",""))}</td>'
+        f'<td style="padding:8px 12px;border-bottom:1px solid #eeeeee;text-align:right;font-size:12px;font-family:Arial,Helvetica,sans-serif">{s.get("_km",0):.1f} km</td>'
+        '</tr>'
+        for s in nearest_shelters
+    ) or '<tr><td colspan="3" style="padding:10px;color:#888888;font-size:12px;font-family:Arial,Helvetica,sans-serif">No open shelters reported nearby right now &mdash; check CalOES.</td></tr>'
+
+    intro_line = (
+        f'<strong>{len(zone_hits)} evacuation zones</strong> active around your saved location '
+        f'<strong>{html_escape(location_name)}</strong> ({zone_count_summary}).'
+    ) if len(zone_hits) > 1 else (
+        f'An <strong>evacuation zone</strong> is active around your saved location '
+        f'<strong>{html_escape(location_name)}</strong> ({zone_count_summary}).'
+    )
+
+    body_inner = (
+        f'<p style="margin:0 0 12px;font-size:14px;">Hi {html_escape(name)},</p>'
+        f'<p style="margin:0 0 14px;font-size:15px;line-height:1.45;">{intro_line}</p>'
+
+        # Map → links to live dashboard
+        '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" '
+        'style="margin:0 0 14px 0;border:1px solid #eeeeee;">'
+        '<tr><td align="center" style="padding:0;line-height:0;">'
+        '<a href="https://firescope.dev" style="text-decoration:none;display:block;">'
+        f'<img src="{map_url}" alt="Live map: your location + evacuation zones — click to open dashboard" '
+        f'width="600" height="300" style="display:block;width:100%;max-width:600px;height:auto;border:0;" />'
+        '</a></td></tr>'
+        '<tr><td style="padding:6px 12px;font-size:11px;color:#888888;background-color:#fafafa;font-family:Arial,Helvetica,sans-serif">'
+        'Red marker = your saved location &middot; red shaded areas = active evacuation zones &middot; '
+        '<a href="https://firescope.dev" style="color:#dc2626;text-decoration:underline">tap to open the live dashboard</a>'
+        '</td></tr></table>'
+
+        # Critical callout
+        '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" '
+        'style="margin:0 0 14px 0;background-color:#fef2f2;border-left:3px solid #dc2626">'
+        '<tr><td style="padding:10px 14px;font-size:13px;color:#7f1d1d;font-family:Arial,Helvetica,sans-serif">'
+        f'{html_escape(critical)}</td></tr></table>'
+
+        '<p style="margin:8px 0 8px;font-size:13px;font-weight:bold;color:#555555;font-family:Arial,Helvetica,sans-serif">Active evacuation zones</p>'
+        f'{zone_cards}'
+
+        '<p style="margin:18px 0 6px;font-size:13px;font-weight:bold;color:#555555;font-family:Arial,Helvetica,sans-serif">Nearest open shelters</p>'
+        '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" '
+        'style="border-collapse:collapse;border:1px solid #eeeeee;">'
+        f'{shelter_rows}'
+        '</table>'
+    )
+
+    header_label = (f"{len(zone_hits)} EVACUATION ZONES" if len(zone_hits) > 1
+                    else ("EVACUATION ORDER" if n_orders else "EVACUATION WARNING"))
+    header_bg = "#7f1d1d" if n_orders else "#d97706"
+
+    html = _email_shell(
+        header_bg=header_bg,
+        header_label=header_label,
+        header_title=f"{html_escape(county_name)} County",
+        header_subtitle=zone_count_summary,
+        body_inner_html=body_inner,
+        footer_text="Manage the Evacuation channel at firescope.dev &rarr; Alerts.",
+    )
+
+    # Plain-text fallback
+    text_lines = [f"{len(zone_hits)} evacuation zone(s) active near {location_name} ({county_name} County).", ""]
+    for zh in zone_hits:
+        p = zh.get("props") or {}
+        is_order = "ORDER" in str(p.get("STATUS", "")).upper()
+        text_lines.append(f"  [{('ORDER' if is_order else 'WARNING')}] {p.get('ZONE_NAME','Zone')} — {p.get('EVENT','')}")
+    text_lines.append("")
+    text_lines.append(critical)
+    text_lines.append("")
+    text_lines.append("Nearest open shelters:")
+    if nearest_shelters:
+        for s in nearest_shelters:
+            text_lines.append(f"  - {s.get('shelter_name','')} ({s.get('city','')}) — {s.get('_km',0):.1f} km")
+    else:
+        text_lines.append("  (none reported nearby)")
+    text_lines.append("")
+    text_lines.append("Live map: https://firescope.dev")
+    text = "\n".join(text_lines)
+
+    subject_zone_name = (zone_hits[0].get("props") or {}).get("ZONE_NAME") or "your area"
+    if len(zone_hits) > 1:
+        subject = f"FireScope: {len(zone_hits)} evacuation zones in {county_name} County ({zone_count_summary})"
+    else:
+        subject = f"FireScope: {('EVACUATION ORDER' if n_orders else 'EVACUATION WARNING')} — {subject_zone_name}"
+
+    try:
+        resp = resend.Emails.send({
+            "from": f"{sender_name} <{sender_email}>",
+            "to": [to_email],
+            "subject": subject,
+            "html": html,
+            "text": text,
+        })
+        return resp.get("id"), None
+    except Exception as e:
+        logger.warning("resend send (multizone evac) failed: %s", e)
+        return None, str(e)
+
+
+# Kept as a thin alias for any external callers — production code uses the
+# multizone path directly via run_evacuation_alerts.
 def _send_evacuation_email(to_email, contact_name, location_name, zone_props, nearest_shelters, match_kind: str = "polygon") -> tuple[str | None, str | None]:
     try:
         import resend
@@ -1080,45 +1453,76 @@ def run_evacuation_alerts():
             skipped_no_overlap += 1
             continue
 
-        for zid, (loc, feat, match_kind) in per_zone_hits.items():
-            already, sig = _evac_already_alerted(session, user.id, zid)
-            if already:
-                skipped_dedup += 1
-                continue
+        # ── Multi-zone bundling ───────────────────────────────────────────
+        # Pick the primary location for this user's bundle: prefer a
+        # polygon-match location (life-safety), otherwise the first county
+        # match. The static map centers on this location.
+        polygon_hit = next((h for h in per_zone_hits.values() if h[2] == "polygon"), None)
+        primary_loc, _, _ = polygon_hit or list(per_zone_hits.values())[0]
 
-            # Three nearest open shelters to the saved location.
-            ranked = []
-            for s in shelters:
-                d = _haversine_km(loc.lat, loc.lon, float(s["latitude"]), float(s["longitude"]))
-                ranked.append({**s, "_km": d})
-            ranked.sort(key=lambda r: r["_km"])
-            nearest = ranked[:EVAC_NEAREST_SHELTERS]
+        # Dedup signature is the SORTED set of zone IDs in this bundle. If
+        # the user already got an email for this exact zone set, skip.
+        bundle_sig = _evac_bundle_signature(sorted(per_zone_hits.keys()))
+        if _evac_bundle_already_alerted(session, user.id, bundle_sig):
+            skipped_dedup += 1
+            continue
 
-            to_email = (pref.contact_email or user.email or "").strip()
-            if not to_email:
-                errors += 1
+        # Three nearest open shelters to the primary location.
+        ranked = []
+        for s in shelters:
+            try:
+                d = _haversine_km(primary_loc.lat, primary_loc.lon,
+                                  float(s["latitude"]), float(s["longitude"]))
+            except (TypeError, ValueError):
                 continue
-            msg_id, send_err = _send_evacuation_email(
-                to_email=to_email,
-                contact_name=getattr(user, "name", None) or "",
-                location_name=loc.name,
-                zone_props=(feat.get("properties") or {}),
-                nearest_shelters=nearest,
-                match_kind=match_kind,
-            )
-            status = "sent" if msg_id else "failed"
-            session.add(AlertActivity(
-                user_id=user.id,
-                risk_level=99 if "ORDER" in str((feat.get("properties") or {}).get("STATUS", "")).upper() else 80,
-                delivery_status=status,
-                reason=(f"evac_cron:{match_kind}" if msg_id else f"evac_cron_err:{(send_err or '')[:24]}"),
-                state_signature=sig,
-            ))
-            if msg_id:
-                sent += 1
-                sent_ids.append(msg_id)
-            else:
-                errors += 1
+            ranked.append({**s, "_km": d})
+        ranked.sort(key=lambda r: r["_km"])
+        nearest = ranked[:EVAC_NEAREST_SHELTERS]
+
+        # County name for the email header (most common county across hits).
+        from collections import Counter
+        county_name = Counter(
+            str((feat.get("properties") or {}).get("COUNTY", "")).title()
+            for _, feat, _ in per_zone_hits.values()
+        ).most_common(1)[0][0] or "your area"
+
+        to_email = (pref.contact_email or user.email or "").strip()
+        if not to_email:
+            errors += 1
+            continue
+
+        zone_hits_payload = [
+            {"props": feat.get("properties") or {}, "feature": feat, "match": match_kind}
+            for _loc, feat, match_kind in per_zone_hits.values()
+        ]
+        msg_id, send_err = _send_multizone_evac_email(
+            to_email=to_email,
+            contact_name=getattr(user, "name", None) or "",
+            location_name=primary_loc.name,
+            location_lat=primary_loc.lat,
+            location_lon=primary_loc.lon,
+            county_name=county_name,
+            zone_hits=zone_hits_payload,
+            nearest_shelters=nearest,
+        )
+        status = "sent" if msg_id else "failed"
+        has_order = any(
+            "ORDER" in str((zh.get("props") or {}).get("STATUS", "")).upper()
+            for zh in zone_hits_payload
+        )
+        session.add(AlertActivity(
+            user_id=user.id,
+            risk_level=99 if has_order else 80,
+            delivery_status=status,
+            reason=(f"evac_bundle:{len(per_zone_hits)}zones"
+                    if msg_id else f"evac_bundle_err:{(send_err or '')[:24]}"),
+            state_signature=bundle_sig,
+        ))
+        if msg_id:
+            sent += 1
+            sent_ids.append(msg_id)
+        else:
+            errors += 1
 
     try:
         session.commit()
