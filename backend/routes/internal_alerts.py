@@ -119,28 +119,47 @@ def _last_alert_signature(session, user_id):
 
 
 def _location_block_html(loc_payload: dict) -> str:
-    """Renders one location's all-4-zones table inside the alert email."""
+    """Renders one location's all-4-zones table inside the alert email.
+
+    HTML attributes use double quotes (not single) because Gmail's content
+    sanitizer was stripping the whole table when single-quoted attrs were
+    used — recipient reported an empty email body in the wild on 2026-05-27.
+    """
     title = html_escape(loc_payload["name"])
-    rows = "".join(
-        f"<tr><td style='padding:6px 10px;border-bottom:1px solid #eee;font-size:12px;color:#555'>{html_escape(z['kind'])}</td>"
-        f"<td style='padding:6px 10px;border-bottom:1px solid #eee;font-size:12px'>{html_escape(z['zone_name'])}</td>"
-        f"<td style='padding:6px 10px;border-bottom:1px solid #eee;font-weight:600;font-size:12px'>{html_escape(z['label'])}</td>"
-        f"<td style='padding:6px 10px;border-bottom:1px solid #eee;text-align:right;font-size:12px'>{z['pct']*100:.0f}%</td></tr>"
-        for z in loc_payload["zones"]
-    )
+    # Tier-keyed background tint so users can see at a glance which zone is
+    # most concerning. Matches lib/riskTiers.ts hex values.
+    tier_bg = {
+        "Extreme":   "#fee2e2",
+        "Very High": "#fecaca",
+        "High":      "#ffedd5",
+        "Moderate":  "#fef9c3",
+        "Low":       "#dcfce7",
+    }
+    row_html = []
+    for z in loc_payload["zones"]:
+        bg = tier_bg.get(z["label"], "#f5f5f5")
+        row_html.append(
+            "<tr>"
+            f'<td style="padding:6px 10px;border-bottom:1px solid #eee;font-size:12px;color:#555">{html_escape(z["kind"])}</td>'
+            f'<td style="padding:6px 10px;border-bottom:1px solid #eee;font-size:12px">{html_escape(z["zone_name"])}</td>'
+            f'<td style="padding:6px 10px;border-bottom:1px solid #eee;font-weight:600;font-size:12px;background:{bg}">{html_escape(z["label"])}</td>'
+            f'<td style="padding:6px 10px;border-bottom:1px solid #eee;text-align:right;font-size:12px">{z["pct"]*100:.0f}%</td>'
+            "</tr>"
+        )
+    rows = "".join(row_html)
     return (
-        f"<div style='margin-top:14px;border:1px solid #eee;border-radius:8px;overflow:hidden'>"
-        f"  <div style='background:#fafafa;padding:10px 12px;font-weight:600;font-size:13px'>{title}</div>"
-        f"  <table style='width:100%;border-collapse:collapse'>"
-        f"    <thead><tr style='background:#fff'>"
-        f"      <th style='padding:6px 10px;text-align:left;font-size:11px;color:#888;text-transform:uppercase'>Zone</th>"
-        f"      <th style='padding:6px 10px;text-align:left;font-size:11px;color:#888;text-transform:uppercase'>Area</th>"
-        f"      <th style='padding:6px 10px;text-align:left;font-size:11px;color:#888;text-transform:uppercase'>Tier</th>"
-        f"      <th style='padding:6px 10px;text-align:right;font-size:11px;color:#888;text-transform:uppercase'>Risk</th>"
-        f"    </tr></thead>"
-        f"    <tbody>{rows}</tbody>"
-        f"  </table>"
-        f"</div>"
+        '<div style="margin-top:14px;border:1px solid #eee;border-radius:8px;overflow:hidden">'
+        f'  <div style="background:#fafafa;padding:10px 12px;font-weight:600;font-size:13px">{title}</div>'
+        '  <table style="width:100%;border-collapse:collapse">'
+        '    <thead><tr style="background:#fff">'
+        '      <th style="padding:6px 10px;text-align:left;font-size:11px;color:#888;text-transform:uppercase">Zone</th>'
+        '      <th style="padding:6px 10px;text-align:left;font-size:11px;color:#888;text-transform:uppercase">Area</th>'
+        '      <th style="padding:6px 10px;text-align:left;font-size:11px;color:#888;text-transform:uppercase">Tier</th>'
+        '      <th style="padding:6px 10px;text-align:right;font-size:11px;color:#888;text-transform:uppercase">Risk</th>'
+        '    </tr></thead>'
+        f'    <tbody>{rows}</tbody>'
+        '  </table>'
+        '</div>'
     )
 
 
@@ -366,15 +385,15 @@ def _send_breaking_news_email(to_email: str, contact_name: str, articles: list) 
     def _our_news_url(a):
         return f"https://firescope.dev/?page=news#article-{a['id']}"
     items_html = "".join(
-        f"<div style='margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid #eee'>"
-        f"  <div style='font-size:11px;text-transform:uppercase;color:#888;letter-spacing:.06em'>"
-        f"    {html_escape(a['source_label'])} · {a['published_at'][:16].replace('T',' ')} UTC"
-        f"  </div>"
-        f"  <div style='font-size:15px;font-weight:600;margin:4px 0 6px'>"
-        f"    <a href='{html_escape(_our_news_url(a))}' style='color:#dc2626;text-decoration:none'>{html_escape(a['title'])}</a>"
-        f"  </div>"
-        f"  <div style='font-size:13px;color:#444;line-height:1.45'>{html_escape((a.get('summary') or '')[:280])}{'…' if len(a.get('summary') or '') > 280 else ''}</div>"
-        f"</div>"
+        '<div style="margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid #eee">'
+        '  <div style="font-size:11px;text-transform:uppercase;color:#888;letter-spacing:.06em">'
+        f'    {html_escape(a["source_label"])} · {a["published_at"][:16].replace("T"," ")} UTC'
+        '  </div>'
+        '  <div style="font-size:15px;font-weight:600;margin:4px 0 6px">'
+        f'    <a href="{html_escape(_our_news_url(a))}" style="color:#dc2626;text-decoration:none">{html_escape(a["title"])}</a>'
+        '  </div>'
+        f'  <div style="font-size:13px;color:#444;line-height:1.45">{html_escape((a.get("summary") or "")[:280])}{"…" if len(a.get("summary") or "") > 280 else ""}</div>'
+        '</div>'
         for a in articles
     )
     html = f"""<!doctype html>
@@ -637,12 +656,12 @@ def _send_evacuation_email(to_email, contact_name, location_name, zone_props, ne
     )
 
     shelter_rows = "".join(
-        f"<tr><td style='padding:8px 12px;border-bottom:1px solid #eee'>{html_escape(s.get('shelter_name',''))}</td>"
-        f"<td style='padding:8px 12px;border-bottom:1px solid #eee;font-size:12px;color:#666'>"
-        f"{html_escape(s.get('address_1',''))}, {html_escape(s.get('city',''))}</td>"
-        f"<td style='padding:8px 12px;border-bottom:1px solid #eee;text-align:right;font-size:12px'>{s.get('_km',0):.1f} km</td></tr>"
+        f'<tr><td style="padding:8px 12px;border-bottom:1px solid #eee">{html_escape(s.get("shelter_name",""))}</td>'
+        f'<td style="padding:8px 12px;border-bottom:1px solid #eee;font-size:12px;color:#666">'
+        f'{html_escape(s.get("address_1",""))}, {html_escape(s.get("city",""))}</td>'
+        f'<td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:right;font-size:12px">{s.get("_km",0):.1f} km</td></tr>'
         for s in nearest_shelters
-    ) or "<tr><td colspan='3' style='padding:10px;color:#888;font-size:12px'>No open shelters reported nearby right now — check CalOES.</td></tr>"
+    ) or '<tr><td colspan="3" style="padding:10px;color:#888;font-size:12px">No open shelters reported nearby right now — check CalOES.</td></tr>'
 
     banner_color = "#7f1d1d" if is_order else "#d97706"
     banner_label = "EVACUATION ORDER" if is_order else "EVACUATION WARNING"
@@ -730,10 +749,10 @@ def _send_shelter_opened_email(to_email, contact_name, location_county_pairs, sh
 
     name = (contact_name or "").strip() or to_email.split("@", 1)[0]
     rows = "".join(
-        f"<tr><td style='padding:8px 12px;border-bottom:1px solid #eee;font-weight:600'>{html_escape(s.get('shelter_name',''))}</td>"
-        f"<td style='padding:8px 12px;border-bottom:1px solid #eee;font-size:12px;color:#666'>"
-        f"{html_escape(s.get('address_1',''))}, {html_escape(s.get('city',''))} ({html_escape(str(s.get('county_parish','')).title())} County)</td>"
-        f"<td style='padding:8px 12px;border-bottom:1px solid #eee;text-align:right;font-size:12px'>{s.get('evacuation_capacity') or '—'}</td></tr>"
+        f'<tr><td style="padding:8px 12px;border-bottom:1px solid #eee;font-weight:600">{html_escape(s.get("shelter_name",""))}</td>'
+        f'<td style="padding:8px 12px;border-bottom:1px solid #eee;font-size:12px;color:#666">'
+        f'{html_escape(s.get("address_1",""))}, {html_escape(s.get("city",""))} ({html_escape(str(s.get("county_parish","")).title())} County)</td>'
+        f'<td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:right;font-size:12px">{s.get("evacuation_capacity") or "—"}</td></tr>'
         for s in shelters
     )
     county_list = ", ".join(sorted({c.title() for _, c in location_county_pairs}))
