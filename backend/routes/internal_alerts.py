@@ -351,6 +351,68 @@ def _polygon_rings_from_feature(feat: dict) -> list:
     return rings
 
 
+# ─────────────────────── Per-email unsubscribe ───────────────────────
+# HMAC-signed one-click unsubscribe links + RFC 8058 List-Unsubscribe
+# headers so Gmail / Apple Mail surface a native unsubscribe button
+# at the top of every alert email AND we ship a fallback link in the
+# footer for clients that don't honor List-Unsubscribe. The public
+# endpoint that handles the click lives in routes/notifications.py
+# (public_unsubscribe_get / public_unsubscribe_post).
+_UNSUBSCRIBE_BASE_URL = os.getenv("PUBLIC_API_BASE", "https://firescope-api.onrender.com")
+_CHANNEL_LABELS = {
+    "high_risk":   "High Risk Wildfire alerts",
+    "breaking":    "Breaking Fire News alerts",
+    "evacuation":  "Evacuation alerts",
+    "fire_alerts": "Wildfires-in-your-county alerts",
+    "all":         "all FireScope alert emails",
+}
+
+
+def _unsubscribe_token(user_id: int, channel: str) -> str:
+    import hmac as _hmac
+    secret = (os.getenv("SECRET_KEY") or "dev-secret").encode("utf-8")
+    msg = f"unsub:{user_id}:{channel}".encode("utf-8")
+    return _hmac.new(secret, msg, hashlib.sha256).hexdigest()[:24]
+
+
+def _unsubscribe_link(user_id: int, channel: str) -> str:
+    return (
+        f"{_UNSUBSCRIBE_BASE_URL}/api/notifications/unsubscribe"
+        f"?u={user_id}&c={channel}&t={_unsubscribe_token(user_id, channel)}"
+    )
+
+
+def _unsubscribe_footer_html(user_id: int, channel: str) -> str:
+    """Footer block: per-channel unsubscribe + all-channels unsubscribe
+    + manage-preferences. Rendered as a single-row <table> for Gmail
+    safety so it always appears below the existing footer text."""
+    label = _CHANNEL_LABELS.get(channel, "this channel")
+    return (
+        '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" '
+        'style="margin:14px 0 0 0;border-top:1px solid #eeeeee;padding-top:12px">'
+        '<tr><td style="font-family:Arial,Helvetica,sans-serif;font-size:12px;color:#888888;text-align:center">'
+        f'<a href="{html_escape(_unsubscribe_link(user_id, channel))}" '
+        f'style="color:#888888;text-decoration:underline">Unsubscribe from {html_escape(label)}</a>'
+        ' &nbsp;&middot;&nbsp; '
+        f'<a href="{html_escape(_unsubscribe_link(user_id, "all"))}" '
+        f'style="color:#888888;text-decoration:underline">Unsubscribe from all FireScope emails</a>'
+        ' &nbsp;&middot;&nbsp; '
+        '<a href="https://firescope.dev/?page=notifications" '
+        'style="color:#888888;text-decoration:underline">Manage preferences</a>'
+        '</td></tr></table>'
+    )
+
+
+def _unsubscribe_headers(user_id: int, channel: str) -> dict:
+    """RFC 2369 + 8058 headers so Gmail / Apple Mail / etc. surface a
+    native one-click unsubscribe button at the top of the email."""
+    link = _unsubscribe_link(user_id, channel)
+    return {
+        "List-Unsubscribe": f"<{link}>",
+        "List-Unsubscribe-Post": "List-Unsubscribe=One-Click",
+    }
+
+
 def _email_shell(
     *,
     header_bg: str,
@@ -360,6 +422,7 @@ def _email_shell(
     body_inner_html: str,
     footer_text: str,
     link_color: str = "#dc2626",
+    unsubscribe_html: str = "",
 ) -> str:
     """Single Gmail-bulletproof email shell used by every alert channel.
 
@@ -416,6 +479,7 @@ def _email_shell(
         f'<p style="margin:18px 0 0;font-size:13px;color:#555555;">Open <a href="https://firescope.dev" '
         f'style="color:{link_color};text-decoration:underline;">firescope.dev</a> for the live map.</p>'
         f'<p style="margin:14px 0 0;font-size:12px;color:#888888;">{footer_text}</p>'
+        f'{unsubscribe_html}'
         '</td></tr>'
         '</table>'
         '</td></tr>'
@@ -531,7 +595,7 @@ def _location_block_html(loc_payload: dict) -> str:
     )
 
 
-def _send_high_risk_email(to_email: str, contact_name: str, locations_payload: list):
+def _send_high_risk_email(to_email: str, contact_name: str, locations_payload: list, user_id: int | None = None):
     """Direct Resend SDK call. Bypasses the EmailSender/Renderer scaffolding
     in services/email/ because that machinery is wired to a duplicate ORM
     schema that was never integrated. Slice 1B will re-route through the
@@ -592,6 +656,7 @@ def _send_high_risk_email(to_email: str, contact_name: str, locations_payload: l
         body_inner_html=body_inner,
         footer_text="You're receiving this because the High Risk channel is on in your alert settings. "
                     "Manage at firescope.dev &rarr; Alerts.",
+        unsubscribe_html=(_unsubscribe_footer_html(user_id, "high_risk") if user_id else ""),
     )
 
     def _txt_block(lp):
@@ -631,7 +696,7 @@ def _send_high_risk_email(to_email: str, contact_name: str, locations_payload: l
             "subject": subject,
             "html": html,
             "text": text,
-            "headers": _anti_gmail_trim_headers(),
+            "headers": {**_anti_gmail_trim_headers(), **(_unsubscribe_headers(user_id, "high_risk") if user_id else {})},
         })
         return resp.get("id"), None
     except Exception as e:
@@ -716,6 +781,7 @@ def run_high_risk_alerts():
             to_email=to_email,
             contact_name=getattr(user, "name", None) or "",
             locations_payload=sorted(hits, key=lambda h: -h["risk"]),
+            user_id=user.id,
         )
         status = "sent" if msg_id else "failed"
         session.add(AlertActivity(
@@ -768,7 +834,7 @@ def _last_news_send_at(session, user_id):
     return row[0] if row else None
 
 
-def _send_breaking_news_email(to_email: str, contact_name: str, articles: list) -> tuple[str | None, str | None]:
+def _send_breaking_news_email(to_email: str, contact_name: str, articles: list, user_id: int | None = None) -> tuple[str | None, str | None]:
     try:
         import resend
     except ImportError:
@@ -814,6 +880,7 @@ def _send_breaking_news_email(to_email: str, contact_name: str, articles: list) 
         body_inner_html=body_inner,
         footer_text="You're getting this because the Breaking Fire News channel is on. "
                     "Manage at firescope.dev &rarr; Alerts.",
+        unsubscribe_html=(_unsubscribe_footer_html(user_id, "breaking") if user_id else ""),
     )
     text = (
         f"FireScope — {len(articles)} new breaking fire news {'story' if len(articles) == 1 else 'stories'}.\n\n"
@@ -830,7 +897,7 @@ def _send_breaking_news_email(to_email: str, contact_name: str, articles: list) 
             "subject": f"FireScope: {len(articles)} new breaking fire {'story' if len(articles) == 1 else 'stories'}",
             "html": html,
             "text": text,
-            "headers": _anti_gmail_trim_headers(),
+            "headers": {**_anti_gmail_trim_headers(), **(_unsubscribe_headers(user_id, "breaking") if user_id else {})},
         })
         return resp.get("id"), None
     except Exception as e:
@@ -911,6 +978,7 @@ def run_breaking_news_alerts():
             to_email=to_email,
             contact_name=getattr(user, "name", None) or "",
             articles=payload,
+            user_id=user.id,
         )
         status = "sent" if msg_id else "failed"
         session.add(AlertActivity(
@@ -1046,6 +1114,7 @@ def _send_multizone_evac_email(
     county_name: str,
     zone_hits: list,           # [{"props":..., "feature":..., "match":"polygon|county"}]
     nearest_shelters: list,
+    user_id: int | None = None,
 ) -> tuple[str | None, str | None]:
     """Send ONE consolidated evacuation alert listing every zone that
     triggered for this user in the current cron tick, with a static map
@@ -1203,6 +1272,7 @@ def _send_multizone_evac_email(
         header_subtitle=zone_count_summary,
         body_inner_html=body_inner,
         footer_text="Manage the Evacuation channel at firescope.dev &rarr; Alerts.",
+        unsubscribe_html=(_unsubscribe_footer_html(user_id, "evacuation") if user_id else ""),
     )
 
     # Plain-text fallback
@@ -1237,7 +1307,7 @@ def _send_multizone_evac_email(
             "subject": subject,
             "html": html,
             "text": text,
-            "headers": _anti_gmail_trim_headers(),
+            "headers": {**_anti_gmail_trim_headers(), **(_unsubscribe_headers(user_id, "evacuation") if user_id else {})},
         })
         return resp.get("id"), None
     except Exception as e:
@@ -1322,6 +1392,7 @@ def _send_evacuation_email(to_email, contact_name, location_name, zone_props, ne
         header_subtitle=html_escape(event),
         body_inner_html=body_inner,
         footer_text="Manage the Evacuation channel at firescope.dev &rarr; Alerts.",
+        unsubscribe_html=(_unsubscribe_footer_html(user_id, "evacuation") if user_id else ""),
     )
     text = (
         f"{banner_label}\n"
@@ -1340,7 +1411,7 @@ def _send_evacuation_email(to_email, contact_name, location_name, zone_props, ne
             "subject": f"FireScope: {banner_label} — {zone_name}",
             "html": html,
             "text": text,
-            "headers": _anti_gmail_trim_headers(),
+            "headers": {**_anti_gmail_trim_headers(), **(_unsubscribe_headers(user_id, "evacuation") if user_id else {})},
         })
         return resp.get("id"), None
     except Exception as e:
@@ -1366,7 +1437,7 @@ def _seen_shelter_ids_for_user(session, user_id) -> set:
     return {r[0] for r in rows if r[0]}
 
 
-def _send_shelter_opened_email(to_email, contact_name, location_county_pairs, shelters):
+def _send_shelter_opened_email(to_email, contact_name, location_county_pairs, shelters, user_id: int | None = None):
     """One email per cron-tick listing every newly-opened shelter in counties
     that contain the user's saved locations."""
     try:
@@ -1422,6 +1493,7 @@ def _send_shelter_opened_email(to_email, contact_name, location_county_pairs, sh
         footer_text="You're getting this because the Evacuation channel is on (shelters travel with it). "
                     "Manage at firescope.dev &rarr; Alerts.",
         link_color="#16a34a",
+        unsubscribe_html=(_unsubscribe_footer_html(user_id, "evacuation") if user_id else ""),
     )
     text = (
         f"FireScope — {len(shelters)} new open shelter{'s' if len(shelters) != 1 else ''} in {county_list}.\n\n"
@@ -1438,7 +1510,7 @@ def _send_shelter_opened_email(to_email, contact_name, location_county_pairs, sh
             "subject": f"FireScope: {len(shelters)} new open shelter{'s' if len(shelters) != 1 else ''} in {county_list}",
             "html": html,
             "text": text,
-            "headers": _anti_gmail_trim_headers(),
+            "headers": {**_anti_gmail_trim_headers(), **(_unsubscribe_headers(user_id, "evacuation") if user_id else {})},
         })
         return resp.get("id"), None
     except Exception as e:
@@ -1523,6 +1595,7 @@ def run_evacuation_alerts():
                         contact_name=getattr(user, "name", None) or "",
                         location_county_pairs=seen_pairs,
                         shelters=[s for s, _ in new_shelters],
+                        user_id=user.id,
                     )
                     status = "sent" if msg_id else "failed"
                     # One AlertActivity row per shelter so dedup is per-shelter.
@@ -1640,6 +1713,7 @@ def run_evacuation_alerts():
             county_name=county_name,
             zone_hits=zone_hits_payload,
             nearest_shelters=nearest,
+            user_id=user.id,
         )
         status = "sent" if msg_id else "failed"
         has_order = any(
@@ -2023,6 +2097,7 @@ def _send_fire_alert_email(
     fires: list,
     perim_idx: dict | None = None,
     other_major_fires: list | None = None,
+    user_id: int | None = None,
 ) -> tuple[str | None, str | None]:
     """ONE consolidated email listing every active CAL FIRE incident in a
     county that contains one of the user's saved locations. Map shows
@@ -2252,6 +2327,7 @@ def _send_fire_alert_email(
         header_subtitle=summary,
         body_inner_html=body_inner,
         footer_text="Manage the Wildfires-in-your-county channel at firescope.dev &rarr; Alerts.",
+        unsubscribe_html=(_unsubscribe_footer_html(user_id, "fire_alerts") if user_id else ""),
     )
 
     text_lines = [f"{n} active wildfire(s) in {county_label} County containing your saved location {primary_location_name}.", ""]
@@ -2282,7 +2358,7 @@ def _send_fire_alert_email(
             "subject": subject,
             "html": html,
             "text": text,
-            "headers": _anti_gmail_trim_headers(),
+            "headers": {**_anti_gmail_trim_headers(), **(_unsubscribe_headers(user_id, "fire_alerts") if user_id else {})},
         })
         return resp.get("id"), None
     except Exception as e:
@@ -2431,6 +2507,7 @@ def run_fire_alerts():
                 fires=county_fires,
                 perim_idx=perim_idx,
                 other_major_fires=other_major_fires,
+                user_id=user.id,
             )
             status = "sent" if msg_id else "failed"
             session.add(AlertActivity(
