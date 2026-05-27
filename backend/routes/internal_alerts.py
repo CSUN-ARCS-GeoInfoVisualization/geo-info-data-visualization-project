@@ -1763,11 +1763,58 @@ def _norm_county_name(name: str) -> str:
     return " ".join(s.split())
 
 
+def _douglas_peucker(points: list, tolerance: float) -> list:
+    """Polyline simplification — keep only the points that contribute to
+    the actual shape, drop the ones along straight runs. tolerance is
+    in degrees (0.001 ≈ 110m at CA latitudes). Inlined so we don't add
+    a `shapely` dependency just for this.
+    """
+    if len(points) < 3:
+        return points[:]
+
+    def _perp_distance(p, a, b):
+        # Perpendicular distance from point p to line a-b.
+        if a == b:
+            return ((p[0] - a[0]) ** 2 + (p[1] - a[1]) ** 2) ** 0.5
+        # Vector projection.
+        dx = b[0] - a[0]; dy = b[1] - a[1]
+        t = ((p[0] - a[0]) * dx + (p[1] - a[1]) * dy) / (dx * dx + dy * dy)
+        if t < 0: t = 0
+        elif t > 1: t = 1
+        proj = (a[0] + t * dx, a[1] + t * dy)
+        return ((p[0] - proj[0]) ** 2 + (p[1] - proj[1]) ** 2) ** 0.5
+
+    # Iterative DP to avoid Python recursion limits on long rings.
+    keep = [False] * len(points)
+    keep[0] = keep[-1] = True
+    stack = [(0, len(points) - 1)]
+    while stack:
+        i, j = stack.pop()
+        if j <= i + 1:
+            continue
+        max_d = -1.0; max_k = -1
+        for k in range(i + 1, j):
+            d = _perp_distance(points[k], points[i], points[j])
+            if d > max_d:
+                max_d = d; max_k = k
+        if max_d > tolerance:
+            keep[max_k] = True
+            stack.append((i, max_k))
+            stack.append((max_k, j))
+    return [p for p, k in zip(points, keep) if k]
+
+
 def _load_ca_counties() -> list:
-    """Lazy-load + cache the full CA counties FeatureCollection from
-    backend/data/boundaries/counties.json. Returns a list of
-    {name_norm, name, ring_full, ring_low, bbox} dicts — one per
-    mainland sub-polygon. Outer ring only (drops holes + islands)."""
+    """Lazy-load + cache CA counties from backend/data/boundaries/counties.json
+    at TWO levels of detail — both via Douglas-Peucker simplification on
+    the FULL raw boundary, not naive every-Nth-point downsampling. That
+    was producing zigzag chunks; DP keeps every real bend and drops only
+    collinear/redundant points.
+
+    Returns [{name_norm, name, ring_full, ring_low, bbox}, ...] — one per
+    county. For MultiPolygon counties we keep only the longest outer ring
+    (mainland). ring_full preserves every meaningful bend; ring_low is
+    aggressively simplified for neighbor-context outlines."""
     global _CA_COUNTY_CACHE
     if _CA_COUNTY_CACHE is not None:
         return _CA_COUNTY_CACHE
@@ -1777,6 +1824,11 @@ def _load_ca_counties() -> list:
         from pathlib import Path
         here = Path(__file__).resolve().parent.parent  # backend/
         d = json.load(open(here / "data" / "boundaries" / "counties.json"))
+        # DP tolerance in degrees. ~0.0015° = ~165m at CA latitudes —
+        # tight enough that the boundary looks correct on a 600px map.
+        # ~0.015° ≈ 1.65km — coarser, fine for the neighbor outlines.
+        TOL_FULL = 0.0015
+        TOL_LOW  = 0.015
         for f in d.get("features", []):
             p = f.get("properties") or {}
             name = p.get("name") or p.get("NAME") or p.get("County")
@@ -1786,27 +1838,24 @@ def _load_ca_counties() -> list:
             if g.get("type") == "Polygon":
                 poly = g.get("coordinates") or []
             elif g.get("type") == "MultiPolygon":
-                # Use ALL sub-polys for the full ring (we'll pick the
-                # largest as the visible boundary on the email map).
                 polys = g.get("coordinates") or []
-                # Pick the longest outer ring (= mainland for the few
-                # multi-poly counties that have islands).
+                # Mainland = longest outer ring among the sub-polys.
                 poly = max(polys, key=lambda pp: len(pp[0]) if pp else 0) if polys else []
             else:
                 continue
             if not poly:
                 continue
-            outer = poly[0]
-            if len(outer) < 4:
+            outer_lonlat = poly[0]
+            if len(outer_lonlat) < 4:
                 continue
-            # FULL detail (cap at 60 pts so even at high zoom the outline
-            # looks like a real boundary, not a polygon estimate). At 60
-            # pts the largest CA counties still resolve all major bends.
-            step_full = max(1, len(outer) // 60)
-            ring_full = [(float(lat), float(lon)) for lon, lat in outer[::step_full]]
-            # LOW detail (~10 pts) for the neighbor-county context layer.
-            step_low = max(1, len(outer) // 10)
-            ring_low = [(float(lat), float(lon)) for lon, lat in outer[::step_low]]
+            raw_ring = [(float(lat), float(lon)) for lon, lat in outer_lonlat]
+            ring_full = _douglas_peucker(raw_ring, TOL_FULL)
+            ring_low  = _douglas_peucker(raw_ring, TOL_LOW)
+            # Ensure closed
+            if ring_full and ring_full[0] != ring_full[-1]:
+                ring_full.append(ring_full[0])
+            if ring_low and ring_low[0] != ring_low[-1]:
+                ring_low.append(ring_low[0])
             lats = [p[0] for p in ring_full]
             lons = [p[1] for p in ring_full]
             out.append({
