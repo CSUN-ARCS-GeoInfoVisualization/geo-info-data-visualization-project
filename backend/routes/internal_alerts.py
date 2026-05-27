@@ -198,7 +198,8 @@ def _static_map_url(center_lat: float, center_lon: float,
                     shelter_pins: list | None = None,
                     zoom: int | str = 11,
                     width: int = 600, height: int = 300,
-                    include_user_pin: bool = True) -> str:
+                    include_user_pin: bool = True,
+                    county_lines: bool = False) -> str:
     """Build a Mapbox Static Images API URL matching the live FireScope
     dashboard pixel-by-pixel (zone colors, shelter emoji icons, blue
     user-location circle).
@@ -235,7 +236,19 @@ def _static_map_url(center_lat: float, center_lon: float,
     from urllib.parse import quote
     overlays = []
 
-    # Zone polygons FIRST so pins draw on top. Color per STATUS to match
+    # County boundary lines (optional, no fill — stroke only). Drawn
+    # FIRST so fire polygons + pins layer on top. Uses path-W+color-op
+    # syntax with NO trailing +fillcolor — gives Mapbox a stroke-only
+    # line. Each county outer ring is downsampled to ~10 points so all
+    # 58 CA counties fit well under the 8KB URL cap.
+    if county_lines:
+        for ring in _ca_county_outline_rings():
+            if len(ring) < 3:
+                continue
+            encoded = _encode_polyline(ring)
+            overlays.append(f"path-1+666666-0.55({quote(encoded, safe='')})")
+
+    # Zone polygons next so pins draw on top. Color per STATUS to match
     # the live colorForZoneStatus in evacuation-routes.tsx.
     for zo in (zone_overlays or []):
         rings = zo.get("rings") or []
@@ -1724,6 +1737,51 @@ def _fetch_nifc_perimeters() -> dict:
         return {"type": "FeatureCollection", "features": []}
 
 
+_CA_COUNTY_OUTLINE_CACHE: list | None = None
+
+
+def _ca_county_outline_rings() -> list:
+    """Return downsampled outer rings for all 58 CA counties as
+    [[(lat, lon), ...], ...] — used as a translucent grey base layer on
+    the fire-alert email map so the recipient can see county geography
+    behind the fire perimeters.
+
+    Loaded once per process and cached. Each county is downsampled to
+    ~12 points per outer ring so all 58 counties + the fire polygons
+    fit well under Mapbox's 8KB URL cap.
+    """
+    global _CA_COUNTY_OUTLINE_CACHE
+    if _CA_COUNTY_OUTLINE_CACHE is not None:
+        return _CA_COUNTY_OUTLINE_CACHE
+    rings = []
+    try:
+        import json
+        from pathlib import Path
+        here = Path(__file__).resolve().parent.parent  # backend/
+        path = here / "data" / "boundaries" / "counties.json"
+        d = json.load(open(path))
+        TARGET_POINTS = 12  # per county outer ring; keeps URL well under 8KB
+        for f in d.get("features", []):
+            g = f.get("geometry") or {}
+            if g.get("type") == "Polygon":
+                polys = [g.get("coordinates") or []]
+            elif g.get("type") == "MultiPolygon":
+                polys = g.get("coordinates") or []
+            else:
+                continue
+            for poly in polys:
+                if not poly:
+                    continue
+                outer = poly[0]  # outer ring only (skip holes)
+                step = max(1, len(outer) // TARGET_POINTS)
+                ds = outer[::step]
+                rings.append([(float(lat), float(lon)) for lon, lat in ds])
+    except Exception as e:
+        logger.warning("CA county outline load failed: %s", e)
+    _CA_COUNTY_OUTLINE_CACHE = rings
+    return rings
+
+
 def _fire_match_key(name: str) -> str:
     """Normalized lookup key for matching CAL FIRE incident names to NIFC
     perimeter `poly_IncidentName`.
@@ -1922,6 +1980,7 @@ def _send_fire_alert_email(
         shelter_pins=None,  # no shelter overlay for fire alerts
         zoom="auto",
         include_user_pin=user_inside_frame,
+        county_lines=True,   # show all CA county boundaries as a base layer
     )
 
     # Per-fire card
@@ -2166,93 +2225,96 @@ def run_fire_alerts():
             if cnorm and cnorm not in user_counties:
                 user_counties[cnorm] = (loc, z["name"])
 
-        # Gather all fires matching the user's counties.
-        matched_fires = []
-        primary_loc = None
-        primary_county_label = None
-        for cnorm, (loc, display_name) in user_counties.items():
-            hits = fires_by_county.get(cnorm, [])
-            if not hits:
-                continue
-            if primary_loc is None:
-                primary_loc = loc
-                primary_county_label = display_name
-            matched_fires.extend(hits)
-
-        if not matched_fires:
-            skipped_no_overlap += 1
-            continue
-
-        # Permanently drop fires we've already sent a "fully contained"
-        # closing email about for this user. This is what stops the
-        # endless re-alerting once a fire is over (recipient asked:
-        # "when a fire is contained make an alert for that as well,
-        # then ensure you don't talk about it again").
+        # PER-COUNTY BUNDLING. One email per county containing fires —
+        # never mix counties in a single email (recipient saw
+        # 'Riverside County' subject with a Santa-Barbara fire in the
+        # body and asked for the split). Dedup signature is per-county-
+        # per-fire-bundle so each county's email fires independently
+        # when ITS fire state changes.
         closed_sigs = _fires_already_closed_for_user(session, user.id)
-        matched_fires = [
-            f for f in matched_fires
-            if _fire_closed_marker_sig(str(f.get("UniqueId") or f.get("Name") or "")) not in closed_sigs
-        ]
-        if not matched_fires:
+        any_county_had_fires = False
+        any_county_sent = False
+        any_county_skipped_closed = False
+
+        for cnorm, (loc, display_name) in user_counties.items():
+            county_fires = fires_by_county.get(cnorm, [])
+            if not county_fires:
+                continue
+            any_county_had_fires = True
+
+            # Drop fires we've already closed out (one final "fully
+            # contained" email then silence).
+            county_fires = [
+                f for f in county_fires
+                if _fire_closed_marker_sig(str(f.get("UniqueId") or f.get("Name") or "")) not in closed_sigs
+            ]
+            if not county_fires:
+                any_county_skipped_closed = True
+                continue
+
+            # Per-county bundle signature — include county in the input
+            # so the same fire ID in a different county (rare but
+            # possible across the state) wouldn't collide.
+            bundle_sig = hashlib.sha256(
+                f"county:{cnorm}|{_fire_bundle_sig(county_fires)}".encode("utf-8")
+            ).hexdigest()[:32]
+            if _fire_bundle_already_alerted(session, user.id, bundle_sig):
+                skipped_dedup += 1
+                continue
+
+            to_email = (pref.contact_email or user.email or "").strip()
+            if not to_email:
+                errors += 1
+                continue
+
+            msg_id, send_err = _send_fire_alert_email(
+                to_email=to_email,
+                contact_name=getattr(user, "name", None) or "",
+                primary_location_name=loc.name,
+                primary_lat=loc.lat,
+                primary_lon=loc.lon,
+                county_label=display_name,
+                fires=county_fires,
+                perim_idx=perim_idx,
+            )
+            status = "sent" if msg_id else "failed"
+            session.add(AlertActivity(
+                user_id=user.id,
+                risk_level=90 if any(f.get("IsActive", True) for f in county_fires) else 60,
+                delivery_status=status,
+                reason=(f"fire_alert:{display_name}:{len(county_fires)}fires"
+                        if msg_id else f"fire_alert_err:{(send_err or '')[:24]}"),
+                state_signature=bundle_sig,
+            ))
+            if msg_id:
+                sent += 1
+                sent_ids.append(msg_id)
+                any_county_sent = True
+                # Record closing markers for fully-contained fires in
+                # this county's bundle.
+                for f in county_fires:
+                    try:
+                        pct = float(f.get("PercentContained") or 0)
+                    except (TypeError, ValueError):
+                        pct = 0
+                    if pct >= 100:
+                        fid = str(f.get("UniqueId") or f.get("Name") or "")
+                        if fid:
+                            session.add(AlertActivity(
+                                user_id=user.id,
+                                risk_level=10,
+                                delivery_status="sent",
+                                reason=f"fire_closed:{fid[:24]}",
+                                state_signature=_fire_closed_marker_sig(fid),
+                            ))
+            else:
+                errors += 1
+
+        if not any_county_had_fires:
+            skipped_no_overlap += 1
+        elif not any_county_sent and any_county_skipped_closed:
+            # Every matching county had only already-closed fires.
             skipped_closed += 1
-            continue
-
-        # Dedup signature: bundle of per-fire fingerprints (id + status + buckets).
-        bundle_sig = _fire_bundle_sig(matched_fires)
-        if _fire_bundle_already_alerted(session, user.id, bundle_sig):
-            skipped_dedup += 1
-            continue
-
-        to_email = (pref.contact_email or user.email or "").strip()
-        if not to_email:
-            errors += 1
-            continue
-
-        msg_id, send_err = _send_fire_alert_email(
-            to_email=to_email,
-            contact_name=getattr(user, "name", None) or "",
-            primary_location_name=primary_loc.name,
-            primary_lat=primary_loc.lat,
-            primary_lon=primary_loc.lon,
-            county_label=primary_county_label,
-            fires=matched_fires,
-            perim_idx=perim_idx,
-        )
-        status = "sent" if msg_id else "failed"
-        session.add(AlertActivity(
-            user_id=user.id,
-            risk_level=90 if any(f.get("IsActive", True) for f in matched_fires) else 60,
-            delivery_status=status,
-            reason=(f"fire_alert:{len(matched_fires)}fires"
-                    if msg_id else f"fire_alert_err:{(send_err or '')[:24]}"),
-            state_signature=bundle_sig,
-        ))
-        if msg_id:
-            sent += 1
-            sent_ids.append(msg_id)
-            # After a successful send, record a closing marker for every
-            # fire in the bundle that hit 100% containment. Those fires
-            # will be filtered out of every future bundle for this user
-            # (final email then silence). Marker uses delivery_status='sent'
-            # so _fires_already_closed_for_user() picks it up via the
-            # reason='fire_closed:%' query.
-            for f in matched_fires:
-                try:
-                    pct = float(f.get("PercentContained") or 0)
-                except (TypeError, ValueError):
-                    pct = 0
-                if pct >= 100:
-                    fid = str(f.get("UniqueId") or f.get("Name") or "")
-                    if fid:
-                        session.add(AlertActivity(
-                            user_id=user.id,
-                            risk_level=10,
-                            delivery_status="sent",
-                            reason=f"fire_closed:{fid[:24]}",
-                            state_signature=_fire_closed_marker_sig(fid),
-                        ))
-        else:
-            errors += 1
 
     try:
         session.commit()
