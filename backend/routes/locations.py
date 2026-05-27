@@ -83,7 +83,10 @@ def get_locations():
                 'id':       z['id'],
                 'name':     z['name'],
                 'risk_pct': round(pct * 100, 1),
-                'label':    cached.get('label') or _label_for(pct),
+                # Always derive label from live pct so saved-location badges
+                # stay in lockstep with the map. Stale labels in the cache
+                # (e.g. from the pre-NFDRS 9-tier era) must never leak through.
+                'label':    _label_for(pct),
             }
         row['risk'] = risk_obj
         out.append(row)
@@ -174,6 +177,8 @@ def risk_by_all_zones(loc_id):
             'id':       z['id'],
             'name':     z['name'],
             'risk_pct': round(pct * 100, 1),
-            'label':    cached.get('label') or _label_for(pct),
+            # Live pct -> live label (single source of truth: _TIER_THRESHOLDS).
+            # Never trust cached.get('label'); it can hold stale tier strings.
+            'label':    _label_for(pct),
         }
     return jsonify(out)
