@@ -1680,15 +1680,30 @@ def _fetch_active_fires() -> list:
 def _fetch_nifc_perimeters() -> dict:
     """Return cached NIFC fire-perimeters GeoJSON FeatureCollection so we
     can overlay each fire's real polygon on the static map (instead of
-    falling back to an acreage-derived circle)."""
+    falling back to an acreage-derived circle).
+
+    Cache key matches the public /api/fire-perimeters endpoint in
+    routes/predict.py (`cache_key='fire_perimeters'`). The fire-alert
+    cron and the dashboard fire-perimeter overlay both read THIS row —
+    same bytes, same polygons, same coordinates the dashboard renders.
+    Previously used 'nifc_perimeters' which never existed; every fire
+    silently fell back to the synthetic acreage circle, which is what
+    the recipient saw in production (commit before 9e2e604).
+    """
     from services.cache import get_cached_data
     try:
-        cached = get_cached_data("nifc_perimeters")
+        cached = get_cached_data("fire_perimeters")
         if cached and isinstance(cached, dict) and "features" in cached:
             return cached
     except Exception as e:
-        logger.warning("nifc perimeters cache read failed: %s", e)
-    return {"type": "FeatureCollection", "features": []}
+        logger.warning("fire_perimeters cache read failed: %s", e)
+    # Fallback: live compute. Keeps the cron functional on a cold deploy.
+    try:
+        from routes.predict import _compute_nifc_perimeters
+        return _compute_nifc_perimeters()
+    except Exception as e:
+        logger.warning("nifc perimeters live compute fallback failed: %s", e)
+        return {"type": "FeatureCollection", "features": []}
 
 
 def _fire_match_key(name: str) -> str:
