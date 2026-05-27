@@ -76,6 +76,74 @@ def _require_internal_token():
     return True, None
 
 
+def _email_shell(
+    *,
+    header_bg: str,
+    header_label: str,
+    header_title: str,
+    header_subtitle: str = "",
+    body_inner_html: str,
+    footer_text: str,
+    link_color: str = "#dc2626",
+) -> str:
+    """Single Gmail-bulletproof email shell used by every alert channel.
+
+    Why one shell: the high-risk email used to render blank in Gmail
+    because the per-channel shells were copy-pasted from the same broken
+    <body>+<div> template. Centralizing the wrapper means the next
+    Gmail-compat fix lands in one place, not four.
+
+    Bulletproof constraints (also enforced by tests/test_email_render.py):
+      - Pure <table role="presentation"> layout — no <div> for structure
+      - cellpadding/cellspacing/border explicit attrs on every table
+      - Hex colors, no 'white' / 'black' shorthand
+      - font-family inlined on every text cell (Gmail mobile drops
+        inherited font-family and renders cells invisible)
+      - No `background:` CSS shorthand on <td> — use background-color:
+    """
+    subtitle_row = ""
+    if header_subtitle:
+        subtitle_row = (
+            f'<tr><td align="center" style="background-color:{header_bg};padding:0 22px 14px 22px;'
+            f'font-size:13px;color:#ffffff;font-family:Arial,Helvetica,sans-serif;">{header_subtitle}</td></tr>'
+        )
+    return (
+        '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">'
+        '<html xmlns="http://www.w3.org/1999/xhtml">'
+        '<head>'
+        '<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />'
+        '<meta name="viewport" content="width=device-width, initial-scale=1.0" />'
+        f'<title>{header_title}</title>'
+        '</head>'
+        '<body style="margin:0;padding:0;background-color:#f7f7f8;font-family:Arial,Helvetica,sans-serif;">'
+        '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background-color:#f7f7f8;">'
+        '<tr><td align="center" style="padding:24px 12px;">'
+        '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="600" '
+        'style="max-width:600px;background-color:#ffffff;border:1px solid #eeeeee;">'
+        f'<tr><td align="center" style="background-color:{header_bg};padding:18px 22px 8px 22px;">'
+        '<img src="https://firescope.dev/firescope-logo.png" alt="FireScope" width="56" height="56" '
+        'style="display:block;margin:0 auto 8px auto;border:0;background-color:#ffffff;padding:4px;" />'
+        '</td></tr>'
+        f'<tr><td align="center" style="background-color:{header_bg};padding:0 22px 4px 22px;'
+        f'font-size:13px;letter-spacing:1px;color:#ffffff;font-family:Arial,Helvetica,sans-serif;">'
+        f'FIRESCOPE &bull; {header_label}</td></tr>'
+        f'<tr><td align="center" style="background-color:{header_bg};padding:0 22px {("12" if header_subtitle else "18")}px 22px;'
+        f'font-size:22px;font-weight:bold;color:#ffffff;font-family:Arial,Helvetica,sans-serif;">'
+        f'{header_title}</td></tr>'
+        f'{subtitle_row}'
+        '<tr><td style="padding:22px;font-family:Arial,Helvetica,sans-serif;color:#222222;font-size:14px;">'
+        f'{body_inner_html}'
+        f'<p style="margin:18px 0 0;font-size:13px;color:#555555;">Open <a href="https://firescope.dev" '
+        f'style="color:{link_color};text-decoration:underline;">firescope.dev</a> for the live map.</p>'
+        f'<p style="margin:14px 0 0;font-size:12px;color:#888888;">{footer_text}</p>'
+        '</td></tr>'
+        '</table>'
+        '</td></tr>'
+        '</table>'
+        '</body></html>'
+    )
+
+
 def _eligible_prefs(session):
     now = datetime.utcnow()
     q = (
@@ -205,6 +273,7 @@ def _send_high_risk_email(to_email: str, contact_name: str, locations_payload: l
     blocks_html = "".join(_location_block_html(lp) for lp in locations_payload)
     # 5-tier NFDRS scale legend — always rendered so the recipient sees the
     # full risk scale even when their current data only spans 2-3 tiers.
+    # Swatch is a <td>+background-color (not a <div>) for Gmail compat.
     legend_rows = (
         ("Extreme",   "#fee2e2", "80%+"),
         ("Very High", "#fecaca", "60-80%"),
@@ -214,46 +283,36 @@ def _send_high_risk_email(to_email: str, contact_name: str, locations_payload: l
     )
     legend_html = "".join(
         f'<tr>'
-        f'<td width="14" style="padding:0"><div style="width:14px;height:14px;background-color:{c};border:1px solid #cccccc">&nbsp;</div></td>'
+        f'<td width="14" height="14" style="background-color:{c};border:1px solid #cccccc;font-size:0;line-height:0">&nbsp;</td>'
         f'<td style="padding:4px 8px;font-size:12px;font-family:Arial,Helvetica,sans-serif;color:#222222;font-weight:bold">{l}</td>'
         f'<td style="padding:4px 8px;font-size:12px;font-family:Arial,Helvetica,sans-serif;color:#666666">{r}</td>'
         f'</tr>'
         for l, c, r in legend_rows
     )
-    html = f"""<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
-<html xmlns="http://www.w3.org/1999/xhtml">
-<head>
-<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>FireScope High Risk Alert</title>
-</head>
-<body style="margin:0;padding:0;background-color:#f7f7f8;font-family:Arial,Helvetica,sans-serif;">
-<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background-color:#f7f7f8;">
-  <tr><td align="center" style="padding:24px 12px;">
-    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="600" style="max-width:600px;background-color:#ffffff;border:1px solid #eeeeee;">
-      <tr><td align="center" style="background-color:#dc2626;padding:18px 22px;">
-        <img src="https://firescope.dev/firescope-logo.png" alt="FireScope" width="56" height="56" style="display:block;margin:0 auto 8px auto;border:0;background-color:#ffffff;padding:4px;" />
-        <div style="font-size:13px;letter-spacing:1px;color:#ffffff;font-family:Arial,Helvetica,sans-serif;">FIRESCOPE &bull; HIGH RISK ALERT</div>
-        <div style="font-size:22px;font-weight:bold;margin-top:4px;color:#ffffff;font-family:Arial,Helvetica,sans-serif;">Wildfire risk alert for your saved locations</div>
-      </td></tr>
-      <tr><td style="padding:22px;font-family:Arial,Helvetica,sans-serif;color:#222222;">
-        <p style="margin:0 0 14px;font-size:14px;">Hi {html_escape(name)},</p>
-        <p style="margin:0 0 8px;font-size:14px;line-height:1.45;">One or more of your saved locations is at <strong>High</strong> risk or above on the NFDRS 5-tier scale. Below is the current risk by every zone type &mdash; county, ZIP code, neighborhood, and census tract &mdash; so you can see which scope is driving the alert.</p>
-        {blocks_html}
-        <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="margin-top:18px;border-top:1px solid #eeeeee;padding-top:14px;">
-          <tr><td style="padding:6px 0 8px 0;font-size:11px;color:#888888;text-transform:uppercase;letter-spacing:1px;font-family:Arial,Helvetica,sans-serif;font-weight:bold">NFDRS 5-Tier Risk Scale</td></tr>
-          <tr><td>
-            <table role="presentation" cellpadding="0" cellspacing="0" border="0">{legend_html}</table>
-          </td></tr>
-        </table>
-        <p style="margin:18px 0 0;font-size:13px;color:#555555;">Open <a href="https://firescope.dev" style="color:#dc2626;text-decoration:underline;">firescope.dev</a> for the live map, fire perimeters, and evacuation info.</p>
-        <p style="margin:14px 0 0;font-size:12px;color:#888888;">You're receiving this because the High Risk channel is on in your alert settings. Manage at firescope.dev &rarr; Alerts.</p>
-      </td></tr>
-    </table>
-  </td></tr>
-</table>
-</body>
-</html>"""
+    body_inner = (
+        f'<p style="margin:0 0 14px;font-size:14px;">Hi {html_escape(name)},</p>'
+        '<p style="margin:0 0 8px;font-size:14px;line-height:1.45;">One or more of your saved locations is at '
+        '<strong>High</strong> risk or above on the NFDRS 5-tier scale. Below is the current risk by every '
+        'zone type &mdash; county, ZIP code, neighborhood, and census tract &mdash; so you can see which '
+        'scope is driving the alert.</p>'
+        f'{blocks_html}'
+        '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" '
+        'style="margin-top:18px;border-top:1px solid #eeeeee;">'
+        '<tr><td style="padding:14px 0 8px 0;font-size:11px;color:#888888;text-transform:uppercase;'
+        'letter-spacing:1px;font-family:Arial,Helvetica,sans-serif;font-weight:bold">NFDRS 5-Tier Risk Scale</td></tr>'
+        '<tr><td>'
+        f'<table role="presentation" cellpadding="0" cellspacing="0" border="0">{legend_html}</table>'
+        '</td></tr>'
+        '</table>'
+    )
+    html = _email_shell(
+        header_bg="#dc2626",
+        header_label="HIGH RISK ALERT",
+        header_title="Wildfire risk alert for your saved locations",
+        body_inner_html=body_inner,
+        footer_text="You're receiving this because the High Risk channel is on in your alert settings. "
+                    "Manage at firescope.dev &rarr; Alerts.",
+    )
 
     def _txt_block(lp):
         lines = [f"  {lp['name']}:"]
@@ -446,38 +505,35 @@ def _send_breaking_news_email(to_email: str, contact_name: str, articles: list) 
     # away — not on the raw NWS/GNews JSON page.
     def _our_news_url(a):
         return f"https://firescope.dev/?page=news#article-{a['id']}"
+    # Each article = one table row (header subtitle / title / summary).
     items_html = "".join(
-        '<div style="margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid #eee">'
-        '  <div style="font-size:11px;text-transform:uppercase;color:#888;letter-spacing:.06em">'
-        f'    {html_escape(a["source_label"])} · {a["published_at"][:16].replace("T"," ")} UTC'
-        '  </div>'
-        '  <div style="font-size:15px;font-weight:600;margin:4px 0 6px">'
-        f'    <a href="{html_escape(_our_news_url(a))}" style="color:#dc2626;text-decoration:none">{html_escape(a["title"])}</a>'
-        '  </div>'
-        f'  <div style="font-size:13px;color:#444;line-height:1.45">{html_escape((a.get("summary") or "")[:280])}{"…" if len(a.get("summary") or "") > 280 else ""}</div>'
-        '</div>'
+        '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" '
+        'style="margin-bottom:14px;padding-bottom:14px;border-bottom:1px solid #eeeeee;">'
+        '<tr><td style="padding:0 0 4px 0;font-size:11px;text-transform:uppercase;color:#888888;'
+        'letter-spacing:1px;font-family:Arial,Helvetica,sans-serif;">'
+        f'{html_escape(a["source_label"])} &middot; {a["published_at"][:16].replace("T"," ")} UTC</td></tr>'
+        '<tr><td style="padding:0 0 6px 0;font-size:15px;font-weight:bold;font-family:Arial,Helvetica,sans-serif;">'
+        f'<a href="{html_escape(_our_news_url(a))}" style="color:#dc2626;text-decoration:none">'
+        f'{html_escape(a["title"])}</a></td></tr>'
+        '<tr><td style="font-size:13px;color:#444444;line-height:1.45;font-family:Arial,Helvetica,sans-serif;">'
+        f'{html_escape((a.get("summary") or "")[:280])}{"&hellip;" if len(a.get("summary") or "") > 280 else ""}'
+        '</td></tr>'
+        '</table>'
         for a in articles
     )
-    html = f"""<!doctype html>
-<html><body style="font-family:system-ui,-apple-system,sans-serif;background:#f7f7f8;margin:0;padding:24px">
-  <div style="max-width:600px;margin:auto;background:white;border-radius:12px;overflow:hidden;border:1px solid #eee">
-    <div style="background:#dc2626;color:white;padding:18px 22px">
-      <div style="text-align:center;margin-bottom:8px"><img src="https://firescope.dev/firescope-logo.png" alt="FireScope" width="56" height="56" style="display:block;margin:0 auto;border:0;background:white;border-radius:10px;padding:4px"></div>
-      <div style="font-size:13px;letter-spacing:.08em;opacity:.9;text-align:center">FIRESCOPE • BREAKING FIRE NEWS</div>
-      <div style="font-size:22px;font-weight:700;margin-top:4px;text-align:center">{len(articles)} new {'story' if len(articles) == 1 else 'stories'} you should see</div>
-    </div>
-    <div style="padding:22px">
-      <p style="margin:0 0 14px">Hi {html_escape(name)},</p>
-      {items_html}
-      <p style="margin:18px 0 0;font-size:13px;color:#555">
-        See all fire news on <a href="https://firescope.dev" style="color:#dc2626">firescope.dev</a>.
-      </p>
-      <p style="margin:14px 0 0;font-size:12px;color:#888">
-        You're getting this because the Breaking Fire News channel is on. Manage at firescope.dev → Alerts.
-      </p>
-    </div>
-  </div>
-</body></html>"""
+    plural = "story" if len(articles) == 1 else "stories"
+    body_inner = (
+        f'<p style="margin:0 0 14px;font-size:14px;">Hi {html_escape(name)},</p>'
+        f'{items_html}'
+    )
+    html = _email_shell(
+        header_bg="#dc2626",
+        header_label="BREAKING FIRE NEWS",
+        header_title=f"{len(articles)} new {plural} you should see",
+        body_inner_html=body_inner,
+        footer_text="You're getting this because the Breaking Fire News channel is on. "
+                    "Manage at firescope.dev &rarr; Alerts.",
+    )
     text = (
         f"FireScope — {len(articles)} new breaking fire news {'story' if len(articles) == 1 else 'stories'}.\n\n"
         + "\n\n".join(
@@ -718,41 +774,48 @@ def _send_evacuation_email(to_email, contact_name, location_name, zone_props, ne
     )
 
     shelter_rows = "".join(
-        f'<tr><td style="padding:8px 12px;border-bottom:1px solid #eee">{html_escape(s.get("shelter_name",""))}</td>'
-        f'<td style="padding:8px 12px;border-bottom:1px solid #eee;font-size:12px;color:#666">'
+        f'<tr>'
+        f'<td style="padding:8px 12px;border-bottom:1px solid #eeeeee;font-family:Arial,Helvetica,sans-serif">{html_escape(s.get("shelter_name",""))}</td>'
+        f'<td style="padding:8px 12px;border-bottom:1px solid #eeeeee;font-size:12px;color:#666666;font-family:Arial,Helvetica,sans-serif">'
         f'{html_escape(s.get("address_1",""))}, {html_escape(s.get("city",""))}</td>'
-        f'<td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:right;font-size:12px">{s.get("_km",0):.1f} km</td></tr>'
+        f'<td style="padding:8px 12px;border-bottom:1px solid #eeeeee;text-align:right;font-size:12px;font-family:Arial,Helvetica,sans-serif">{s.get("_km",0):.1f} km</td>'
+        f'</tr>'
         for s in nearest_shelters
-    ) or '<tr><td colspan="3" style="padding:10px;color:#888;font-size:12px">No open shelters reported nearby right now — check CalOES.</td></tr>'
+    ) or '<tr><td colspan="3" style="padding:10px;color:#888888;font-size:12px;font-family:Arial,Helvetica,sans-serif">No open shelters reported nearby right now &mdash; check CalOES.</td></tr>'
 
     banner_color = "#7f1d1d" if is_order else "#d97706"
     banner_label = "EVACUATION ORDER" if is_order else "EVACUATION WARNING"
 
-    html = f"""<!doctype html>
-<html><body style="font-family:system-ui,-apple-system,sans-serif;background:#f7f7f8;margin:0;padding:24px">
-  <div style="max-width:600px;margin:auto;background:white;border-radius:12px;overflow:hidden;border:1px solid #eee">
-    <div style="background:{banner_color};color:white;padding:18px 22px">
-      <div style="text-align:center;margin-bottom:8px"><img src="https://firescope.dev/firescope-logo.png" alt="FireScope" width="56" height="56" style="display:block;margin:0 auto;border:0;background:white;border-radius:10px;padding:4px"></div>
-      <div style="font-size:13px;letter-spacing:.08em;opacity:.95;text-align:center">FIRESCOPE • {banner_label}</div>
-      <div style="font-size:22px;font-weight:700;margin-top:4px;text-align:center">{html_escape(zone_name)} ({html_escape(county)})</div>
-      <div style="font-size:13px;margin-top:4px;opacity:.95">{html_escape(event)}</div>
-    </div>
-    <div style="padding:22px">
-      <p style="margin:0 0 12px">Hi {html_escape(name)},</p>
-      <p style="margin:0 0 14px;font-size:15px">{proximity_line}</p>
-      {f'<div style="background:#fef2f2;border-left:3px solid #dc2626;padding:10px 14px;margin:0 0 14px;font-size:13px;color:#7f1d1d">{html_escape(critical)}</div>' if critical else ''}
-      {f'<div style="font-size:13px;color:#444;margin:0 0 18px">{html_escape(public)}</div>' if public else ''}
-      <div style="font-size:13px;font-weight:600;color:#555;margin:6px 0 6px">Nearest open shelters</div>
-      <table style="width:100%;border-collapse:collapse">{shelter_rows}</table>
-      <p style="margin:18px 0 0;font-size:13px;color:#555">
-        See live evacuation map: <a href="https://firescope.dev" style="color:#dc2626">firescope.dev</a>.
-      </p>
-      <p style="margin:14px 0 0;font-size:12px;color:#888">
-        Manage the Evacuation channel at firescope.dev → Alerts.
-      </p>
-    </div>
-  </div>
-</body></html>"""
+    # Critical-info callout as a table row (not a div) for Gmail compat.
+    critical_row = (
+        f'<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" '
+        f'style="margin:0 0 14px 0;background-color:#fef2f2;border-left:3px solid #dc2626">'
+        f'<tr><td style="padding:10px 14px;font-size:13px;color:#7f1d1d;font-family:Arial,Helvetica,sans-serif">'
+        f'{html_escape(critical)}</td></tr></table>'
+    ) if critical else ''
+    public_row = (
+        f'<p style="margin:0 0 18px 0;font-size:13px;color:#444444;">{html_escape(public)}</p>'
+    ) if public else ''
+
+    body_inner = (
+        f'<p style="margin:0 0 12px;font-size:14px;">Hi {html_escape(name)},</p>'
+        f'<p style="margin:0 0 14px;font-size:15px;">{proximity_line}</p>'
+        f'{critical_row}'
+        f'{public_row}'
+        '<p style="margin:6px 0 6px;font-size:13px;font-weight:bold;color:#555555;">Nearest open shelters</p>'
+        '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" '
+        'style="border-collapse:collapse;border:1px solid #eeeeee;">'
+        f'{shelter_rows}'
+        '</table>'
+    )
+    html = _email_shell(
+        header_bg=banner_color,
+        header_label=banner_label,
+        header_title=f"{html_escape(zone_name)} ({html_escape(county)})",
+        header_subtitle=html_escape(event),
+        body_inner_html=body_inner,
+        footer_text="Manage the Evacuation channel at firescope.dev &rarr; Alerts.",
+    )
     text = (
         f"{banner_label}\n"
         f"{zone_name} ({county}) — {event}\n"
@@ -811,44 +874,47 @@ def _send_shelter_opened_email(to_email, contact_name, location_county_pairs, sh
 
     name = (contact_name or "").strip() or to_email.split("@", 1)[0]
     rows = "".join(
-        f'<tr><td style="padding:8px 12px;border-bottom:1px solid #eee;font-weight:600">{html_escape(s.get("shelter_name",""))}</td>'
-        f'<td style="padding:8px 12px;border-bottom:1px solid #eee;font-size:12px;color:#666">'
+        f'<tr>'
+        f'<td style="padding:8px 12px;border-bottom:1px solid #eeeeee;font-weight:bold;font-family:Arial,Helvetica,sans-serif">{html_escape(s.get("shelter_name",""))}</td>'
+        f'<td style="padding:8px 12px;border-bottom:1px solid #eeeeee;font-size:12px;color:#666666;font-family:Arial,Helvetica,sans-serif">'
         f'{html_escape(s.get("address_1",""))}, {html_escape(s.get("city",""))} ({html_escape(str(s.get("county_parish","")).title())} County)</td>'
-        f'<td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:right;font-size:12px">{s.get("evacuation_capacity") or "—"}</td></tr>'
+        f'<td style="padding:8px 12px;border-bottom:1px solid #eeeeee;text-align:right;font-size:12px;font-family:Arial,Helvetica,sans-serif">{s.get("evacuation_capacity") or "&mdash;"}</td>'
+        f'</tr>'
         for s in shelters
     )
     county_list = ", ".join(sorted({c.title() for _, c in location_county_pairs}))
-    html = f"""<!doctype html>
-<html><body style="font-family:system-ui,-apple-system,sans-serif;background:#f7f7f8;margin:0;padding:24px">
-  <div style="max-width:600px;margin:auto;background:white;border-radius:12px;overflow:hidden;border:1px solid #eee">
-    <div style="background:#16a34a;color:white;padding:18px 22px">
-      <div style="text-align:center;margin-bottom:8px"><img src="https://firescope.dev/firescope-logo.png" alt="FireScope" width="56" height="56" style="display:block;margin:0 auto;border:0;background:white;border-radius:10px;padding:4px"></div>
-      <div style="font-size:13px;letter-spacing:.08em;opacity:.95;text-align:center">FIRESCOPE • SHELTER UPDATE</div>
-      <div style="font-size:22px;font-weight:700;margin-top:4px;text-align:center">{len(shelters)} open shelter{'s' if len(shelters) != 1 else ''} near you</div>
-    </div>
-    <div style="padding:22px">
-      <p style="margin:0 0 12px">Hi {html_escape(name)},</p>
-      <p style="margin:0 0 14px;font-size:14px">
-        {len(shelters)} shelter{'s' if len(shelters) != 1 else ''} {'have' if len(shelters) != 1 else 'has'} been reported open in <strong>{html_escape(county_list)}</strong>,
-        which {'contain' if len(set(c for _, c in location_county_pairs)) > 1 else 'contains'} your saved location{'s' if len(set(loc for loc, _ in location_county_pairs)) > 1 else ''}.
-      </p>
-      <table style="width:100%;border-collapse:collapse;font-size:13px">
-        <thead><tr style="background:#fafafa">
-          <th style="padding:8px 12px;text-align:left;font-size:11px;color:#888;text-transform:uppercase">Shelter</th>
-          <th style="padding:8px 12px;text-align:left;font-size:11px;color:#888;text-transform:uppercase">Where</th>
-          <th style="padding:8px 12px;text-align:right;font-size:11px;color:#888;text-transform:uppercase">Capacity</th>
-        </tr></thead>
-        <tbody>{rows}</tbody>
-      </table>
-      <p style="margin:18px 0 0;font-size:13px;color:#555">
-        See the live shelter map at <a href="https://firescope.dev" style="color:#16a34a">firescope.dev</a>.
-      </p>
-      <p style="margin:14px 0 0;font-size:12px;color:#888">
-        You're getting this because the Evacuation channel is on (shelters travel with it). Manage at firescope.dev → Alerts.
-      </p>
-    </div>
-  </div>
-</body></html>"""
+    n_unique_counties = len(set(c for _, c in location_county_pairs))
+    n_unique_locations = len(set(loc for loc, _ in location_county_pairs))
+    s_plural = "s" if len(shelters) != 1 else ""
+    have_plural = "have" if len(shelters) != 1 else "has"
+    contain_plural = "contain" if n_unique_counties > 1 else "contains"
+    loc_plural = "s" if n_unique_locations > 1 else ""
+
+    body_inner = (
+        f'<p style="margin:0 0 12px;font-size:14px;">Hi {html_escape(name)},</p>'
+        f'<p style="margin:0 0 14px;font-size:14px;line-height:1.45;">'
+        f'{len(shelters)} shelter{s_plural} {have_plural} been reported open in '
+        f'<strong>{html_escape(county_list)}</strong>, which {contain_plural} your saved '
+        f'location{loc_plural}.</p>'
+        '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" '
+        'style="border-collapse:collapse;border:1px solid #eeeeee;font-size:13px;">'
+        '<tr style="background-color:#fafafa;">'
+        '<th align="left" style="padding:8px 12px;font-size:11px;color:#888888;text-transform:uppercase;font-family:Arial,Helvetica,sans-serif">Shelter</th>'
+        '<th align="left" style="padding:8px 12px;font-size:11px;color:#888888;text-transform:uppercase;font-family:Arial,Helvetica,sans-serif">Where</th>'
+        '<th align="right" style="padding:8px 12px;font-size:11px;color:#888888;text-transform:uppercase;font-family:Arial,Helvetica,sans-serif">Capacity</th>'
+        '</tr>'
+        f'{rows}'
+        '</table>'
+    )
+    html = _email_shell(
+        header_bg="#16a34a",
+        header_label="SHELTER UPDATE",
+        header_title=f"{len(shelters)} open shelter{s_plural} near you",
+        body_inner_html=body_inner,
+        footer_text="You're getting this because the Evacuation channel is on (shelters travel with it). "
+                    "Manage at firescope.dev &rarr; Alerts.",
+        link_color="#16a34a",
+    )
     text = (
         f"FireScope — {len(shelters)} new open shelter{'s' if len(shelters) != 1 else ''} in {county_list}.\n\n"
         + "\n".join(

@@ -30,7 +30,7 @@ import re
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO_ROOT, "backend"))
 
-from routes.internal_alerts import _location_block_html, _TIER_BG  # noqa: E402
+from routes.internal_alerts import _location_block_html, _TIER_BG, _email_shell  # noqa: E402
 
 
 SAMPLE = {
@@ -154,3 +154,87 @@ def test_location_block_tints_tier_cell_with_background_color():
     assert "background-color:#ffedd5" in html
     # Riverside row is Moderate → bg #fef9c3
     assert "background-color:#fef9c3" in html
+
+
+# ───────────────────────── Shared shell guards (covers ALL 4 channels) ─────────────────────────
+#
+# Every alert email (high-risk, breaking-news, evacuation, shelter-opened)
+# routes through _email_shell(). If the shell breaks, every channel blanks
+# in Gmail at the same time. These guards lock the shell shape so a future
+# change can't reintroduce the <body>+<div> pattern that cost a 4-hour
+# debugging session on 2026-05-27.
+
+
+def _shell_sample() -> str:
+    return _email_shell(
+        header_bg="#dc2626",
+        header_label="HIGH RISK ALERT",
+        header_title="Test title",
+        header_subtitle="optional subtitle",
+        body_inner_html='<p style="margin:0;font-size:14px;font-family:Arial">Body content here.</p>',
+        footer_text="Footer text.",
+    )
+
+
+def test_shell_has_no_div_for_structure():
+    html = _shell_sample()
+    assert "<div" not in html, "Shell uses <div> — Gmail will blank it"
+
+
+def test_shell_has_xhtml_doctype_and_head_meta():
+    html = _shell_sample()
+    assert "<!DOCTYPE html PUBLIC" in html
+    assert "<head>" in html
+    assert 'http-equiv="Content-Type"' in html
+    assert 'name="viewport"' in html
+
+
+def test_shell_uses_role_presentation_tables():
+    html = _shell_sample()
+    # at least two layout tables (outer wrapper + 600px container)
+    assert html.count('role="presentation"') >= 2
+    assert 'cellpadding="0"' in html
+    assert 'cellspacing="0"' in html
+    assert 'border="0"' in html
+
+
+def test_shell_uses_no_background_shorthand_anywhere():
+    html = _shell_sample()
+    bad = re.findall(r"background:\s*(?:#|white|black|[a-z]+)\b", html)
+    assert not bad, f"Shell uses `background:` shorthand: {bad}"
+
+
+def test_shell_renders_subtitle_when_provided():
+    html = _shell_sample()
+    assert "optional subtitle" in html
+
+
+def test_shell_no_subtitle_row_when_empty():
+    html = _email_shell(
+        header_bg="#dc2626",
+        header_label="X",
+        header_title="Y",
+        body_inner_html="<p>Z</p>",
+        footer_text="W",
+    )
+    # No empty subtitle row in the DOM if none given (extra rows confuse Gmail).
+    # Quick sanity: only one bullet should appear (FIRESCOPE &bull;), no double.
+    assert html.count("&bull;") == 1
+
+
+def test_shell_inlines_font_family_on_text_cells():
+    """Gmail mobile drops inherited font-family; every text cell needs its own."""
+    html = _shell_sample()
+    # Header rows (FIRESCOPE label + title) are in their own <td>s and must
+    # have font-family inline. Footer + body content is inside the body <td>
+    # which also has font-family — we check by finding the enclosing cell.
+    for snippet in ["FIRESCOPE", "Test title"]:
+        m = re.search(rf"<td[^>]*>[^<]*{re.escape(snippet)}[^<]*</td>", html)
+        assert m, f"snippet {snippet!r} not in any <td>"
+        assert "font-family" in m.group(0), (
+            f"cell containing {snippet!r} is missing font-family"
+        )
+    # The body cell must have font-family even though its content is rich.
+    body_cell = re.search(r'<td[^>]*style="padding:22px[^"]*"', html)
+    assert body_cell, "body padding cell not found"
+    assert "font-family" in body_cell.group(0), "body cell missing font-family"
