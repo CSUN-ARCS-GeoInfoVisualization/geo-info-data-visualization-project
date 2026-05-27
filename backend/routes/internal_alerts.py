@@ -256,14 +256,17 @@ def _static_map_url(center_lat: float, center_lon: float,
     for zo in (zone_overlays or []):
         rings = zo.get("rings") or []
         if zo.get("_outline_only"):
-            stroke = zo.get("_outline_color", "2563eb")
-            width  = zo.get("_outline_width", "1")
-            opac   = zo.get("_outline_opacity", "0.9")
+            stroke_color   = zo.get("_outline_color", "2563eb")
+            stroke_width   = zo.get("_outline_width", "1")
+            stroke_opacity = zo.get("_outline_opacity", "0.9")
             for ring in rings:
                 if len(ring) < 3:
                     continue
                 encoded = _encode_polyline(ring)
-                overlays.append(f"path-{width}+{stroke}-{opac}({quote(encoded, safe='')})")
+                overlays.append(
+                    f"path-{stroke_width}+{stroke_color}-{stroke_opacity}"
+                    f"({quote(encoded, safe='')})"
+                )
             continue
         stroke_hex, fill_hex = _evac_status_colors(zo.get("status", ""))
         for ring in rings:
