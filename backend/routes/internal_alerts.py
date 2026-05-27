@@ -1677,6 +1677,47 @@ def _fetch_active_fires() -> list:
         return []
 
 
+def _fetch_nifc_perimeters() -> dict:
+    """Return cached NIFC fire-perimeters GeoJSON FeatureCollection so we
+    can overlay each fire's real polygon on the static map (instead of
+    falling back to an acreage-derived circle)."""
+    from services.cache import get_cached_data
+    try:
+        cached = get_cached_data("nifc_perimeters")
+        if cached and isinstance(cached, dict) and "features" in cached:
+            return cached
+    except Exception as e:
+        logger.warning("nifc perimeters cache read failed: %s", e)
+    return {"type": "FeatureCollection", "features": []}
+
+
+def _index_perimeters_by_name(perim_fc: dict) -> dict:
+    """{normalized_fire_name: perimeter_feature} lookup for fast matching
+    CAL FIRE incidents to NIFC perimeter polygons. Uses the same
+    _norm_fire_name() the dashboard uses so 'Apple Fire'/'apple-fire'/
+    'APPLE_FIRE' all collide."""
+    from routes.predict import _norm_fire_name
+    idx = {}
+    for f in (perim_fc.get("features") or []):
+        p = f.get("properties") or {}
+        # NIFC uses poly_IncidentName; legacy rows use IncidentName.
+        name = p.get("poly_IncidentName") or p.get("IncidentName") or p.get("attr_IncidentName")
+        if not name:
+            continue
+        nm = _norm_fire_name(name)
+        if nm and nm not in idx:
+            idx[nm] = f
+    return idx
+
+
+def _matched_perimeter_for(fire: dict, perim_idx: dict):
+    """Return the matching NIFC perimeter feature (or None) for a CAL
+    FIRE incident, by normalized name."""
+    from routes.predict import _norm_fire_name
+    nm = _norm_fire_name(fire.get("Name", ""))
+    return perim_idx.get(nm) if nm else None
+
+
 def _fire_bucket(pct, size):
     """Per-fire dedup tuple: (containment_10pct_bucket, acres_100_bucket).
     Buckets so we only re-alert on meaningful change, not every cron tick."""
@@ -1716,6 +1757,31 @@ def _fire_bundle_already_alerted(session, user_id, sig: str) -> bool:
     ).first() is not None
 
 
+def _fire_closed_marker_sig(fire_id: str) -> str:
+    """A separate dedup signature recorded the FIRST time we send a
+    bundled email containing a fire at 100% containment. Once present,
+    that fire is permanently excluded from future bundles for the same
+    user — the recipient gets one final 'fully contained' email then
+    silence, even if the upstream feed keeps re-listing the fire."""
+    return hashlib.sha256(f"fire_closed:{fire_id}".encode("utf-8")).hexdigest()[:32]
+
+
+def _fires_already_closed_for_user(session, user_id) -> set:
+    """Set of fire UniqueIds we've already sent a 'fully contained'
+    closing email about for this user. These are filtered out of every
+    future bundle."""
+    rows = (
+        session.query(AlertActivity.state_signature)
+        .filter(
+            AlertActivity.user_id == user_id,
+            AlertActivity.delivery_status == "sent",
+            AlertActivity.reason.like("fire_closed:%"),
+        )
+        .all()
+    )
+    return {r[0] for r in rows if r[0]}
+
+
 def _send_fire_alert_email(
     to_email: str,
     contact_name: str,
@@ -1724,6 +1790,7 @@ def _send_fire_alert_email(
     primary_lon: float,
     county_label: str,
     fires: list,
+    perim_idx: dict | None = None,
 ) -> tuple[str | None, str | None]:
     """ONE consolidated email listing every active CAL FIRE incident in a
     county that contains one of the user's saved locations. Map shows
@@ -1742,26 +1809,43 @@ def _send_fire_alert_email(
 
     name = (contact_name or "").strip() or to_email.split("@", 1)[0]
 
-    # Map overlays: synthesize a small circle polygon per fire centered on
-    # the incident lat/lon (CAL FIRE doesn't expose footprint geometry in
-    # the public incident feed; perimeters live in /api/fire-perimeters
-    # which is keyed differently — punted as a follow-up). Use the same
-    # red ORDER status colors so the visual matches active-evac fires.
+    # Map overlays: prefer the REAL NIFC perimeter polygon for each fire
+    # (matched by normalized name). Fall back to an acreage-derived
+    # circle ONLY when no perimeter row exists for that fire (very new
+    # incidents and out-of-state fires sometimes miss). Status color is
+    # picked per-fire: red for active/uncontained, green for 100%
+    # contained — same convention the live dashboard uses.
+    perim_idx = perim_idx or {}
     zone_overlays = []
     for f in fires[:FIRE_NEAREST_PERIMETERS_ON_MAP]:
+        try:
+            pct = float(f.get("PercentContained") or 0)
+        except (TypeError, ValueError):
+            pct = 0
+        # Contained fires use the same green styling as the live
+        # post-impact shelter color so the recipient instantly reads
+        # "fire is over."
+        status_str = "ADVISORY" if pct >= 100 else "ORDER"
+
+        # Try real perimeter first.
+        perim_feat = _matched_perimeter_for(f, perim_idx)
+        if perim_feat:
+            rings = _polygon_rings_from_feature(perim_feat)
+            if rings:
+                zone_overlays.append({"rings": rings, "status": status_str})
+                continue
+
+        # Fallback: synthetic circle from acreage.
         lat = f.get("Latitude"); lon = f.get("Longitude")
         if lat is None or lon is None:
             continue
-        # Radius from acreage: r = sqrt(acres * 4047 / pi) — converts acres
-        # to a circle radius in meters. Floor at 1km, cap at 20km so tiny
-        # fires are still visible and giant ones don't blow out the map.
         acres = float(f.get("AcresBurned") or 0)
         radius_m = max(1000.0, min(20000.0, (acres * 4047.0 / 3.14159) ** 0.5))
         try:
             from routes.predict import _circle_polygon
             ring_lonlat = _circle_polygon(float(lat), float(lon), radius_m, n=32)
-            ring = [(p[1], p[0]) for p in ring_lonlat]  # lon,lat -> lat,lon for map helper
-            zone_overlays.append({"rings": [ring], "status": "ORDER"})  # red styling
+            ring = [(p[1], p[0]) for p in ring_lonlat]  # lon,lat -> lat,lon
+            zone_overlays.append({"rings": [ring], "status": status_str})
         except Exception:
             continue
     map_url = _static_map_url(
@@ -1814,16 +1898,42 @@ def _send_fire_alert_email(
 
     n = len(fires)
     n_active = sum(1 for f in fires if f.get("IsActive", True))
-    summary = f"{n_active} active" + (f", {n - n_active} inactive" if n > n_active else "")
+    # A "fully contained" fire = PercentContained >= 100. We tag the
+    # bundle so the email header/subject can lead with the closing
+    # message when this is the final alert for that fire.
+    def _pct(f):
+        try: return float(f.get("PercentContained") or 0)
+        except (TypeError, ValueError): return 0
+    n_contained = sum(1 for f in fires if _pct(f) >= 100)
+    summary_parts = []
+    if n_active: summary_parts.append(f"{n_active} active")
+    if n_contained: summary_parts.append(f"{n_contained} fully contained")
+    if not summary_parts: summary_parts.append(f"{n} fire" + ("s" if n != 1 else ""))
+    summary = ", ".join(summary_parts)
 
-    intro_line = (
-        f'<strong>{n} wildfires</strong> active in '
-        f'<strong>{html_escape(county_label)} County</strong>, which contains your saved location '
-        f'<strong>{html_escape(primary_location_name)}</strong> ({summary}).'
-    ) if n > 1 else (
-        f'A wildfire is active in <strong>{html_escape(county_label)} County</strong>, '
-        f'which contains your saved location <strong>{html_escape(primary_location_name)}</strong>.'
-    )
+    # Special-case copy when EVERY fire in this bundle is fully contained —
+    # this is the recipient's final notification before we go silent.
+    all_contained = n_contained == n and n > 0
+    if all_contained:
+        intro_line = (
+            f'Good news — '
+            f'{"all of " if n > 1 else ""}the wildfire{"s" if n > 1 else ""} we were tracking in '
+            f'<strong>{html_escape(county_label)} County</strong> '
+            f'{"have" if n > 1 else "has"} reached <strong>100% containment</strong>. '
+            f'This is your final update — you will not receive further emails about '
+            f'{"these fires" if n > 1 else "this fire"}.'
+        )
+    elif n > 1:
+        intro_line = (
+            f'<strong>{n} wildfires</strong> active in '
+            f'<strong>{html_escape(county_label)} County</strong>, which contains your saved location '
+            f'<strong>{html_escape(primary_location_name)}</strong> ({summary}).'
+        )
+    else:
+        intro_line = (
+            f'A wildfire is active in <strong>{html_escape(county_label)} County</strong>, '
+            f'which contains your saved location <strong>{html_escape(primary_location_name)}</strong>.'
+        )
 
     body_inner = (
         f'<p style="margin:0 0 12px;font-size:14px;">Hi {html_escape(name)},</p>'
@@ -1850,9 +1960,17 @@ def _send_fire_alert_email(
         '</p>'
     )
 
-    has_active = any(f.get("IsActive", True) for f in fires)
-    header_bg = "#dc2626" if has_active else "#16a34a"
-    header_label = f"{n} FIRE{'S' if n != 1 else ''} IN YOUR COUNTY"
+    # Header: green + closing label when every fire is contained,
+    # red + count when there are still active fires.
+    if all_contained:
+        header_bg = "#16a34a"
+        header_label = (
+            "FIRE FULLY CONTAINED" if n == 1
+            else f"ALL {n} FIRES FULLY CONTAINED"
+        )
+    else:
+        header_bg = "#dc2626"
+        header_label = f"{n} FIRE{'S' if n != 1 else ''} IN YOUR COUNTY"
 
     html = _email_shell(
         header_bg=header_bg,
@@ -1873,11 +1991,16 @@ def _send_fire_alert_email(
     text = "\n".join(text_lines)
 
     primary_fire_name = fires_sorted[0].get("Name", "your area") if fires_sorted else "your area"
-    subject = (
-        f"FireScope: {n} active fire{'s' if n != 1 else ''} in {county_label} County ({primary_fire_name})"
-        if n > 1 else
-        f"FireScope: {primary_fire_name} active in {county_label} County"
-    )
+    if all_contained:
+        subject = (
+            f"FireScope: {primary_fire_name} 100% contained — final update"
+            if n == 1 else
+            f"FireScope: All {n} fires in {county_label} County fully contained — final update"
+        )
+    elif n > 1:
+        subject = f"FireScope: {n} active fires in {county_label} County ({primary_fire_name})"
+    else:
+        subject = f"FireScope: {primary_fire_name} active in {county_label} County"
 
     try:
         resp = resend.Emails.send({
@@ -1905,10 +2028,14 @@ def run_fire_alerts():
 
     session = db.session
     fires = _fetch_active_fires()
+    # Pre-fetch + index NIFC perimeters once per cron tick so every user
+    # in the loop reuses the same index instead of paying for it N times.
+    perim_idx = _index_perimeters_by_name(_fetch_nifc_perimeters())
     scanned = 0
     sent = 0
     skipped_dedup = 0
     skipped_no_overlap = 0
+    skipped_closed = 0
     errors = 0
     sent_ids = []
 
@@ -1919,6 +2046,7 @@ def run_fire_alerts():
             "sent": 0,
             "skipped_dedup": 0,
             "skipped_no_overlap": 0,
+            "skipped_closed": 0,
             "errors": 0,
             "sent_message_ids": [],
         })
@@ -1982,6 +2110,20 @@ def run_fire_alerts():
             skipped_no_overlap += 1
             continue
 
+        # Permanently drop fires we've already sent a "fully contained"
+        # closing email about for this user. This is what stops the
+        # endless re-alerting once a fire is over (recipient asked:
+        # "when a fire is contained make an alert for that as well,
+        # then ensure you don't talk about it again").
+        closed_sigs = _fires_already_closed_for_user(session, user.id)
+        matched_fires = [
+            f for f in matched_fires
+            if _fire_closed_marker_sig(str(f.get("UniqueId") or f.get("Name") or "")) not in closed_sigs
+        ]
+        if not matched_fires:
+            skipped_closed += 1
+            continue
+
         # Dedup signature: bundle of per-fire fingerprints (id + status + buckets).
         bundle_sig = _fire_bundle_sig(matched_fires)
         if _fire_bundle_already_alerted(session, user.id, bundle_sig):
@@ -2001,6 +2143,7 @@ def run_fire_alerts():
             primary_lon=primary_loc.lon,
             county_label=primary_county_label,
             fires=matched_fires,
+            perim_idx=perim_idx,
         )
         status = "sent" if msg_id else "failed"
         session.add(AlertActivity(
@@ -2014,6 +2157,27 @@ def run_fire_alerts():
         if msg_id:
             sent += 1
             sent_ids.append(msg_id)
+            # After a successful send, record a closing marker for every
+            # fire in the bundle that hit 100% containment. Those fires
+            # will be filtered out of every future bundle for this user
+            # (final email then silence). Marker uses delivery_status='sent'
+            # so _fires_already_closed_for_user() picks it up via the
+            # reason='fire_closed:%' query.
+            for f in matched_fires:
+                try:
+                    pct = float(f.get("PercentContained") or 0)
+                except (TypeError, ValueError):
+                    pct = 0
+                if pct >= 100:
+                    fid = str(f.get("UniqueId") or f.get("Name") or "")
+                    if fid:
+                        session.add(AlertActivity(
+                            user_id=user.id,
+                            risk_level=10,
+                            delivery_status="sent",
+                            reason=f"fire_closed:{fid[:24]}",
+                            state_signature=_fire_closed_marker_sig(fid),
+                        ))
         else:
             errors += 1
 
@@ -2028,6 +2192,7 @@ def run_fire_alerts():
         "sent": sent,
         "skipped_dedup": skipped_dedup,
         "skipped_no_overlap": skipped_no_overlap,
+        "skipped_closed": skipped_closed,
         "errors": errors,
         "sent_message_ids": sent_ids,
     })
