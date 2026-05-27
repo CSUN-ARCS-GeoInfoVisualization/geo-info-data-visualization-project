@@ -237,17 +237,17 @@ def _static_map_url(center_lat: float, center_lon: float,
     overlays = []
 
     # County boundary lines (optional, no fill — stroke only). Drawn
-    # FIRST so fire polygons + pins layer on top. Uses path-W+color-op
-    # with NO trailing +fillcolor — gives Mapbox a stroke-only line.
-    # Filtered to counties near (center_lat, center_lon) so all 58 CA
-    # counties don't blow the 8KB URL cap when included in a single
-    # email. Typical bundle ~8-15 counties for a 2.5° radius.
+    # FIRST so fire polygons + pins layer on top. Stroke is blue
+    # (#2563eb @ 0.9 opacity, width 1.5) so the recipient can clearly
+    # see county geography behind the fires — matches the dashboard's
+    # blue saved-location marker convention for "your stuff" color.
+    # Filtered by centroid distance to stay under Mapbox's 8KB URL cap.
     if county_lines:
         for ring in _ca_county_outline_rings(near_lat=center_lat, near_lon=center_lon):
             if len(ring) < 3:
                 continue
             encoded = _encode_polyline(ring)
-            overlays.append(f"path-1+666666-0.55({quote(encoded, safe='')})")
+            overlays.append(f"path-1.5+2563eb-0.9({quote(encoded, safe='')})")
 
     # Zone polygons next so pins draw on top. Color per STATUS to match
     # the live colorForZoneStatus in evacuation-routes.tsx.
@@ -1926,6 +1926,7 @@ def _send_fire_alert_email(
     county_label: str,
     fires: list,
     perim_idx: dict | None = None,
+    other_major_fires: list | None = None,
 ) -> tuple[str | None, str | None]:
     """ONE consolidated email listing every active CAL FIRE incident in a
     county that contains one of the user's saved locations. Map shows
@@ -1983,28 +1984,18 @@ def _send_fire_alert_email(
             zone_overlays.append({"rings": [ring], "status": status_str})
         except Exception:
             continue
-    # Compute the bbox of every fire polygon ring so we can decide whether
-    # the user's location pin makes sense to include. If the user is INSIDE
-    # the fire bounding box, include the pin so the map shows 'these fires
-    # are right at your saved spot.' If they're outside (e.g. user saved
-    # location is in coastal Santa Barbara but the fire is on Santa Rosa
-    # Island 30km offshore), omit the pin so Mapbox auto-frames to just
-    # the fires — otherwise the auto-frame zooms way out to cover both
-    # and every polygon becomes tiny.
-    fire_lats = [p[0] for zo in zone_overlays for ring in zo.get("rings", []) for p in ring]
-    fire_lons = [p[1] for zo in zone_overlays for ring in zo.get("rings", []) for p in ring]
-    user_inside_frame = bool(fire_lats) and bool(fire_lons) and (
-        min(fire_lats) <= primary_lat <= max(fire_lats)
-        and min(fire_lons) <= primary_lon <= max(fire_lons)
-    )
-
+    # Per-county bundling guarantees the user's saved location IS in
+    # this county, so the pin should always be in the map frame —
+    # show it unconditionally. (Old bbox check kept rejecting it when
+    # the saved spot was coastal and the fire was a few miles inland;
+    # not what the recipient wanted.)
     map_url = _static_map_url(
         primary_lat, primary_lon,
         zone_overlays=zone_overlays,
-        shelter_pins=None,  # no shelter overlay for fire alerts
+        shelter_pins=None,
         zoom="auto",
-        include_user_pin=user_inside_frame,
-        county_lines=True,   # show all CA county boundaries as a base layer
+        include_user_pin=True,
+        county_lines=True,
     )
 
     # Per-fire card
@@ -2099,17 +2090,41 @@ def _send_fire_alert_email(
         f'width="600" height="300" style="display:block;width:100%;max-width:600px;height:auto;border:0;" />'
         '</a></td></tr>'
         '<tr><td style="padding:6px 12px;font-size:11px;color:#888888;background-color:#fafafa;font-family:Arial,Helvetica,sans-serif">'
-        + (
-            'Blue circle = your saved location &middot; red shaded areas = active wildfire perimeters'
-            if user_inside_frame else
-            'Red shaded areas = active wildfire perimeters in your county (your saved location is outside the map frame)'
-        ) +
-        ' &middot; <a href="https://firescope.dev" style="color:#dc2626;text-decoration:underline">tap to open the live dashboard</a>'
+        'Blue circle = your saved location &middot; blue outlines = CA county boundaries &middot; '
+        'red shaded areas = active wildfire perimeters &middot; '
+        '<a href="https://firescope.dev" style="color:#dc2626;text-decoration:underline">tap to open the live dashboard</a>'
         '</td></tr></table>'
 
         '<p style="margin:8px 0 8px;font-size:13px;font-weight:bold;color:#555555;font-family:Arial,Helvetica,sans-serif">Active fires in your county</p>'
         f'{cards}'
 
+        # "Other major fires elsewhere in CA" section — listed for
+        # situational awareness when significant fires are active in
+        # counties that DON'T contain any of the user's saved locations.
+        # Explicitly labeled "Not near your saved locations" so the
+        # reader isn't misled into thinking these are local.
+        + (
+            (
+                '<p style="margin:24px 0 6px;font-size:13px;font-weight:bold;color:#555555;font-family:Arial,Helvetica,sans-serif;border-top:1px solid #eeeeee;padding-top:14px;">'
+                'Other major active fires in California'
+                '</p>'
+                '<p style="margin:0 0 10px;font-size:12px;color:#888888;font-family:Arial,Helvetica,sans-serif;font-style:italic">'
+                f'Not near your saved locations &mdash; included so you have full statewide context.'
+                '</p>'
+                + "".join(
+                    '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" '
+                    'style="margin:0 0 8px 0;border:1px solid #eeeeee;border-left:3px solid #888888;">'
+                    '<tr><td style="padding:8px 12px;font-family:Arial,Helvetica,sans-serif;">'
+                    f'<p style="margin:0;font-size:11px;font-weight:bold;color:#888888;letter-spacing:1px;text-transform:uppercase">NOT NEAR YOU &middot; {html_escape(of.get("County","Unknown") or "Unknown")} County</p>'
+                    f'<p style="margin:3px 0 0;font-size:14px;font-weight:bold;color:#222222"><a href="{html_escape(of.get("Url") or "https://firescope.dev")}" style="color:#222222;text-decoration:none">{html_escape(of.get("Name") or "Unnamed fire")}</a></p>'
+                    f'<p style="margin:2px 0 0;font-size:12px;color:#555555">{int(float(of.get("AcresBurned") or 0)):,} acres &middot; {int(float(of.get("PercentContained") or 0))}% contained</p>'
+                    '</td></tr></table>'
+                    for of in (other_major_fires or [])
+                )
+            )
+            if (other_major_fires or []) else ''
+        )
+        +
         '<p style="margin:18px 0 0;font-size:12px;color:#888888;line-height:1.4;font-family:Arial,Helvetica,sans-serif">'
         "You'll get an update email when containment, status, or size meaningfully changes "
         "(every 10 percent containment, new 100-acre bracket, or status flip)."
@@ -2260,6 +2275,19 @@ def run_fire_alerts():
         any_county_sent = False
         any_county_skipped_closed = False
 
+        # Pre-compute the "other major fires" list once per user — every
+        # county's email shares the same context section. Major = active
+        # + >= 5000 acres, in a county the user does NOT have saved.
+        OTHER_MAJOR_ACRES_THRESHOLD = 5000
+        other_major_fires = [
+            f for f in fires
+            if _norm_county(f.get("County", "")) not in user_counties
+            and f.get("IsActive", True)
+            and (float(f.get("AcresBurned") or 0) >= OTHER_MAJOR_ACRES_THRESHOLD)
+        ]
+        # Cap so a big-fire-day doesn't blow up the email body.
+        other_major_fires = other_major_fires[:5]
+
         for cnorm, (loc, display_name) in user_counties.items():
             county_fires = fires_by_county.get(cnorm, [])
             if not county_fires:
@@ -2300,6 +2328,7 @@ def run_fire_alerts():
                 county_label=display_name,
                 fires=county_fires,
                 perim_idx=perim_idx,
+                other_major_fires=other_major_fires,
             )
             status = "sent" if msg_id else "failed"
             session.add(AlertActivity(
