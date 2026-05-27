@@ -121,10 +121,18 @@ _EVAC_STATUS_COLORS = {
 _EVAC_FILL_OPACITY = 0.35
 _EVAC_STROKE_OPACITY = 0.9
 
-# Marker icons hosted on Netlify (deploys from frontend/public/email-icons/*).
-# Per-facility-usage-code shelter pin that visually matches the live dashboard
-# — same emoji (🏃 🏠 🏛️) over the same blue/green/purple disc.
-_EMAIL_ICON_BASE = "https://firescope.dev/email-icons"
+# Marker icons mirrored via jsDelivr CDN. Source of truth is the PNGs
+# in frontend/public/email-icons/ — we point Mapbox at the jsDelivr
+# mirror instead of firescope.dev because Netlify serves static assets
+# with `cache-control: max-age=0, must-revalidate` and Mapbox's
+# image-fetcher rejects that header and returns "Custom image not found"
+# (verified 2026-05-27 against /email-icons/user-location-pin.png).
+# jsDelivr serves with `max-age=604800` and works first try, plus it's
+# globally CDN-cached and auto-purges on every commit.
+_EMAIL_ICON_BASE = (
+    "https://cdn.jsdelivr.net/gh/CSUN-ARCS-GeoInfoVisualization/"
+    "geo-info-data-visualization-project@main/frontend/public/email-icons"
+)
 _SHELTER_PIN_URLS = {
     "EVAC": f"{_EMAIL_ICON_BASE}/shelter-pin-EVAC.png",   # 🏃 over blue
     "POST": f"{_EMAIL_ICON_BASE}/shelter-pin-POST.png",   # 🏠 over green
