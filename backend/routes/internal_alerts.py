@@ -2080,83 +2080,15 @@ def _send_fire_alert_email(
             zone_overlays.append({"rings": [ring], "status": status_str})
         except Exception:
             continue
-    # Frame the map so the USER PIN + every fire polygon is visible.
-    # Earlier we centered on the county BBOX centroid, but for big
-    # asymmetric counties (e.g. Riverside stretches from LA out to the
-    # AZ border) the bbox centroid lands far from where the user
-    # actually lives, putting the user pin + fires off-screen at any
-    # reasonable zoom. New rule: bbox of (user pin + all fire polygon
-    # vertices) → center on that bbox midpoint and zoom to fit it
-    # with ~25% padding. County boundary is still drawn for context
-    # but no longer drives the framing.
-    primary_county = _county_for(_norm_county(county_label))
-    extra_overlays = []
-
-    # Build the framing bbox from things the user NEEDS to see.
-    frame_pts = [(primary_lat, primary_lon)]
-    for zo in zone_overlays:
-        for ring in zo.get("rings", []):
-            frame_pts.extend(ring)
-    flats = [p[0] for p in frame_pts]
-    flons = [p[1] for p in frame_pts]
-    bbox_lat_min, bbox_lat_max = min(flats), max(flats)
-    bbox_lon_min, bbox_lon_max = min(flons), max(flons)
-    center_lat = (bbox_lat_min + bbox_lat_max) / 2.0
-    center_lon = (bbox_lon_min + bbox_lon_max) / 2.0
-
-    import math
-    lat_range = max(bbox_lat_max - bbox_lat_min, 0.05)   # floor at ~5km tall
-    lon_range = max(bbox_lon_max - bbox_lon_min, 0.05)
-    cos_lat = max(0.1, math.cos(math.radians(center_lat)))
-    eff_range = max(lat_range, lon_range * cos_lat) * 1.6  # +60% padding
-    z_float = math.log2(360 * (600 / 256) / eff_range) if eff_range > 0 else 9
-    zoom_for_view = max(5, min(13, int(round(z_float))))
-
-    if primary_county:
-        # User's own county: HIGH-detail blue outline.
-        extra_overlays.append({
-            "rings": [primary_county["ring_full"]],
-            "_outline_only": True,
-            "_outline_color": "2563eb",
-            "_outline_width": "2",
-            "_outline_opacity": "0.95",
-        })
-        # Neighboring counties at low detail for context (bbox-overlap
-        # with the primary county, padded 0.05deg).
-        plat_min, plon_min, plat_max, plon_max = primary_county["bbox"]
-        pad = 0.05
-        for c in _load_ca_counties():
-            if c["name_norm"] == primary_county["name_norm"]:
-                continue
-            lat_min, lon_min, lat_max, lon_max = c["bbox"]
-            if (lat_max + pad < plat_min - pad) or (lat_min - pad > plat_max + pad):
-                continue
-            if (lon_max + pad < plon_min - pad) or (lon_min - pad > plon_max + pad):
-                continue
-            extra_overlays.append({
-                "rings": [c["ring_low"]],
-                "_outline_only": True,
-                "_outline_color": "2563eb",
-                "_outline_width": "1",
-                "_outline_opacity": "0.55",
-            })
-
-    map_url = _static_map_url(
-        center_lat, center_lon,
-        zone_overlays=extra_overlays + zone_overlays,
-        shelter_pins=None,
-        zoom=zoom_for_view,
-        include_user_pin=True,
-        county_lines=False,
-    )
-    # Pin is drawn by the helper at center_lat/center_lon (its `center`
-    # args). Re-anchor it at the user's exact saved coord by patching
-    # the URL string post-build.
-    if "user-location-pin.png" in map_url and (primary_lat, primary_lon) != (center_lat, center_lon):
-        from urllib.parse import quote
-        wrong_pin = f"url-{quote(_USER_LOC_PIN_URL, safe='')}({center_lon:.5f},{center_lat:.5f})"
-        right_pin = f"url-{quote(_USER_LOC_PIN_URL, safe='')}({primary_lon:.5f},{primary_lat:.5f})"
-        map_url = map_url.replace(wrong_pin, right_pin)
+    # The static-map embed was producing inconsistent renders across
+    # the various edge cases — different counties needing different
+    # zooms, polygon overlays clipping, pin placement vs auto-frame
+    # interactions, etc. Recipient asked to drop it entirely and
+    # replace with a CTA button that opens the live dashboard's map
+    # where the real interactive fire perimeters render perfectly.
+    # zone_overlays is no longer used by this sender; kept on the
+    # function signature for parity with evacuation alerts.
+    _ = zone_overlays  # explicitly unused now; suppress lint warning
 
     # Per-fire card
     def _fire_card(f):
@@ -2242,18 +2174,28 @@ def _send_fire_alert_email(
         f'<p style="margin:0 0 12px;font-size:14px;">Hi {html_escape(name)},</p>'
         f'<p style="margin:0 0 14px;font-size:15px;line-height:1.45;">{intro_line}</p>'
 
+        # CTA button — opens the live dashboard where the actual
+        # interactive perimeters render cleanly. Bulletproof button
+        # pattern: outer <table> for layout + inner <td bgcolor> + <a>
+        # so it renders correctly across Gmail, Outlook, and Apple Mail.
         '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" '
-        'style="margin:0 0 14px 0;border:1px solid #eeeeee;">'
-        '<tr><td align="center" style="padding:0;line-height:0;">'
-        '<a href="https://firescope.dev" style="text-decoration:none;display:block;">'
-        f'<img src="{map_url}" alt="Live map: your location + active fire incidents — click to open dashboard" '
-        f'width="600" height="300" style="display:block;width:100%;max-width:600px;height:auto;border:0;" />'
-        '</a></td></tr>'
-        '<tr><td style="padding:6px 12px;font-size:11px;color:#888888;background-color:#fafafa;font-family:Arial,Helvetica,sans-serif">'
-        'Blue circle = your saved location &middot; blue outlines = CA county boundaries &middot; '
-        'red shaded areas = active wildfire perimeters &middot; '
-        '<a href="https://firescope.dev" style="color:#dc2626;text-decoration:underline">tap to open the live dashboard</a>'
+        'style="margin:18px 0 8px 0;">'
+        '<tr><td align="center">'
+        '<table role="presentation" cellpadding="0" cellspacing="0" border="0">'
+        '<tr><td align="center" bgcolor="#dc2626" '
+        'style="background-color:#dc2626;border-radius:6px;">'
+        '<a href="https://firescope.dev" '
+        'style="display:inline-block;padding:12px 26px;font-family:Arial,Helvetica,sans-serif;'
+        'font-size:14px;font-weight:bold;color:#ffffff;text-decoration:none;border-radius:6px;">'
+        'View updated fire perimeters on map &rarr;'
+        '</a>'
         '</td></tr></table>'
+        '</td></tr>'
+        '<tr><td align="center" style="padding:8px 0 0 0;font-size:11px;color:#888888;'
+        'font-family:Arial,Helvetica,sans-serif">'
+        'Opens the live FireScope dashboard with the real-time fire perimeter overlay.'
+        '</td></tr>'
+        '</table>'
 
         '<p style="margin:8px 0 8px;font-size:13px;font-weight:bold;color:#555555;font-family:Arial,Helvetica,sans-serif">Active fires in your county</p>'
         f'{cards}'
