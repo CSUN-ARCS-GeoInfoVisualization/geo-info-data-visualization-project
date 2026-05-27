@@ -250,9 +250,21 @@ def _static_map_url(center_lat: float, center_lon: float,
             overlays.append(f"path-1.5+2563eb-0.9({quote(encoded, safe='')})")
 
     # Zone polygons next so pins draw on top. Color per STATUS to match
-    # the live colorForZoneStatus in evacuation-routes.tsx.
+    # the live colorForZoneStatus in evacuation-routes.tsx. Overlays
+    # with `_outline_only`=True render as stroke-only (no fill) — used
+    # by the fire-alert email for county boundary outlines.
     for zo in (zone_overlays or []):
         rings = zo.get("rings") or []
+        if zo.get("_outline_only"):
+            stroke = zo.get("_outline_color", "2563eb")
+            width  = zo.get("_outline_width", "1")
+            opac   = zo.get("_outline_opacity", "0.9")
+            for ring in rings:
+                if len(ring) < 3:
+                    continue
+                encoded = _encode_polyline(ring)
+                overlays.append(f"path-{width}+{stroke}-{opac}({quote(encoded, safe='')})")
+            continue
         stroke_hex, fill_hex = _evac_status_colors(zo.get("status", ""))
         for ring in rings:
             if len(ring) < 3:
@@ -1738,7 +1750,83 @@ def _fetch_nifc_perimeters() -> dict:
         return {"type": "FeatureCollection", "features": []}
 
 
-_CA_COUNTY_OUTLINE_CACHE: list | None = None
+_CA_COUNTY_CACHE: list | None = None
+
+
+def _norm_county_name(name: str) -> str:
+    """Identical to _norm_county but kept as a local alias so the
+    counties.json loader doesn't depend on the alert pipeline's helper
+    (avoids an import-ordering hazard if either gets refactored)."""
+    s = (name or "").strip().lower()
+    if s.endswith(" county"):
+        s = s[:-7].strip()
+    return " ".join(s.split())
+
+
+def _load_ca_counties() -> list:
+    """Lazy-load + cache the full CA counties FeatureCollection from
+    backend/data/boundaries/counties.json. Returns a list of
+    {name_norm, name, ring_full, ring_low, bbox} dicts — one per
+    mainland sub-polygon. Outer ring only (drops holes + islands)."""
+    global _CA_COUNTY_CACHE
+    if _CA_COUNTY_CACHE is not None:
+        return _CA_COUNTY_CACHE
+    out = []
+    try:
+        import json
+        from pathlib import Path
+        here = Path(__file__).resolve().parent.parent  # backend/
+        d = json.load(open(here / "data" / "boundaries" / "counties.json"))
+        for f in d.get("features", []):
+            p = f.get("properties") or {}
+            name = p.get("name") or p.get("NAME") or p.get("County")
+            if not name:
+                continue
+            g = f.get("geometry") or {}
+            if g.get("type") == "Polygon":
+                poly = g.get("coordinates") or []
+            elif g.get("type") == "MultiPolygon":
+                # Use ALL sub-polys for the full ring (we'll pick the
+                # largest as the visible boundary on the email map).
+                polys = g.get("coordinates") or []
+                # Pick the longest outer ring (= mainland for the few
+                # multi-poly counties that have islands).
+                poly = max(polys, key=lambda pp: len(pp[0]) if pp else 0) if polys else []
+            else:
+                continue
+            if not poly:
+                continue
+            outer = poly[0]
+            if len(outer) < 4:
+                continue
+            # FULL detail (cap at 60 pts so even at high zoom the outline
+            # looks like a real boundary, not a polygon estimate). At 60
+            # pts the largest CA counties still resolve all major bends.
+            step_full = max(1, len(outer) // 60)
+            ring_full = [(float(lat), float(lon)) for lon, lat in outer[::step_full]]
+            # LOW detail (~10 pts) for the neighbor-county context layer.
+            step_low = max(1, len(outer) // 10)
+            ring_low = [(float(lat), float(lon)) for lon, lat in outer[::step_low]]
+            lats = [p[0] for p in ring_full]
+            lons = [p[1] for p in ring_full]
+            out.append({
+                "name_norm": _norm_county_name(name),
+                "name": name,
+                "ring_full": ring_full,
+                "ring_low": ring_low,
+                "bbox": (min(lats), min(lons), max(lats), max(lons)),
+            })
+    except Exception as e:
+        logger.warning("CA counties load failed: %s", e)
+    _CA_COUNTY_CACHE = out
+    return out
+
+
+def _county_for(name_norm: str) -> dict | None:
+    for c in _load_ca_counties():
+        if c["name_norm"] == name_norm:
+            return c
+    return None
 
 
 def _ca_county_outline_rings(
@@ -1746,64 +1834,20 @@ def _ca_county_outline_rings(
     near_lon: float | None = None,
     radius_deg: float = 2.5,
 ) -> list:
-    """Return downsampled outer rings for CA counties as
-    [(centroid_lat, centroid_lon, ring), ...] then filtered to those
-    whose centroid is within `radius_deg` of (near_lat, near_lon).
-    When near is None, returns ALL — but that overflows Mapbox's 8KB
-    URL cap, so callers should pass a center.
-
-    Per-county simplifications used to stay under the URL cap:
-      - Outer ring of the FIRST polygon only (drop island sub-polys
-        like Catalina off LA County — saves ~30% of total points)
-      - Downsample to 8 points per ring (was 12; for 8KB URL safety)
-      - Filter by centroid distance so a typical fire-alert email
-        only embeds the 8-15 counties actually near the user
-    Loaded + cached once per process.
-    """
-    global _CA_COUNTY_OUTLINE_CACHE
-    if _CA_COUNTY_OUTLINE_CACHE is None:
-        cache = []
-        try:
-            import json
-            from pathlib import Path
-            here = Path(__file__).resolve().parent.parent  # backend/
-            path = here / "data" / "boundaries" / "counties.json"
-            d = json.load(open(path))
-            TARGET_POINTS = 8
-            for f in d.get("features", []):
-                g = f.get("geometry") or {}
-                if g.get("type") == "Polygon":
-                    poly = g.get("coordinates") or []
-                elif g.get("type") == "MultiPolygon":
-                    # Take only the FIRST sub-polygon (mainland for
-                    # most counties; the few with islands lose their
-                    # island in the outline but the mainland is what
-                    # matters for a 600px-wide email map).
-                    polys = g.get("coordinates") or []
-                    poly = polys[0] if polys else []
-                else:
-                    continue
-                if not poly:
-                    continue
-                outer = poly[0]
-                step = max(1, len(outer) // TARGET_POINTS)
-                ds = outer[::step]
-                ring = [(float(lat), float(lon)) for lon, lat in ds]
-                if len(ring) < 3:
-                    continue
-                clat = sum(p[0] for p in ring) / len(ring)
-                clon = sum(p[1] for p in ring) / len(ring)
-                cache.append((clat, clon, ring))
-        except Exception as e:
-            logger.warning("CA county outline load failed: %s", e)
-        _CA_COUNTY_OUTLINE_CACHE = cache
-
+    """LEGACY helper — kept for any callers that still pass radius-based
+    nearby-counties context. New code should use _county_for() + neighbor
+    bbox checks for tighter control. Returns each county's LOW-detail
+    ring (~10 pts) filtered by centroid distance."""
+    counties = _load_ca_counties()
     if near_lat is None or near_lon is None:
-        return [r for _, _, r in _CA_COUNTY_OUTLINE_CACHE]
-    return [
-        r for clat, clon, r in _CA_COUNTY_OUTLINE_CACHE
-        if abs(clat - near_lat) <= radius_deg and abs(clon - near_lon) <= radius_deg
-    ]
+        return [c["ring_low"] for c in counties]
+    out = []
+    for c in counties:
+        cy = (c["bbox"][0] + c["bbox"][2]) / 2.0
+        cx = (c["bbox"][1] + c["bbox"][3]) / 2.0
+        if abs(cy - near_lat) <= radius_deg and abs(cx - near_lon) <= radius_deg:
+            out.append(c["ring_low"])
+    return out
 
 
 def _fire_match_key(name: str) -> str:
@@ -1984,18 +2028,56 @@ def _send_fire_alert_email(
             zone_overlays.append({"rings": [ring], "status": status_str})
         except Exception:
             continue
-    # Per-county bundling guarantees the user's saved location IS in
-    # this county, so the pin should always be in the map frame —
-    # show it unconditionally. (Old bbox check kept rejecting it when
-    # the saved spot was coastal and the fire was a few miles inland;
-    # not what the recipient wanted.)
+    # Frame the map on the USER'S COUNTY specifically — not the global
+    # bbox of every overlay. The fire's county polygon (HIGH-detail
+    # outline) is added as an overlay so Mapbox's `auto` framing
+    # zooms in to that county; neighboring counties are added as
+    # secondary LOW-detail outlines for context. This ensures:
+    #   (a) the entire user-county is visible in the email map
+    #   (b) the county boundary looks like a real boundary (60 pts,
+    #       not the 8-pt zigzag the recipient called out)
+    #   (c) the user pin sits at the exact saved coordinate, always
+    #       on top, and always inside the visible frame.
+    primary_county = _county_for(_norm_county(county_label))
+    extra_overlays = []
+    if primary_county:
+        # User's own county: high-detail blue outline.
+        extra_overlays.append({
+            "rings": [primary_county["ring_full"]],
+            "_outline_only": True,
+            "_outline_color": "2563eb",
+            "_outline_width": "2",
+            "_outline_opacity": "0.95",
+        })
+        # Neighboring counties (bbox overlap with the primary, padded
+        # 0.05deg) at lower detail. Keeps the recipient oriented to
+        # what's adjacent without dominating the frame.
+        plat_min, plon_min, plat_max, plon_max = primary_county["bbox"]
+        pad = 0.05
+        for c in _load_ca_counties():
+            if c["name_norm"] == primary_county["name_norm"]:
+                continue
+            lat_min, lon_min, lat_max, lon_max = c["bbox"]
+            # Bbox-intersection test with padding
+            if (lat_max + pad < plat_min - pad) or (lat_min - pad > plat_max + pad):
+                continue
+            if (lon_max + pad < plon_min - pad) or (lon_min - pad > plon_max + pad):
+                continue
+            extra_overlays.append({
+                "rings": [c["ring_low"]],
+                "_outline_only": True,
+                "_outline_color": "2563eb",
+                "_outline_width": "1",
+                "_outline_opacity": "0.55",
+            })
+
     map_url = _static_map_url(
         primary_lat, primary_lon,
-        zone_overlays=zone_overlays,
+        zone_overlays=extra_overlays + zone_overlays,
         shelter_pins=None,
         zoom="auto",
         include_user_pin=True,
-        county_lines=True,
+        county_lines=False,   # superseded by the explicit primary/neighbor outlines above
     )
 
     # Per-fire card
