@@ -30,7 +30,15 @@ import re
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.insert(0, os.path.join(REPO_ROOT, "backend"))
 
-from routes.internal_alerts import _location_block_html, _TIER_BG, _email_shell  # noqa: E402
+from routes.internal_alerts import (  # noqa: E402
+    _location_block_html,
+    _TIER_BG,
+    _email_shell,
+    _norm_county,
+    _fire_per_alert_sig,
+    _fire_bundle_sig,
+    _fire_bucket,
+)
 
 
 SAMPLE = {
@@ -238,3 +246,85 @@ def test_shell_inlines_font_family_on_text_cells():
     body_cell = re.search(r'<td[^>]*style="padding:22px[^"]*"', html)
     assert body_cell, "body padding cell not found"
     assert "font-family" in body_cell.group(0), "body cell missing font-family"
+
+
+# ───────────────────────── Wildfires-in-your-county (Slice 1D) ─────────────────────────
+
+
+def test_norm_county_handles_common_variants():
+    """`Los Angeles`, `Los Angeles County`, `LOS ANGELES` should all match."""
+    assert _norm_county("Los Angeles") == "los angeles"
+    assert _norm_county("Los Angeles County") == "los angeles"
+    assert _norm_county("LOS ANGELES COUNTY") == "los angeles"
+    assert _norm_county("  los angeles  ") == "los angeles"
+    assert _norm_county("") == ""
+    assert _norm_county(None) == ""
+
+
+def test_fire_bucket_meaningful_change_thresholds():
+    """Per-fire dedup buckets the cron uses to decide 'meaningful change':
+    containment in 10pct steps, acres in 100-acre steps. Same bucket =>
+    no re-alert; different bucket => recipient gets the update email.
+    """
+    # Same bucket -> same tuple
+    assert _fire_bucket(45, 1234) == _fire_bucket(49, 1299)
+    # Cross containment 10pct boundary -> different bucket
+    assert _fire_bucket(45, 1234) != _fire_bucket(50, 1234)
+    # Cross acres 100-acre boundary -> different bucket
+    assert _fire_bucket(45, 1234) != _fire_bucket(45, 1300)
+    # None handling -> 0
+    assert _fire_bucket(None, None) == (0, 0)
+
+
+def test_fire_per_alert_sig_changes_on_meaningful_update_only():
+    """The fingerprint must change when status/containment-bucket/acres-bucket
+    changes — but stay the same for trivial drifts inside the same buckets."""
+    base = {"UniqueId": "abc123", "IsActive": True, "PercentContained": 30, "AcresBurned": 1200}
+    # Same bucket -> same sig (no resend)
+    same = {"UniqueId": "abc123", "IsActive": True, "PercentContained": 32, "AcresBurned": 1250}
+    assert _fire_per_alert_sig(base) == _fire_per_alert_sig(same)
+    # Containment crosses 10% boundary -> sig changes -> resend
+    bigger_pct = {**base, "PercentContained": 50}
+    assert _fire_per_alert_sig(base) != _fire_per_alert_sig(bigger_pct)
+    # Acres crosses 100-acre boundary -> sig changes -> resend
+    bigger_acres = {**base, "AcresBurned": 1400}
+    assert _fire_per_alert_sig(base) != _fire_per_alert_sig(bigger_acres)
+    # Status flips -> sig changes -> resend
+    inactive = {**base, "IsActive": False}
+    assert _fire_per_alert_sig(base) != _fire_per_alert_sig(inactive)
+    # Different fire id -> different sig
+    other = {**base, "UniqueId": "xyz789"}
+    assert _fire_per_alert_sig(base) != _fire_per_alert_sig(other)
+
+
+def test_fire_bundle_sig_order_independent():
+    """Bundling the SAME set of fires in different orders must produce the
+    same bundle signature so dedup doesn't break on natural feed reordering."""
+    f1 = {"UniqueId": "a", "IsActive": True,  "PercentContained": 20, "AcresBurned": 500}
+    f2 = {"UniqueId": "b", "IsActive": True,  "PercentContained": 80, "AcresBurned": 9000}
+    f3 = {"UniqueId": "c", "IsActive": False, "PercentContained": 100, "AcresBurned": 200}
+    assert _fire_bundle_sig([f1, f2, f3]) == _fire_bundle_sig([f3, f2, f1])
+    assert _fire_bundle_sig([f1, f2, f3]) == _fire_bundle_sig([f2, f1, f3])
+    # Removing a fire changes the bundle -> resend
+    assert _fire_bundle_sig([f1, f2]) != _fire_bundle_sig([f1, f2, f3])
+
+
+def test_fire_alert_email_shell_compliance():
+    """The fire-alert email goes through the same _email_shell so it
+    inherits every Gmail-bulletproof guard. Smoke-render and check that
+    the shell didn't regress.
+    """
+    html = _email_shell(
+        header_bg="#dc2626",
+        header_label="3 FIRES IN YOUR COUNTY",
+        header_title="Los Angeles County",
+        header_subtitle="3 active",
+        body_inner_html='<p style="margin:0;font-family:Arial">Smoke test</p>',
+        footer_text="Manage Wildfires-in-your-county at firescope.dev.",
+    )
+    assert "<!DOCTYPE html PUBLIC" in html
+    assert '<head>' in html
+    assert '<div' not in html
+    assert "3 FIRES IN YOUR COUNTY" in html
+    assert "Los Angeles County" in html
+    assert "3 active" in html

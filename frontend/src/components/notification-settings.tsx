@@ -25,6 +25,7 @@ type Prefs = {
   breaking_news_enabled: boolean;
   high_risk_enabled: boolean;
   evacuation_enabled: boolean;
+  fire_alerts_enabled: boolean;
 };
 
 const DEFAULT_PREFS: Prefs = {
@@ -34,6 +35,7 @@ const DEFAULT_PREFS: Prefs = {
   breaking_news_enabled: false,
   high_risk_enabled: true,
   evacuation_enabled: true,
+  fire_alerts_enabled: false,
 };
 
 function fromServer(p: NotificationPreference): Prefs {
@@ -44,6 +46,7 @@ function fromServer(p: NotificationPreference): Prefs {
     breaking_news_enabled: p.breaking_news_enabled,
     high_risk_enabled: p.high_risk_enabled,
     evacuation_enabled: p.evacuation_enabled,
+    fire_alerts_enabled: p.fire_alerts_enabled,
   };
 }
 
@@ -82,7 +85,8 @@ export function NotificationSettings({ onNavigateToLocations }: NotificationSett
     prefs.contact_email !== original.contact_email ||
     prefs.breaking_news_enabled !== original.breaking_news_enabled ||
     prefs.high_risk_enabled !== original.high_risk_enabled ||
-    prefs.evacuation_enabled !== original.evacuation_enabled;
+    prefs.evacuation_enabled !== original.evacuation_enabled ||
+    prefs.fire_alerts_enabled !== original.fire_alerts_enabled;
 
   const noLocations = locationCount === 0;
 
@@ -92,6 +96,16 @@ export function NotificationSettings({ onNavigateToLocations }: NotificationSett
       return;
     }
     setPrefs({ ...prefs, high_risk_enabled: checked });
+  }
+
+  function tryToggleFireAlerts(checked: boolean) {
+    // Wildfires-in-your-county requires a saved location to compute the
+    // county overlap — same gate as high-risk.
+    if (checked && noLocations) {
+      setNeedLocationDialog(true);
+      return;
+    }
+    setPrefs({ ...prefs, fire_alerts_enabled: checked });
   }
 
   async function onSave() {
@@ -109,6 +123,7 @@ export function NotificationSettings({ onNavigateToLocations }: NotificationSett
           breaking_news_enabled: prefs.breaking_news_enabled,
           high_risk_enabled: prefs.high_risk_enabled,
           evacuation_enabled: prefs.evacuation_enabled,
+          fire_alerts_enabled: prefs.fire_alerts_enabled,
         }),
       });
       if (!res.ok) {
@@ -240,6 +255,17 @@ export function NotificationSettings({ onNavigateToLocations }: NotificationSett
             onChange={(c) => setPrefs({ ...prefs, evacuation_enabled: c })}
             disabled={!prefs.opted_in || !prefs.email_enabled}
             badge={null}
+          />
+
+          {/* Wildfires in your county */}
+          <ChannelRow
+            icon={<Flame className="h-4 w-4 text-orange-500" />}
+            title="Wildfires in your saved-location counties"
+            description="Every 10 min — email when an active CAL FIRE incident is reported in a county containing one of your saved locations, plus updates when containment, status, or size meaningfully changes (every 10% containment, new 100-acre bracket, or status flip)."
+            checked={prefs.fire_alerts_enabled && prefs.opted_in && prefs.email_enabled}
+            onChange={tryToggleFireAlerts}
+            disabled={!prefs.opted_in || !prefs.email_enabled}
+            badge={noLocations ? "No locations saved" : null}
           />
         </CardContent>
       </Card>

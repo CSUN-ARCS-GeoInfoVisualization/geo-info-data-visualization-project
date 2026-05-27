@@ -1,0 +1,45 @@
+name: Alerts — Wildfires in your county
+
+# Slice 1D: every 10 min, fire the wildfire-in-your-county cron on Render.
+# Iterates every opted-in user with fire_alerts_enabled, resolves each
+# saved location's county, and sends ONE bundled email per user listing
+# every active CAL FIRE incident in any of those counties. Change-driven
+# dedup (per-fire fingerprint = id + status + containment_10pct_bucket +
+# acres_100_bucket) so a user gets a fresh email only when fire state
+# meaningfully changes, not on every cron tick.
+#
+# Same 10-min cadence as evacuation because containment/status updates
+# during active fires move fast and a 2-hour delay is unacceptable for
+# a 'fire near me' channel.
+
+on:
+  schedule:
+    - cron: '*/10 * * * *'
+  workflow_dispatch: {}
+
+jobs:
+  fire:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: POST /api/internal/alerts/fires
+        env:
+          API_BASE: https://firescope-api.onrender.com
+          TOKEN: ${{ secrets.INTERNAL_CRON_TOKEN }}
+        run: |
+          set -e
+          if [ -z "$TOKEN" ]; then
+            echo "::error::INTERNAL_CRON_TOKEN repository secret is not set"
+            exit 1
+          fi
+          RESP=$(curl -sS --max-time 120 \
+            -X POST "$API_BASE/api/internal/alerts/fires" \
+            -H "X-Internal-Token: $TOKEN" \
+            -H "Content-Type: application/json" \
+            -w "\nHTTP_STATUS=%{http_code}")
+          echo "$RESP"
+          STATUS=$(echo "$RESP" | grep -oE 'HTTP_STATUS=[0-9]+' | cut -d= -f2)
+          if [ "$STATUS" != "200" ]; then
+            echo "::error::Cron call failed with status $STATUS"
+            exit 1
+          fi

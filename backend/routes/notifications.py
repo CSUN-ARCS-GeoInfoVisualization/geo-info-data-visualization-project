@@ -29,6 +29,10 @@ def _default_preference_payload(user_id):
         'blackout_end': None,
         'last_sent_at': None,
         'unsubscribed_at': None,
+        'breaking_news_enabled': False,
+        'high_risk_enabled': True,
+        'evacuation_enabled': True,
+        'fire_alerts_enabled': False,
     }
 
 
@@ -163,6 +167,7 @@ def _serialize_preference(pref):
         'breaking_news_enabled': getattr(pref, 'breaking_news_enabled', False),
         'high_risk_enabled': getattr(pref, 'high_risk_enabled', True),
         'evacuation_enabled': getattr(pref, 'evacuation_enabled', True),
+        'fire_alerts_enabled': getattr(pref, 'fire_alerts_enabled', False),
     }
 
 
@@ -217,7 +222,7 @@ def _apply_preference_updates(pref, data):
             return {'error': 'sms_enabled must be a boolean'}, 400
         pref.sms_enabled = data['sms_enabled']
 
-    for channel in ('breaking_news_enabled', 'high_risk_enabled', 'evacuation_enabled'):
+    for channel in ('breaking_news_enabled', 'high_risk_enabled', 'evacuation_enabled', 'fire_alerts_enabled'):
         if channel in data:
             if not isinstance(data[channel], bool):
                 return {'error': f'{channel} must be a boolean'}, 400
