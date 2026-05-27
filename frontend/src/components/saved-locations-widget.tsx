@@ -31,19 +31,22 @@ interface PredictionResult {
   risk_probability: number; // 0..1
 }
 
-// 5-tier NFDRS scale → badge colors. Same buckets as my-locations.tsx +
-// dashboard badge so a saved location reads identically everywhere.
+// 5-tier NFDRS → one distinct badge color per tier (Low=green, Moderate=yellow,
+// High=orange, Very High=red, Extreme=dark red). Mirrors my-locations.tsx so
+// the badge looks identical on dashboard sidebar and Locations page.
 function colorForLabel(label: string): string {
-  if (label === "Extreme") return "bg-red-100 text-red-700 border-red-200";
-  if (label === "Very High" || label === "High") return "bg-orange-100 text-orange-700 border-orange-200";
-  if (label === "Moderate") return "bg-yellow-100 text-yellow-700 border-yellow-200";
+  if (label === "Extreme")   return "bg-red-200 text-red-900 border-red-300";
+  if (label === "Very High") return "bg-red-100 text-red-700 border-red-200";
+  if (label === "High")      return "bg-orange-100 text-orange-700 border-orange-200";
+  if (label === "Moderate")  return "bg-yellow-100 text-yellow-700 border-yellow-200";
   return "bg-green-100 text-green-700 border-green-200";
 }
 
 function dotForLabel(label: string): string {
-  if (label === "Extreme") return "bg-red-500";
-  if (label === "Very High" || label === "High") return "bg-orange-500";
-  if (label === "Moderate") return "bg-yellow-500";
+  if (label === "Extreme")   return "bg-red-700";
+  if (label === "Very High") return "bg-red-500";
+  if (label === "High")      return "bg-orange-500";
+  if (label === "Moderate")  return "bg-yellow-500";
   return "bg-green-500";
 }
 

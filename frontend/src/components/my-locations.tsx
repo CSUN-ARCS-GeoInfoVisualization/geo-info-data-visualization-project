@@ -42,12 +42,15 @@ const ZONE_OPTIONS: { key: ZoneKey; label: string }[] = [
 
 // Map any tier label → the 4 broad color buckets used in the badge.
 function colorForLabel(label: string | null): string {
-  // 5-tier NFDRS scale.
+  // 5-tier NFDRS — one distinct badge color per tier so the visual scale
+  // doesn't collapse to 3-color (was Low/Moderate/High visually identical
+  // to green/yellow/orange while Very High and Extreme both went red).
   if (!label) return "bg-gray-100 text-gray-600 border-gray-200";
-  if (label === "Extreme") return "bg-red-100 text-red-700 border-red-200";
-  if (label === "Very High" || label === "High") return "bg-orange-100 text-orange-700 border-orange-200";
-  if (label === "Moderate") return "bg-yellow-100 text-yellow-700 border-yellow-200";
-  return "bg-green-100 text-green-700 border-green-200";
+  if (label === "Extreme")   return "bg-red-200 text-red-900 border-red-300";          // dark red
+  if (label === "Very High") return "bg-red-100 text-red-700 border-red-200";          // red
+  if (label === "High")      return "bg-orange-100 text-orange-700 border-orange-200"; // orange
+  if (label === "Moderate")  return "bg-yellow-100 text-yellow-700 border-yellow-200"; // yellow
+  return "bg-green-100 text-green-700 border-green-200";                                // green = Low
 }
 
 const QUICK_LABELS = [
