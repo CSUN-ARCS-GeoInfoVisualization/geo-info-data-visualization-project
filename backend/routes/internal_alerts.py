@@ -238,11 +238,12 @@ def _static_map_url(center_lat: float, center_lon: float,
 
     # County boundary lines (optional, no fill — stroke only). Drawn
     # FIRST so fire polygons + pins layer on top. Uses path-W+color-op
-    # syntax with NO trailing +fillcolor — gives Mapbox a stroke-only
-    # line. Each county outer ring is downsampled to ~10 points so all
-    # 58 CA counties fit well under the 8KB URL cap.
+    # with NO trailing +fillcolor — gives Mapbox a stroke-only line.
+    # Filtered to counties near (center_lat, center_lon) so all 58 CA
+    # counties don't blow the 8KB URL cap when included in a single
+    # email. Typical bundle ~8-15 counties for a 2.5° radius.
     if county_lines:
-        for ring in _ca_county_outline_rings():
+        for ring in _ca_county_outline_rings(near_lat=center_lat, near_lon=center_lon):
             if len(ring) < 3:
                 continue
             encoded = _encode_polyline(ring)
@@ -1740,46 +1741,69 @@ def _fetch_nifc_perimeters() -> dict:
 _CA_COUNTY_OUTLINE_CACHE: list | None = None
 
 
-def _ca_county_outline_rings() -> list:
-    """Return downsampled outer rings for all 58 CA counties as
-    [[(lat, lon), ...], ...] — used as a translucent grey base layer on
-    the fire-alert email map so the recipient can see county geography
-    behind the fire perimeters.
+def _ca_county_outline_rings(
+    near_lat: float | None = None,
+    near_lon: float | None = None,
+    radius_deg: float = 2.5,
+) -> list:
+    """Return downsampled outer rings for CA counties as
+    [(centroid_lat, centroid_lon, ring), ...] then filtered to those
+    whose centroid is within `radius_deg` of (near_lat, near_lon).
+    When near is None, returns ALL — but that overflows Mapbox's 8KB
+    URL cap, so callers should pass a center.
 
-    Loaded once per process and cached. Each county is downsampled to
-    ~12 points per outer ring so all 58 counties + the fire polygons
-    fit well under Mapbox's 8KB URL cap.
+    Per-county simplifications used to stay under the URL cap:
+      - Outer ring of the FIRST polygon only (drop island sub-polys
+        like Catalina off LA County — saves ~30% of total points)
+      - Downsample to 8 points per ring (was 12; for 8KB URL safety)
+      - Filter by centroid distance so a typical fire-alert email
+        only embeds the 8-15 counties actually near the user
+    Loaded + cached once per process.
     """
     global _CA_COUNTY_OUTLINE_CACHE
-    if _CA_COUNTY_OUTLINE_CACHE is not None:
-        return _CA_COUNTY_OUTLINE_CACHE
-    rings = []
-    try:
-        import json
-        from pathlib import Path
-        here = Path(__file__).resolve().parent.parent  # backend/
-        path = here / "data" / "boundaries" / "counties.json"
-        d = json.load(open(path))
-        TARGET_POINTS = 12  # per county outer ring; keeps URL well under 8KB
-        for f in d.get("features", []):
-            g = f.get("geometry") or {}
-            if g.get("type") == "Polygon":
-                polys = [g.get("coordinates") or []]
-            elif g.get("type") == "MultiPolygon":
-                polys = g.get("coordinates") or []
-            else:
-                continue
-            for poly in polys:
+    if _CA_COUNTY_OUTLINE_CACHE is None:
+        cache = []
+        try:
+            import json
+            from pathlib import Path
+            here = Path(__file__).resolve().parent.parent  # backend/
+            path = here / "data" / "boundaries" / "counties.json"
+            d = json.load(open(path))
+            TARGET_POINTS = 8
+            for f in d.get("features", []):
+                g = f.get("geometry") or {}
+                if g.get("type") == "Polygon":
+                    poly = g.get("coordinates") or []
+                elif g.get("type") == "MultiPolygon":
+                    # Take only the FIRST sub-polygon (mainland for
+                    # most counties; the few with islands lose their
+                    # island in the outline but the mainland is what
+                    # matters for a 600px-wide email map).
+                    polys = g.get("coordinates") or []
+                    poly = polys[0] if polys else []
+                else:
+                    continue
                 if not poly:
                     continue
-                outer = poly[0]  # outer ring only (skip holes)
+                outer = poly[0]
                 step = max(1, len(outer) // TARGET_POINTS)
                 ds = outer[::step]
-                rings.append([(float(lat), float(lon)) for lon, lat in ds])
-    except Exception as e:
-        logger.warning("CA county outline load failed: %s", e)
-    _CA_COUNTY_OUTLINE_CACHE = rings
-    return rings
+                ring = [(float(lat), float(lon)) for lon, lat in ds]
+                if len(ring) < 3:
+                    continue
+                clat = sum(p[0] for p in ring) / len(ring)
+                clon = sum(p[1] for p in ring) / len(ring)
+                cache.append((clat, clon, ring))
+        except Exception as e:
+            logger.warning("CA county outline load failed: %s", e)
+        _CA_COUNTY_OUTLINE_CACHE = cache
+
+    if near_lat is None or near_lon is None:
+        return [r for _, _, r in _CA_COUNTY_OUTLINE_CACHE]
+    return [
+        r for clat, clon, r in _CA_COUNTY_OUTLINE_CACHE
+        if abs(clat - near_lat) <= radius_deg and abs(clon - near_lon) <= radius_deg
+    ]
 
 
 def _fire_match_key(name: str) -> str:
