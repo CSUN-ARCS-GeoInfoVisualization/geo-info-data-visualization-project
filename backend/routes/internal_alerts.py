@@ -2077,20 +2077,37 @@ def _send_fire_alert_email(
             zone_overlays.append({"rings": [ring], "status": status_str})
         except Exception:
             continue
-    # Frame the map on the USER'S COUNTY specifically — not the global
-    # bbox of every overlay. The fire's county polygon (HIGH-detail
-    # outline) is added as an overlay so Mapbox's `auto` framing
-    # zooms in to that county; neighboring counties are added as
-    # secondary LOW-detail outlines for context. This ensures:
-    #   (a) the entire user-county is visible in the email map
-    #   (b) the county boundary looks like a real boundary (60 pts,
-    #       not the 8-pt zigzag the recipient called out)
-    #   (c) the user pin sits at the exact saved coordinate, always
-    #       on top, and always inside the visible frame.
+    # Frame the map on the USER'S COUNTY at an explicit center+zoom so
+    # the rendered image is ALWAYS 600x300 (no auto-frame letterboxing
+    # / aspect-ratio surprises). Center = user-county centroid; zoom is
+    # computed from the county bbox so the whole county fits with a
+    # small padding.
     primary_county = _county_for(_norm_county(county_label))
     extra_overlays = []
+    center_lat = primary_lat
+    center_lon = primary_lon
+    zoom_for_county: int | str = 9  # fallback if county lookup fails
+
     if primary_county:
-        # User's own county: high-detail blue outline.
+        plat_min, plon_min, plat_max, plon_max = primary_county["bbox"]
+        center_lat = (plat_min + plat_max) / 2.0
+        center_lon = (plon_min + plon_max) / 2.0
+        # Pick the zoom that fits the whole county in 600x300 with ~15%
+        # padding. Mapbox zoom n shows 360/2^n degrees longitude across
+        # 256 base tile-px → 600px shows ~(600/256) * 360/2^n degrees.
+        # We want county_max_range_deg * 1.3 (padding) <= that width.
+        import math
+        lat_range = max(plat_max - plat_min, 0.001)
+        lon_range = max(plon_max - plon_min, 0.001)
+        # Latitude correction so longitude range maps correctly.
+        cos_lat = max(0.1, math.cos(math.radians(center_lat)))
+        eff_range = max(lat_range, lon_range * cos_lat) * 1.3
+        # Solve for zoom: 360/2^z * (600/256) >= eff_range
+        # → 2^z <= 360*(600/256)/eff_range
+        z_float = math.log2(360 * (600 / 256) / eff_range) if eff_range > 0 else 9
+        zoom_for_county = max(5, min(11, int(round(z_float))))
+
+        # User's own county: HIGH-detail blue outline.
         extra_overlays.append({
             "rings": [primary_county["ring_full"]],
             "_outline_only": True,
@@ -2098,16 +2115,12 @@ def _send_fire_alert_email(
             "_outline_width": "2",
             "_outline_opacity": "0.95",
         })
-        # Neighboring counties (bbox overlap with the primary, padded
-        # 0.05deg) at lower detail. Keeps the recipient oriented to
-        # what's adjacent without dominating the frame.
-        plat_min, plon_min, plat_max, plon_max = primary_county["bbox"]
+        # Neighboring counties at low detail for context.
         pad = 0.05
         for c in _load_ca_counties():
             if c["name_norm"] == primary_county["name_norm"]:
                 continue
             lat_min, lon_min, lat_max, lon_max = c["bbox"]
-            # Bbox-intersection test with padding
             if (lat_max + pad < plat_min - pad) or (lat_min - pad > plat_max + pad):
                 continue
             if (lon_max + pad < plon_min - pad) or (lon_min - pad > plon_max + pad):
@@ -2121,13 +2134,27 @@ def _send_fire_alert_email(
             })
 
     map_url = _static_map_url(
-        primary_lat, primary_lon,
+        center_lat, center_lon,
         zone_overlays=extra_overlays + zone_overlays,
         shelter_pins=None,
-        zoom="auto",
+        zoom=zoom_for_county,
         include_user_pin=True,
-        county_lines=False,   # superseded by the explicit primary/neighbor outlines above
+        county_lines=False,
+        # User pin needs to render at user's EXACT saved coord, not the
+        # county centroid we use as the map center. Override the center
+        # used for the pin placement via the explicit user_pin args
+        # added next.
     )
+    # The pin is currently drawn at center_lat/center_lon by the helper —
+    # but for fire alerts the center is the county centroid, not the
+    # user's saved location. Re-inject the pin at the saved coord by
+    # patching the URL: drop the helper's last pin overlay and append a
+    # corrected one at (primary_lat, primary_lon).
+    if "user-location-pin.png" in map_url and (primary_lat, primary_lon) != (center_lat, center_lon):
+        from urllib.parse import quote
+        wrong_pin = f"url-{quote(_USER_LOC_PIN_URL, safe='')}({center_lon:.5f},{center_lat:.5f})"
+        right_pin = f"url-{quote(_USER_LOC_PIN_URL, safe='')}({primary_lon:.5f},{primary_lat:.5f})"
+        map_url = map_url.replace(wrong_pin, right_pin)
 
     # Per-fire card
     def _fire_card(f):
