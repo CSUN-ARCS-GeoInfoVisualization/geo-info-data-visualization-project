@@ -261,7 +261,7 @@ export function NotificationSettings({ onNavigateToLocations }: NotificationSett
           <ChannelRow
             icon={<Flame className="h-4 w-4 text-orange-500" />}
             title="Wildfires in your saved-location counties"
-            description="Every 10 min — email when an active CAL FIRE incident is reported in a county containing one of your saved locations, plus updates when containment, status, or size meaningfully changes (every 10% containment, new 100-acre bracket, or status flip)."
+            description="Every 10 min — email when an active CAL FIRE incident is reported in a county containing one of your saved locations, plus updates when containment, status, or size meaningfully changes (every 10% containment, new 100-acre bracket, or status flip). One email per county. ZIP / neighborhood / census-tract granularity coming soon."
             checked={prefs.fire_alerts_enabled && prefs.opted_in && prefs.email_enabled}
             onChange={tryToggleFireAlerts}
             disabled={!prefs.opted_in || !prefs.email_enabled}
