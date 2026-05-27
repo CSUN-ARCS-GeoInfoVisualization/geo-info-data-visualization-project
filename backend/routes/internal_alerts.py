@@ -58,7 +58,7 @@ logger = logging.getLogger(__name__)
 
 internal_alerts_bp = Blueprint("internal_alerts", __name__)
 
-HIGH_RISK_THRESHOLD = 0.60  # /predict returns risk_probability in 0..1; 0.60 = "Very High"+ in the NFDRS 5-tier scale (matches the old 9-tier "High" trigger volume)
+HIGH_RISK_THRESHOLD = 0.40  # 5-tier NFDRS: 0.40 = "High" tier. Fire on any zone reaching High or above per Ido's spec.
 
 
 def _require_internal_token():
