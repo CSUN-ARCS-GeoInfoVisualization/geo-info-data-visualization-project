@@ -46,11 +46,16 @@ def _zones_for_location(loc):
         if not cached or cached.get("risk_score") is None:
             continue
         pct = float(cached["risk_score"])
+        # Always re-derive the label from the live pct so the email
+        # CANNOT disagree with what the user sees on the map. The cache
+        # may hold a stale label string from before the 5-tier NFDRS
+        # migration; the frontend re-derives from pct in lib/riskTiers.ts,
+        # so we must do the same on the backend to stay in sync.
         out.append({
             "kind": _ZONE_LABEL[key],
             "zone_name": z["name"],
             "pct": pct,
-            "label": cached.get("label") or _label_for(pct),
+            "label": _label_for(pct),
         })
     return out
 
