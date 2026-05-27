@@ -1691,12 +1691,33 @@ def _fetch_nifc_perimeters() -> dict:
     return {"type": "FeatureCollection", "features": []}
 
 
-def _index_perimeters_by_name(perim_fc: dict) -> dict:
-    """{normalized_fire_name: perimeter_feature} lookup for fast matching
-    CAL FIRE incidents to NIFC perimeter polygons. Uses the same
-    _norm_fire_name() the dashboard uses so 'Apple Fire'/'apple-fire'/
-    'APPLE_FIRE' all collide."""
+def _fire_match_key(name: str) -> str:
+    """Normalized lookup key for matching CAL FIRE incident names to NIFC
+    perimeter `poly_IncidentName`.
+
+    CAL FIRE consistently suffixes ' Fire' on incident names
+    ('Santa Rosa Island Fire', 'Sandy Fire'), NIFC consistently does
+    NOT ('Santa Rosa Island', 'Sandy'). Without stripping the suffix
+    NONE of the active CAL FIRE incidents resolved to a NIFC polygon
+    in production on 2026-05-27 — the map fell back to the synthetic
+    circle for every fire.
+
+    Strip:
+      - all non-alphanumerics (case-insensitive)
+      - a trailing 'fire' token if present on EITHER side
+    Applied symmetrically to both feeds so the names collide.
+    """
     from routes.predict import _norm_fire_name
+    nm = _norm_fire_name(name)
+    if nm.endswith("fire"):
+        nm = nm[:-4]
+    return nm
+
+
+def _index_perimeters_by_name(perim_fc: dict) -> dict:
+    """{match_key: perimeter_feature} lookup for fast CAL FIRE -> NIFC
+    polygon matching. Uses _fire_match_key() symmetrically (see its
+    docstring for why the trailing-'fire' suffix has to come off)."""
     idx = {}
     for f in (perim_fc.get("features") or []):
         p = f.get("properties") or {}
@@ -1704,18 +1725,17 @@ def _index_perimeters_by_name(perim_fc: dict) -> dict:
         name = p.get("poly_IncidentName") or p.get("IncidentName") or p.get("attr_IncidentName")
         if not name:
             continue
-        nm = _norm_fire_name(name)
-        if nm and nm not in idx:
-            idx[nm] = f
+        key = _fire_match_key(name)
+        if key and key not in idx:
+            idx[key] = f
     return idx
 
 
 def _matched_perimeter_for(fire: dict, perim_idx: dict):
     """Return the matching NIFC perimeter feature (or None) for a CAL
-    FIRE incident, by normalized name."""
-    from routes.predict import _norm_fire_name
-    nm = _norm_fire_name(fire.get("Name", ""))
-    return perim_idx.get(nm) if nm else None
+    FIRE incident, using the suffix-stripped match key."""
+    key = _fire_match_key(fire.get("Name", ""))
+    return perim_idx.get(key) if key else None
 
 
 def _fire_bucket(pct, size):
