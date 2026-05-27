@@ -120,8 +120,17 @@ _EVAC_STATUS_COLORS = {
 # of 90/255 and 230/255 from evacuation-routes.tsx.colorForZoneStatus.
 _EVAC_FILL_OPACITY = 0.35
 _EVAC_STROKE_OPACITY = 0.9
-_SHELTER_OPEN_COLOR = "16a34a"   # green-600, matches SHELTER_ICON_OPEN
-_USER_LOC_COLOR = "dc2626"        # red-600 — your saved location pin
+
+# Marker icons hosted on Netlify (deploys from frontend/public/email-icons/*).
+# Per-facility-usage-code shelter pin that visually matches the live dashboard
+# — same emoji (🏃 🏠 🏛️) over the same blue/green/purple disc.
+_EMAIL_ICON_BASE = "https://firescope.dev/email-icons"
+_SHELTER_PIN_URLS = {
+    "EVAC": f"{_EMAIL_ICON_BASE}/shelter-pin-EVAC.png",   # 🏃 over blue
+    "POST": f"{_EMAIL_ICON_BASE}/shelter-pin-POST.png",   # 🏠 over green
+    "BOTH": f"{_EMAIL_ICON_BASE}/shelter-pin-BOTH.png",   # 🏛️ over purple
+}
+_USER_LOC_PIN_URL = f"{_EMAIL_ICON_BASE}/user-location-pin.png"  # solid blue #2563eb circle
 
 
 def _evac_status_colors(status: str) -> tuple[str, str]:
@@ -140,24 +149,30 @@ def _static_map_url(center_lat: float, center_lon: float,
                     zoom: int = 11,
                     width: int = 600, height: int = 300) -> str:
     """Build a Mapbox Static Images API URL matching the live FireScope
-    dashboard layering (zone colors, shelter icons, user location).
+    dashboard pixel-by-pixel (zone colors, shelter emoji icons, blue
+    user-location circle).
 
     zone_overlays: list of dicts {
         "rings": [[(lat, lon), ...], ...],   # polygon rings from _polygon_rings_from_feature
-        "status": str,                        # CalOES STATUS string ('ORDER', 'WARNING', etc.)
-    } — colors picked per-status to match the live legend.
+        "status": str,                        # CalOES STATUS string
+    } — colors picked per-status to match the live colorForZoneStatus.
 
-    shelter_pins: list of (lat, lon) tuples — open shelters near the user.
-                  Rendered as small green Maki "home" pins (same icon the
-                  live shelter overlay uses).
+    shelter_pins: list of dicts {
+        "lat": float, "lon": float,
+        "usage_code": "EVAC" | "POST" | "BOTH",   # facility_usage_code
+    } — rendered as the matching emoji icon (🏃 / 🏠 / 🏛️) over the same
+    blue / green / purple disc the live legend uses. Hosted at
+    https://firescope.dev/email-icons/shelter-pin-<CODE>.png.
 
-    Uses MAPBOX_PUBLIC_TOKEN env var (free tier: 50k loads/month). Falls
-    back to a visible grey placeholder when the token isn't configured so
-    the email still ships.
+    The user location is drawn as the same blue solid circle (#2563eb)
+    the live Google Maps marker uses on the dashboard.
 
-    URL cap: Mapbox limits to 8192 chars. Rings are pre-downsampled by
-    _polygon_rings_from_feature and shelter list is capped at 3 by the
-    caller, so we stay well under the limit for typical evac scenarios.
+    Uses MAPBOX_PUBLIC_TOKEN env var (free 50k/mo). Visible placeholder
+    when unset so the email still ships.
+
+    URL cap: Mapbox limits to 8192 chars. Rings pre-downsampled by
+    _polygon_rings_from_feature, shelter list capped at 3 by the caller —
+    well under the cap for typical scenarios.
     """
     token = os.getenv("MAPBOX_PUBLIC_TOKEN", "")
     if not token:
@@ -170,7 +185,7 @@ def _static_map_url(center_lat: float, center_lon: float,
     overlays = []
 
     # Zone polygons FIRST so pins draw on top. Color per STATUS to match
-    # the live dashboard exactly.
+    # the live colorForZoneStatus in evacuation-routes.tsx.
     for zo in (zone_overlays or []):
         rings = zo.get("rings") or []
         stroke_hex, fill_hex = _evac_status_colors(zo.get("status", ""))
@@ -183,14 +198,22 @@ def _static_map_url(center_lat: float, center_lon: float,
                 f"({quote(encoded, safe='')})"
             )
 
-    # Open-shelter pins (green) using the Maki "home" icon — matches the
-    # live shelter overlay's Lucide Home icon by visual analogy. The
-    # Maki "home" glyph is a small house silhouette.
-    for slat, slon in (shelter_pins or []):
-        overlays.append(f"pin-s-home+{_SHELTER_OPEN_COLOR}({slon:.5f},{slat:.5f})")
+    # Shelter pins — emoji-over-color PNG hosted on Netlify. Falls back
+    # to BOTH (purple 🏛️) if usage_code is unknown so an unmapped row
+    # still gets a meaningful marker instead of an ugly missing image.
+    # Mapbox syntax: url-<URL-encoded-https-URL>(lon,lat)
+    for sp in (shelter_pins or []):
+        try:
+            slat = float(sp["lat"]); slon = float(sp["lon"])
+        except (TypeError, ValueError, KeyError):
+            continue
+        usage = str(sp.get("usage_code", "")).upper() or "BOTH"
+        pin_url = _SHELTER_PIN_URLS.get(usage) or _SHELTER_PIN_URLS["BOTH"]
+        overlays.append(f"url-{quote(pin_url, safe='')}({slon:.5f},{slat:.5f})")
 
-    # User location pin LAST so it's on top of everything (red, larger).
-    overlays.append(f"pin-l+{_USER_LOC_COLOR}({center_lon:.5f},{center_lat:.5f})")
+    # User location LAST so it's on top: blue solid circle PNG matching
+    # the live Google Maps marker.
+    overlays.append(f"url-{quote(_USER_LOC_PIN_URL, safe='')}({center_lon:.5f},{center_lat:.5f})")
 
     overlay_str = ",".join(overlays)
     return (
@@ -950,11 +973,17 @@ def _send_multizone_evac_email(
         }
         for zh in zone_hits
     ]
-    shelter_pins = [
-        (float(s["latitude"]), float(s["longitude"]))
-        for s in (nearest_shelters or [])
-        if s.get("latitude") is not None and s.get("longitude") is not None
-    ]
+    shelter_pins = []
+    for s in (nearest_shelters or []):
+        if s.get("latitude") is None or s.get("longitude") is None:
+            continue
+        shelter_pins.append({
+            "lat": float(s["latitude"]),
+            "lon": float(s["longitude"]),
+            # facility_usage_code drives the pin icon (EVAC blue 🏃,
+            # POST green 🏠, BOTH purple 🏛️) — same as live dashboard.
+            "usage_code": str(s.get("facility_usage_code", "")).upper(),
+        })
     map_url = _static_map_url(
         location_lat, location_lon,
         zone_overlays=zone_overlays,
