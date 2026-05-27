@@ -197,7 +197,8 @@ def _static_map_url(center_lat: float, center_lon: float,
                     zone_overlays: list | None = None,
                     shelter_pins: list | None = None,
                     zoom: int | str = 11,
-                    width: int = 600, height: int = 300) -> str:
+                    width: int = 600, height: int = 300,
+                    include_user_pin: bool = True) -> str:
     """Build a Mapbox Static Images API URL matching the live FireScope
     dashboard pixel-by-pixel (zone colors, shelter emoji icons, blue
     user-location circle).
@@ -262,8 +263,16 @@ def _static_map_url(center_lat: float, center_lon: float,
         overlays.append(f"url-{quote(pin_url, safe='')}({slon:.5f},{slat:.5f})")
 
     # User location LAST so it's on top: blue solid circle PNG matching
-    # the live Google Maps marker.
-    overlays.append(f"url-{quote(_USER_LOC_PIN_URL, safe='')}({center_lon:.5f},{center_lat:.5f})")
+    # the live Google Maps marker. Suppressed when include_user_pin=False
+    # so callers that auto-frame to just the overlays (e.g. fire-alert
+    # bundle spanning multiple counties) can opt out when the user's
+    # location is far outside the fire bounding box — keeps the map
+    # tightly zoomed on the actual fires instead of spreading to cover
+    # both the user and a fire 250km away.
+    if include_user_pin:
+        overlays.append(
+            f"url-{quote(_USER_LOC_PIN_URL, safe='')}({center_lon:.5f},{center_lat:.5f})"
+        )
 
     overlay_str = ",".join(overlays)
     # `auto` lets Mapbox compute the bounding box of every overlay (user
@@ -1892,15 +1901,27 @@ def _send_fire_alert_email(
             zone_overlays.append({"rings": [ring], "status": status_str})
         except Exception:
             continue
-    # Use Mapbox `auto` framing so the bounding box of the user's pin +
-    # EVERY matched fire polygon fits in the map. Fixed zoom cropped out
-    # cross-county fires (recipient reported only 2 of 3 fires visible at
-    # zoom 8 when bundle spanned Santa Barbara + Riverside, ~250km apart).
+    # Compute the bbox of every fire polygon ring so we can decide whether
+    # the user's location pin makes sense to include. If the user is INSIDE
+    # the fire bounding box, include the pin so the map shows 'these fires
+    # are right at your saved spot.' If they're outside (e.g. user saved
+    # location is in coastal Santa Barbara but the fire is on Santa Rosa
+    # Island 30km offshore), omit the pin so Mapbox auto-frames to just
+    # the fires — otherwise the auto-frame zooms way out to cover both
+    # and every polygon becomes tiny.
+    fire_lats = [p[0] for zo in zone_overlays for ring in zo.get("rings", []) for p in ring]
+    fire_lons = [p[1] for zo in zone_overlays for ring in zo.get("rings", []) for p in ring]
+    user_inside_frame = bool(fire_lats) and bool(fire_lons) and (
+        min(fire_lats) <= primary_lat <= max(fire_lats)
+        and min(fire_lons) <= primary_lon <= max(fire_lons)
+    )
+
     map_url = _static_map_url(
         primary_lat, primary_lon,
         zone_overlays=zone_overlays,
         shelter_pins=None,  # no shelter overlay for fire alerts
         zoom="auto",
+        include_user_pin=user_inside_frame,
     )
 
     # Per-fire card
@@ -1995,8 +2016,12 @@ def _send_fire_alert_email(
         f'width="600" height="300" style="display:block;width:100%;max-width:600px;height:auto;border:0;" />'
         '</a></td></tr>'
         '<tr><td style="padding:6px 12px;font-size:11px;color:#888888;background-color:#fafafa;font-family:Arial,Helvetica,sans-serif">'
-        'Blue circle = your saved location &middot; red shaded areas = active wildfire footprints (radius from acreage) &middot; '
-        '<a href="https://firescope.dev" style="color:#dc2626;text-decoration:underline">tap to open the live dashboard</a>'
+        + (
+            'Blue circle = your saved location &middot; red shaded areas = active wildfire perimeters'
+            if user_inside_frame else
+            'Red shaded areas = active wildfire perimeters in your county (your saved location is outside the map frame)'
+        ) +
+        ' &middot; <a href="https://firescope.dev" style="color:#dc2626;text-decoration:underline">tap to open the live dashboard</a>'
         '</td></tr></table>'
 
         '<p style="margin:8px 0 8px;font-size:13px;font-weight:bold;color:#555555;font-family:Arial,Helvetica,sans-serif">Active fires in your county</p>'
