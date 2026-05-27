@@ -121,48 +121,38 @@ def _last_alert_signature(session, user_id):
 def _location_block_html(loc_payload: dict) -> str:
     """One location's 4-zone table.
 
-    Pure-table layout (no <div>) because Gmail was rendering the previous
-    div-based version as a blank body — confirmed delivered with full HTML
-    in Resend logs but invisible in the recipient inbox on 2026-05-27.
+    Reverted 2026-05-27 to the proven working layout (commit c3ee3a9). The
+    f4c1f2b "fix" that swapped to double-quote style= attributes AND added
+    inline `background:#hex` tier tinting on every Tier cell caused Gmail
+    to render the entire email body as blank (verified by Show Original
+    diff against the working c3ee3a9 send). The likely culprit was the
+    `background:` shorthand on <td> — Gmail's strict CSS parser appears to
+    invalidate the cell when it can't resolve the shorthand cleanly.
+    Don't reintroduce inline backgrounds in the row cells without testing
+    in an actual Gmail inbox first. See tests/test_email_render.py for the
+    golden snapshot guarding this.
     """
     title = html_escape(loc_payload["name"])
-    tier_bg = {
-        "Extreme":   "#fee2e2",
-        "Very High": "#fecaca",
-        "High":      "#ffedd5",
-        "Moderate":  "#fef9c3",
-        "Low":       "#dcfce7",
-    }
-    rows = []
-    for z in loc_payload["zones"]:
-        bg = tier_bg.get(z["label"], "#f5f5f5")
-        rows.append(
-            "<tr>"
-            f'<td style="padding:6px 10px;border-bottom:1px solid #eeeeee;font-size:12px;color:#555555;font-family:Arial,sans-serif">{html_escape(z["kind"])}</td>'
-            f'<td style="padding:6px 10px;border-bottom:1px solid #eeeeee;font-size:12px;font-family:Arial,sans-serif">{html_escape(z["zone_name"])}</td>'
-            f'<td style="padding:6px 10px;border-bottom:1px solid #eeeeee;font-weight:bold;font-size:12px;background-color:{bg};font-family:Arial,sans-serif">{html_escape(z["label"])}</td>'
-            f'<td style="padding:6px 10px;border-bottom:1px solid #eeeeee;text-align:right;font-size:12px;font-family:Arial,sans-serif">{z["pct"]*100:.0f}%</td>'
-            "</tr>"
-        )
-    rows_html = "".join(rows)
+    rows = "".join(
+        f"<tr><td style='padding:6px 10px;border-bottom:1px solid #eee;font-size:12px;color:#555'>{html_escape(z['kind'])}</td>"
+        f"<td style='padding:6px 10px;border-bottom:1px solid #eee;font-size:12px'>{html_escape(z['zone_name'])}</td>"
+        f"<td style='padding:6px 10px;border-bottom:1px solid #eee;font-weight:600;font-size:12px'>{html_escape(z['label'])}</td>"
+        f"<td style='padding:6px 10px;border-bottom:1px solid #eee;text-align:right;font-size:12px'>{z['pct']*100:.0f}%</td></tr>"
+        for z in loc_payload["zones"]
+    )
     return (
-        '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" '
-        'style="border-collapse:collapse;margin-top:14px;border:1px solid #eeeeee">'
-        f'<tr><td style="background-color:#fafafa;padding:10px 12px;font-weight:bold;font-size:13px;'
-        f'font-family:Arial,sans-serif">{title}</td></tr>'
-        '<tr><td style="padding:0">'
-        '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" '
-        'style="border-collapse:collapse">'
-        '<tr style="background-color:#ffffff">'
-        '<th align="left" style="padding:6px 10px;font-size:11px;color:#888888;text-transform:uppercase;font-family:Arial,sans-serif">Zone</th>'
-        '<th align="left" style="padding:6px 10px;font-size:11px;color:#888888;text-transform:uppercase;font-family:Arial,sans-serif">Area</th>'
-        '<th align="left" style="padding:6px 10px;font-size:11px;color:#888888;text-transform:uppercase;font-family:Arial,sans-serif">Tier</th>'
-        '<th align="right" style="padding:6px 10px;font-size:11px;color:#888888;text-transform:uppercase;font-family:Arial,sans-serif">Risk</th>'
-        '</tr>'
-        f'{rows_html}'
-        '</table>'
-        '</td></tr>'
-        '</table>'
+        f"<div style='margin-top:14px;border:1px solid #eee;border-radius:8px;overflow:hidden'>"
+        f"  <div style='background:#fafafa;padding:10px 12px;font-weight:600;font-size:13px'>{title}</div>"
+        f"  <table style='width:100%;border-collapse:collapse'>"
+        f"    <thead><tr style='background:#fff'>"
+        f"      <th style='padding:6px 10px;text-align:left;font-size:11px;color:#888;text-transform:uppercase'>Zone</th>"
+        f"      <th style='padding:6px 10px;text-align:left;font-size:11px;color:#888;text-transform:uppercase'>Area</th>"
+        f"      <th style='padding:6px 10px;text-align:left;font-size:11px;color:#888;text-transform:uppercase'>Tier</th>"
+        f"      <th style='padding:6px 10px;text-align:right;font-size:11px;color:#888;text-transform:uppercase'>Risk</th>"
+        f"    </tr></thead>"
+        f"    <tbody>{rows}</tbody>"
+        f"  </table>"
+        f"</div>"
     )
 
 
@@ -186,34 +176,29 @@ def _send_high_risk_email(to_email: str, contact_name: str, locations_payload: l
 
     name = (contact_name or "").strip() or to_email.split("@", 1)[0]
     blocks_html = "".join(_location_block_html(lp) for lp in locations_payload)
-    html = f"""<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
-<html xmlns="http://www.w3.org/1999/xhtml">
-<head>
-<meta http-equiv="Content-Type" content="text/html; charset=UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>FireScope High Risk Alert</title>
-</head>
-<body style="margin:0;padding:0;background-color:#f7f7f8;font-family:Arial,sans-serif;">
-<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background-color:#f7f7f8;">
-  <tr><td align="center" style="padding:24px 12px;">
-    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="600" style="max-width:600px;background-color:#ffffff;border:1px solid #eeeeee;">
-      <tr><td align="center" style="background-color:#dc2626;padding:18px 22px;color:#ffffff;">
-        <img src="https://firescope.dev/firescope-logo.png" alt="FireScope" width="56" height="56" style="display:block;margin:0 auto 8px auto;border:0;background-color:#ffffff;padding:4px;" />
-        <div style="font-size:13px;letter-spacing:1px;color:#ffffff;font-family:Arial,sans-serif;">FIRESCOPE &bull; HIGH RISK ALERT</div>
-        <div style="font-size:22px;font-weight:bold;margin-top:4px;color:#ffffff;font-family:Arial,sans-serif;">Wildfire risk alert for your saved locations</div>
-      </td></tr>
-      <tr><td style="padding:22px;font-family:Arial,sans-serif;color:#222222;">
-        <p style="margin:0 0 14px;font-size:14px;">Hi {html_escape(name)},</p>
-        <p style="margin:0 0 8px;font-size:14px;line-height:1.45;">One or more of your saved locations is at <strong>High</strong> risk or above. Below is the current risk by every zone type &mdash; county, ZIP code, neighborhood, and census tract &mdash; so you can see which scope is driving the alert.</p>
-        {blocks_html}
-        <p style="margin:18px 0 0;font-size:13px;color:#555555;">Open <a href="https://firescope.dev" style="color:#dc2626;text-decoration:underline;">firescope.dev</a> for the live map, fire perimeters, and evacuation info.</p>
-        <p style="margin:14px 0 0;font-size:12px;color:#888888;">You're receiving this because the High Risk channel is on in your alert settings. Manage at firescope.dev &rarr; Alerts.</p>
-      </td></tr>
-    </table>
-  </td></tr>
-</table>
-</body>
-</html>"""
+    html = f"""<!doctype html>
+<html><body style="font-family:system-ui,-apple-system,sans-serif;background:#f7f7f8;margin:0;padding:24px">
+  <div style="max-width:600px;margin:auto;background:white;border-radius:12px;overflow:hidden;border:1px solid #eee">
+    <div style="background:#dc2626;color:white;padding:18px 22px">
+      <div style="text-align:center;margin-bottom:8px"><img src="https://firescope.dev/firescope-logo.png" alt="FireScope" width="56" height="56" style="display:block;margin:0 auto;border:0;background:white;border-radius:10px;padding:4px"></div>
+      <div style="font-size:13px;letter-spacing:.08em;opacity:.9;text-align:center">FIRESCOPE • HIGH RISK ALERT</div>
+      <div style="font-size:22px;font-weight:700;margin-top:4px;text-align:center">Wildfire risk alert for your saved locations</div>
+    </div>
+    <div style="padding:22px">
+      <p style="margin:0 0 14px">Hi {html_escape(name)},</p>
+      <p style="margin:0 0 8px">One or more of your saved locations is at <strong>High</strong> risk or above.
+        Below is the current risk by every zone type — county, ZIP code, neighborhood, and census tract — so
+        you can see which scope is driving the alert.</p>
+      {blocks_html}
+      <p style="margin:18px 0 0;font-size:13px;color:#555">
+        Open <a href="https://firescope.dev" style="color:#dc2626">firescope.dev</a> for the live map, fire perimeters, and evacuation info.
+      </p>
+      <p style="margin:14px 0 0;font-size:12px;color:#888">
+        You're receiving this because the High Risk channel is on in your alert settings. Manage at firescope.dev → Alerts.
+      </p>
+    </div>
+  </div>
+</body></html>"""
 
     def _txt_block(lp):
         lines = [f"  {lp['name']}:"]
