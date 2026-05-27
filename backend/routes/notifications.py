@@ -363,17 +363,158 @@ def subscribe_notifications():
     return jsonify(_serialize_preference(pref))
 
 
+# NOTE: The JWT-required POST /notifications/unsubscribe handler was
+# replaced by the token-authed public_unsubscribe_post below (Flask
+# can't have two POST handlers for the same path). The new one supports
+# the same "unsubscribe me from everything" semantics via channel='all'
+# AND per-channel granularity, and it's reachable from email links
+# without requiring a JWT (which an email recipient can't supply).
+# Logged-in users can still unsubscribe through PUT /me/notifications
+# by toggling the channel flags individually.
+
+
+# ─────────────────────── Public one-click unsubscribe ───────────────────────
+#
+# Token-authenticated endpoint reachable from an email link without a login.
+# Token is HMAC-SHA256(SECRET_KEY, 'unsub:<user_id>:<channel>')[:24] —
+# stable per (user, channel) so older sent emails keep working forever,
+# but unguessable so nobody can mass-unsubscribe a user by spraying IDs.
+#
+# Supports both GET (regular email-link click → friendly HTML page) and
+# POST (RFC 8058 List-Unsubscribe-Post one-click from Gmail / Apple Mail
+# native unsubscribe button).
+_PUBLIC_UNSUB_CHANNEL_TO_COL = {
+    'high_risk':   'high_risk_enabled',
+    'breaking':    'breaking_news_enabled',
+    'evacuation':  'evacuation_enabled',
+    'fire_alerts': 'fire_alerts_enabled',
+}
+_PUBLIC_UNSUB_CHANNEL_LABELS = {
+    'high_risk':   'High Risk Wildfire alerts',
+    'breaking':    'Breaking Fire News alerts',
+    'evacuation':  'Evacuation alerts',
+    'fire_alerts': 'Wildfires-in-your-county alerts',
+    'all':         'all FireScope alert emails',
+}
+
+
+def _verify_unsub_token(user_id: int, channel: str, token: str) -> bool:
+    import os, hmac as _hmac, hashlib
+    secret = (os.getenv('SECRET_KEY') or 'dev-secret').encode('utf-8')
+    msg = f'unsub:{user_id}:{channel}'.encode('utf-8')
+    expected = _hmac.new(secret, msg, hashlib.sha256).hexdigest()[:24]
+    return _hmac.compare_digest(expected, token or '')
+
+
+def _apply_unsubscribe(pref, channel: str) -> None:
+    """Flip the right column off, write an unsubscribed_at stamp on
+    channel='all', and stay quietly idempotent on repeat clicks."""
+    if channel == 'all':
+        pref.opted_in = False
+        pref.email_enabled = False
+        pref.unsubscribed_at = _now()
+        # Turn every per-channel toggle off too so re-enabling 'email_enabled'
+        # later doesn't quietly resume all channels.
+        for col in _PUBLIC_UNSUB_CHANNEL_TO_COL.values():
+            if hasattr(pref, col):
+                setattr(pref, col, False)
+    else:
+        col = _PUBLIC_UNSUB_CHANNEL_TO_COL.get(channel)
+        if col and hasattr(pref, col):
+            setattr(pref, col, False)
+
+
+def _unsub_confirmation_html(channel: str, user_email: str | None) -> str:
+    label = _PUBLIC_UNSUB_CHANNEL_LABELS.get(channel, 'this channel')
+    where = f' for <strong>{user_email}</strong>' if user_email else ''
+    return (
+        '<!DOCTYPE html><html><head><meta charset="utf-8" />'
+        '<title>Unsubscribed from FireScope</title>'
+        '<meta name="viewport" content="width=device-width, initial-scale=1" />'
+        '</head><body style="margin:0;padding:0;background:#f7f7f8;font-family:Arial,sans-serif">'
+        '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background:#f7f7f8">'
+        '<tr><td align="center" style="padding:48px 16px">'
+        '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="520" '
+        'style="background:#fff;border:1px solid #eee;border-radius:8px">'
+        '<tr><td style="padding:32px;text-align:center;color:#222">'
+        f'<h1 style="margin:0 0 16px;font-size:22px;color:#16a34a">You\'re unsubscribed</h1>'
+        f'<p style="margin:0 0 18px;font-size:15px;line-height:1.5">You will no longer receive '
+        f'<strong>{label}</strong>{where}.</p>'
+        '<p style="margin:0 0 20px;font-size:13px;color:#555;line-height:1.5">'
+        'You can re-enable any alert channel at any time from your FireScope alert preferences.</p>'
+        '<p style="margin:0"><a href="https://firescope.dev/?page=notifications" '
+        'style="display:inline-block;padding:11px 22px;background:#dc2626;color:#fff;'
+        'text-decoration:none;border-radius:6px;font-size:14px;font-weight:bold">'
+        'Manage alert preferences</a></p>'
+        '</td></tr></table>'
+        '</td></tr></table></body></html>'
+    )
+
+
+@notifications_bp.route('/notifications/unsubscribe', methods=['GET'])
+def public_unsubscribe_get():
+    """Email-link GET. Returns a friendly HTML confirmation page after
+    flipping the channel off. No login required (token-authed)."""
+    try:
+        user_id = int(request.args.get('u', '0'))
+    except (TypeError, ValueError):
+        user_id = 0
+    channel = (request.args.get('c') or '').strip().lower()
+    token = (request.args.get('t') or '').strip()
+    if not user_id or not channel or not token:
+        return 'Invalid unsubscribe link.', 400
+    if channel not in _PUBLIC_UNSUB_CHANNEL_LABELS:
+        return 'Unknown channel.', 400
+    if not _verify_unsub_token(user_id, channel, token):
+        return 'Invalid or tampered unsubscribe token.', 403
+
+    user_email = None
+    try:
+        pref = _get_or_create_preference(user_id)
+        _apply_unsubscribe(pref, channel)
+        db.session.commit()
+        # Resolve the email for the confirmation page (best-effort).
+        u = User.query.filter_by(id=user_id).first()
+        if u:
+            user_email = pref.contact_email or u.email
+    except Exception as e:
+        logger.warning('public_unsubscribe_get failed for user=%s ch=%s: %s', user_id, channel, e)
+        try: db.session.rollback()
+        except Exception: pass
+    from flask import make_response
+    resp = make_response(_unsub_confirmation_html(channel, user_email), 200)
+    resp.headers['Content-Type'] = 'text/html; charset=utf-8'
+    return resp
+
+
 @notifications_bp.route('/notifications/unsubscribe', methods=['POST'])
-@jwt_required()
-def unsubscribe_notifications():
-    user_id = _coerce_user_id()
-    if not user_id:
-        return jsonify({'error': 'Invalid token identity'}), 401
-    pref = _get_or_create_preference(user_id)
-    pref.opted_in = False
-    pref.unsubscribed_at = _now()
-    db.session.commit()
-    return jsonify(_serialize_preference(pref))
+def public_unsubscribe_post():
+    """RFC 8058 one-click POST hit by Gmail / Apple Mail when the user
+    clicks the native 'unsubscribe' button at the top of the email.
+    Replaces the older JWT-required POST endpoint at this same URL."""
+    # Token may be in URL query OR form body (Gmail sends as form data).
+    try:
+        user_id = int(request.args.get('u') or (request.form.get('u') or '0'))
+    except (TypeError, ValueError):
+        user_id = 0
+    channel = (request.args.get('c') or request.form.get('c') or '').strip().lower()
+    token = (request.args.get('t') or request.form.get('t') or '').strip()
+    if not user_id or not channel or not token:
+        return jsonify({'error': 'invalid_link'}), 400
+    if channel not in _PUBLIC_UNSUB_CHANNEL_LABELS:
+        return jsonify({'error': 'unknown_channel'}), 400
+    if not _verify_unsub_token(user_id, channel, token):
+        return jsonify({'error': 'bad_token'}), 403
+    try:
+        pref = _get_or_create_preference(user_id)
+        _apply_unsubscribe(pref, channel)
+        db.session.commit()
+    except Exception as e:
+        logger.warning('public_unsubscribe_post failed: %s', e)
+        try: db.session.rollback()
+        except Exception: pass
+        return jsonify({'error': 'apply_failed'}), 500
+    return jsonify({'unsubscribed': True, 'channel': channel}), 200
 
 
 @notifications_bp.route('/admin/notifications', methods=['GET'])
