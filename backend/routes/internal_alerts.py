@@ -196,7 +196,7 @@ def _evac_status_colors(status: str) -> tuple[str, str]:
 def _static_map_url(center_lat: float, center_lon: float,
                     zone_overlays: list | None = None,
                     shelter_pins: list | None = None,
-                    zoom: int = 11,
+                    zoom: int | str = 11,
                     width: int = 600, height: int = 300) -> str:
     """Build a Mapbox Static Images API URL matching the live FireScope
     dashboard pixel-by-pixel (zone colors, shelter emoji icons, blue
@@ -266,10 +266,19 @@ def _static_map_url(center_lat: float, center_lon: float,
     overlays.append(f"url-{quote(_USER_LOC_PIN_URL, safe='')}({center_lon:.5f},{center_lat:.5f})")
 
     overlay_str = ",".join(overlays)
+    # `auto` lets Mapbox compute the bounding box of every overlay (user
+    # pin + every zone polygon + every shelter pin) and frame them ALL
+    # into the visible map. Falls back to fixed center+zoom otherwise.
+    # Used by the fire-alert email so multi-county bundles can show every
+    # matched fire instead of cropping out the far ones.
+    if zoom == "auto":
+        position = "auto"
+    else:
+        position = f"{center_lon:.5f},{center_lat:.5f},{zoom}"
     return (
         f"https://api.mapbox.com/styles/v1/mapbox/streets-v12/static/"
         f"{overlay_str}/"
-        f"{center_lon:.5f},{center_lat:.5f},{zoom}/"
+        f"{position}/"
         f"{width}x{height}@2x"
         f"?access_token={token}"
     )
@@ -1883,11 +1892,15 @@ def _send_fire_alert_email(
             zone_overlays.append({"rings": [ring], "status": status_str})
         except Exception:
             continue
+    # Use Mapbox `auto` framing so the bounding box of the user's pin +
+    # EVERY matched fire polygon fits in the map. Fixed zoom cropped out
+    # cross-county fires (recipient reported only 2 of 3 fires visible at
+    # zoom 8 when bundle spanned Santa Barbara + Riverside, ~250km apart).
     map_url = _static_map_url(
         primary_lat, primary_lon,
         zone_overlays=zone_overlays,
         shelter_pins=None,  # no shelter overlay for fire alerts
-        zoom=8,
+        zoom="auto",
     )
 
     # Per-fire card
