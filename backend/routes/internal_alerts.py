@@ -76,6 +76,48 @@ def _require_internal_token():
     return True, None
 
 
+def _anti_gmail_trim_headers() -> dict:
+    """Per-send unique X-Entity-Ref-ID + Message-ID-style headers that
+    stop Gmail from collapsing repeated FireScope alerts into a single
+    'trimmed content' affordance.
+
+    Recipient confirmed on 2026-05-27 that Gmail (web + mobile) was
+    hiding the body of repeated similar-subject FireScope alerts behind
+    the '...' menu. The cause is Gmail's quoted-text detection treating
+    near-identical layouts from the same sender as a duplicate thread.
+
+    X-Entity-Ref-ID is the documented Gmail-specific header for opting
+    out of conversation grouping. Pairing it with a unique
+    In-Reply-To-style token ensures no two FireScope alerts ever share
+    a thread fingerprint.
+    """
+    import uuid
+    ref = uuid.uuid4().hex
+    return {
+        "X-Entity-Ref-ID": ref,
+        # No real In-Reply-To target — using a synthetic ID that won't
+        # match any other message in the user's mailbox. Gmail treats
+        # this as a thread root, not a reply.
+        "X-FireScope-Send-ID": ref,
+    }
+
+
+def _anti_gmail_trim_marker(ref: str | None = None) -> str:
+    """A single hidden HTML row carrying a unique token. Invisible to
+    the reader (zero font-size, zero opacity, display:none-equivalent
+    CSS that still passes Gmail's sanitizer) but counts in Gmail's
+    content-similarity hash, breaking the 'trimmed content' collapse."""
+    import uuid
+    ref = ref or uuid.uuid4().hex
+    return (
+        '<span style="display:none;font-size:0;line-height:0;'
+        'max-height:0;max-width:0;opacity:0;overflow:hidden;'
+        'color:transparent;mso-hide:all" aria-hidden="true">'
+        f'FireScope-send-uid:{ref}'
+        '</span>'
+    )
+
+
 def _encode_polyline(coords: list) -> str:
     """Google polyline encoding algorithm — used by Mapbox Static Images
     API to compress polygon overlays into the URL.
@@ -293,6 +335,10 @@ def _email_shell(
             f'<tr><td align="center" style="background-color:{header_bg};padding:0 22px 14px 22px;'
             f'font-size:13px;color:#ffffff;font-family:Arial,Helvetica,sans-serif;">{header_subtitle}</td></tr>'
         )
+    # Hidden per-send unique token: breaks Gmail's content-similarity
+    # hash so back-to-back FireScope alerts don't get collapsed under
+    # the '...' trimmed-content affordance (recipient bug 2026-05-27).
+    trim_buster = _anti_gmail_trim_marker()
     return (
         '<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">'
         '<html xmlns="http://www.w3.org/1999/xhtml">'
@@ -302,6 +348,7 @@ def _email_shell(
         f'<title>{header_title}</title>'
         '</head>'
         '<body style="margin:0;padding:0;background-color:#f7f7f8;font-family:Arial,Helvetica,sans-serif;">'
+        f'{trim_buster}'
         '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="background-color:#f7f7f8;">'
         '<tr><td align="center" style="padding:24px 12px;">'
         '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="600" '
@@ -537,6 +584,7 @@ def _send_high_risk_email(to_email: str, contact_name: str, locations_payload: l
             "subject": subject,
             "html": html,
             "text": text,
+            "headers": _anti_gmail_trim_headers(),
         })
         return resp.get("id"), None
     except Exception as e:
@@ -735,6 +783,7 @@ def _send_breaking_news_email(to_email: str, contact_name: str, articles: list) 
             "subject": f"FireScope: {len(articles)} new breaking fire {'story' if len(articles) == 1 else 'stories'}",
             "html": html,
             "text": text,
+            "headers": _anti_gmail_trim_headers(),
         })
         return resp.get("id"), None
     except Exception as e:
@@ -1141,6 +1190,7 @@ def _send_multizone_evac_email(
             "subject": subject,
             "html": html,
             "text": text,
+            "headers": _anti_gmail_trim_headers(),
         })
         return resp.get("id"), None
     except Exception as e:
@@ -1243,6 +1293,7 @@ def _send_evacuation_email(to_email, contact_name, location_name, zone_props, ne
             "subject": f"FireScope: {banner_label} — {zone_name}",
             "html": html,
             "text": text,
+            "headers": _anti_gmail_trim_headers(),
         })
         return resp.get("id"), None
     except Exception as e:
@@ -1340,6 +1391,7 @@ def _send_shelter_opened_email(to_email, contact_name, location_county_pairs, sh
             "subject": f"FireScope: {len(shelters)} new open shelter{'s' if len(shelters) != 1 else ''} in {county_list}",
             "html": html,
             "text": text,
+            "headers": _anti_gmail_trim_headers(),
         })
         return resp.get("id"), None
     except Exception as e:
