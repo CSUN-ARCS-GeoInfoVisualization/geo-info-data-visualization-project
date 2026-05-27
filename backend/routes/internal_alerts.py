@@ -1629,3 +1629,405 @@ def run_evacuation_alerts():
         "errors": errors,
         "sent_message_ids": sent_ids,
     })
+
+
+# ───────────────────────── WILDFIRES IN YOUR COUNTY (Slice 1D) ─────────────────────────
+#
+# Cron-driven alerts when an active CAL FIRE incident is in a county that
+# contains one of the user's saved locations. Bundles every county-matching
+# fire into ONE email per user per tick (like the multi-zone evac). Fires
+# again whenever a fire's status / containment-bucket / acres-bucket changes
+# (containment crosses 10/20/.../100%, acres grows past the next 100-acre
+# bucket, or IsActive flips) — i.e. real "updates" that matter to the user,
+# not every tiny acreage tick.
+#
+# Source: CAL FIRE incidents proxy at /api/calfire/incidents?inactive=false,
+# already cached server-side via services.cache.serve_cached. We fetch
+# in-process (not via HTTP self-call) to avoid the gunicorn-worker deadlock
+# the same way the evac and high-risk channels do.
+
+FIRE_NEAREST_PERIMETERS_ON_MAP = 5   # cap polygon overlays drawn on the map
+
+
+def _norm_county(name: str) -> str:
+    """Normalize a county name: lower, strip 'County', collapse whitespace.
+    Lets 'Los Angeles', 'Los Angeles County', and 'LOS ANGELES' all match."""
+    s = (name or "").strip().lower()
+    if s.endswith(" county"):
+        s = s[:-7].strip()
+    return " ".join(s.split())
+
+
+def _fetch_active_fires() -> list:
+    """Return the cached list of active CAL FIRE incidents (in-process)."""
+    from services.cache import get_cached_data
+    try:
+        cached = get_cached_data("calfire_incidents:false")
+        if cached and isinstance(cached, list):
+            return cached
+    except Exception as e:
+        logger.warning("calfire cache read failed: %s", e)
+    # Fallback: live compute. Slower but keeps the cron functional even
+    # if the cache hasn't been warmed yet on a fresh deploy.
+    try:
+        from routes.predict import _compute_calfire
+        return _compute_calfire("false") or []
+    except Exception as e:
+        logger.warning("calfire live compute fallback failed: %s", e)
+        return []
+
+
+def _fire_bucket(pct, size):
+    """Per-fire dedup tuple: (containment_10pct_bucket, acres_100_bucket).
+    Buckets so we only re-alert on meaningful change, not every cron tick."""
+    try:
+        c = int(float(pct or 0) // 10) * 10
+    except (TypeError, ValueError):
+        c = 0
+    try:
+        a = int(float(size or 0) // 100) * 100
+    except (TypeError, ValueError):
+        a = 0
+    return c, a
+
+
+def _fire_per_alert_sig(fire: dict) -> str:
+    """Per-fire fingerprint: id + status bucket + containment bucket + acres bucket.
+    Two fires with the same fingerprint are 'the same alert state' — no resend."""
+    uid = str(fire.get("UniqueId") or fire.get("Name") or "")
+    active = bool(fire.get("IsActive", True))
+    c_bucket, a_bucket = _fire_bucket(fire.get("PercentContained"), fire.get("AcresBurned"))
+    raw = f"fire:{uid}:active={active}:c={c_bucket}:a={a_bucket}"
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()[:32]
+
+
+def _fire_bundle_sig(fires: list) -> str:
+    """Bundle fingerprint = SHA-256 of every fire's per-alert sig sorted.
+    If the same exact set of fires in the same state is bundled, dedup."""
+    joined = "|".join(sorted(_fire_per_alert_sig(f) for f in fires))
+    return hashlib.sha256(f"fire_bundle:{joined}".encode("utf-8")).hexdigest()[:32]
+
+
+def _fire_bundle_already_alerted(session, user_id, sig: str) -> bool:
+    return session.query(AlertActivity).filter(
+        AlertActivity.user_id == user_id,
+        AlertActivity.delivery_status == "sent",
+        AlertActivity.state_signature == sig,
+    ).first() is not None
+
+
+def _send_fire_alert_email(
+    to_email: str,
+    contact_name: str,
+    primary_location_name: str,
+    primary_lat: float,
+    primary_lon: float,
+    county_label: str,
+    fires: list,
+) -> tuple[str | None, str | None]:
+    """ONE consolidated email listing every active CAL FIRE incident in a
+    county that contains one of the user's saved locations. Map shows
+    the user's location pin + a fire-perimeter circle per incident.
+    """
+    try:
+        import resend
+    except ImportError:
+        return None, "resend SDK missing"
+    api_key = os.getenv("RESEND_API_KEY", "")
+    sender_email = os.getenv("SENDER_EMAIL", "alerts@firescope.dev")
+    sender_name = os.getenv("SENDER_NAME", "FireScope Alerts")
+    if not api_key:
+        return None, "RESEND_API_KEY not set"
+    resend.api_key = api_key
+
+    name = (contact_name or "").strip() or to_email.split("@", 1)[0]
+
+    # Map overlays: synthesize a small circle polygon per fire centered on
+    # the incident lat/lon (CAL FIRE doesn't expose footprint geometry in
+    # the public incident feed; perimeters live in /api/fire-perimeters
+    # which is keyed differently — punted as a follow-up). Use the same
+    # red ORDER status colors so the visual matches active-evac fires.
+    zone_overlays = []
+    for f in fires[:FIRE_NEAREST_PERIMETERS_ON_MAP]:
+        lat = f.get("Latitude"); lon = f.get("Longitude")
+        if lat is None or lon is None:
+            continue
+        # Radius from acreage: r = sqrt(acres * 4047 / pi) — converts acres
+        # to a circle radius in meters. Floor at 1km, cap at 20km so tiny
+        # fires are still visible and giant ones don't blow out the map.
+        acres = float(f.get("AcresBurned") or 0)
+        radius_m = max(1000.0, min(20000.0, (acres * 4047.0 / 3.14159) ** 0.5))
+        try:
+            from routes.predict import _circle_polygon
+            ring_lonlat = _circle_polygon(float(lat), float(lon), radius_m, n=32)
+            ring = [(p[1], p[0]) for p in ring_lonlat]  # lon,lat -> lat,lon for map helper
+            zone_overlays.append({"rings": [ring], "status": "ORDER"})  # red styling
+        except Exception:
+            continue
+    map_url = _static_map_url(
+        primary_lat, primary_lon,
+        zone_overlays=zone_overlays,
+        shelter_pins=None,  # no shelter overlay for fire alerts
+        zoom=8,
+    )
+
+    # Per-fire card
+    def _fire_card(f):
+        fname = f.get("Name") or "Unnamed fire"
+        county = f.get("County") or "—"
+        acres = f.get("AcresBurned")
+        pct = f.get("PercentContained")
+        updated = (f.get("Updated") or "")[:16].replace("T", " ")
+        url = f.get("Url") or "https://firescope.dev"
+        active = bool(f.get("IsActive", True))
+        banner = "#dc2626" if active and (pct is None or float(pct) < 100) else "#16a34a"
+        status_label = "ACTIVE" if active else "INACTIVE"
+        if pct is not None:
+            try:
+                if float(pct) >= 100:
+                    status_label = "100% CONTAINED"
+            except (TypeError, ValueError):
+                pass
+        acres_str = f"{int(acres):,} acres" if acres not in (None, 0) else "Size pending"
+        pct_str = f"{int(float(pct))}% contained" if pct is not None else "Containment pending"
+        return (
+            '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" '
+            f'style="margin:0 0 12px 0;border:1px solid #eeeeee;border-left:4px solid {banner};">'
+            '<tr><td style="padding:10px 14px;font-family:Arial,Helvetica,sans-serif;">'
+            f'<p style="margin:0;font-size:11px;font-weight:bold;color:{banner};letter-spacing:1px;text-transform:uppercase">{status_label}</p>'
+            f'<p style="margin:4px 0 0;font-size:15px;font-weight:bold;color:#222222">'
+            f'<a href="{html_escape(url)}" style="color:#222222;text-decoration:none">{html_escape(fname)}</a></p>'
+            f'<p style="margin:2px 0 0;font-size:13px;color:#555555">{html_escape(acres_str)} &middot; {html_escape(pct_str)}</p>'
+            f'<p style="margin:6px 0 0;font-size:12px;color:#888888">{html_escape(county)} County &middot; updated {html_escape(updated)} UTC</p>'
+            '</td></tr></table>'
+        )
+
+    # Sort: active first, then by acres descending so the biggest is on top
+    fires_sorted = sorted(
+        fires,
+        key=lambda f: (
+            0 if f.get("IsActive", True) else 1,
+            -(float(f.get("AcresBurned") or 0)),
+        ),
+    )
+    cards = "".join(_fire_card(f) for f in fires_sorted)
+
+    n = len(fires)
+    n_active = sum(1 for f in fires if f.get("IsActive", True))
+    summary = f"{n_active} active" + (f", {n - n_active} inactive" if n > n_active else "")
+
+    intro_line = (
+        f'<strong>{n} wildfires</strong> active in '
+        f'<strong>{html_escape(county_label)} County</strong>, which contains your saved location '
+        f'<strong>{html_escape(primary_location_name)}</strong> ({summary}).'
+    ) if n > 1 else (
+        f'A wildfire is active in <strong>{html_escape(county_label)} County</strong>, '
+        f'which contains your saved location <strong>{html_escape(primary_location_name)}</strong>.'
+    )
+
+    body_inner = (
+        f'<p style="margin:0 0 12px;font-size:14px;">Hi {html_escape(name)},</p>'
+        f'<p style="margin:0 0 14px;font-size:15px;line-height:1.45;">{intro_line}</p>'
+
+        '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" '
+        'style="margin:0 0 14px 0;border:1px solid #eeeeee;">'
+        '<tr><td align="center" style="padding:0;line-height:0;">'
+        '<a href="https://firescope.dev" style="text-decoration:none;display:block;">'
+        f'<img src="{map_url}" alt="Live map: your location + active fire incidents — click to open dashboard" '
+        f'width="600" height="300" style="display:block;width:100%;max-width:600px;height:auto;border:0;" />'
+        '</a></td></tr>'
+        '<tr><td style="padding:6px 12px;font-size:11px;color:#888888;background-color:#fafafa;font-family:Arial,Helvetica,sans-serif">'
+        'Blue circle = your saved location &middot; red shaded areas = active wildfire footprints (radius from acreage) &middot; '
+        '<a href="https://firescope.dev" style="color:#dc2626;text-decoration:underline">tap to open the live dashboard</a>'
+        '</td></tr></table>'
+
+        '<p style="margin:8px 0 8px;font-size:13px;font-weight:bold;color:#555555;font-family:Arial,Helvetica,sans-serif">Active fires in your county</p>'
+        f'{cards}'
+
+        '<p style="margin:18px 0 0;font-size:12px;color:#888888;line-height:1.4;font-family:Arial,Helvetica,sans-serif">'
+        "You'll get an update email when containment, status, or size meaningfully changes "
+        "(every 10 percent containment, new 100-acre bracket, or status flip)."
+        '</p>'
+    )
+
+    has_active = any(f.get("IsActive", True) for f in fires)
+    header_bg = "#dc2626" if has_active else "#16a34a"
+    header_label = f"{n} FIRE{'S' if n != 1 else ''} IN YOUR COUNTY"
+
+    html = _email_shell(
+        header_bg=header_bg,
+        header_label=header_label,
+        header_title=f"{html_escape(county_label)} County",
+        header_subtitle=summary,
+        body_inner_html=body_inner,
+        footer_text="Manage the Wildfires-in-your-county channel at firescope.dev &rarr; Alerts.",
+    )
+
+    text_lines = [f"{n} active wildfire(s) in {county_label} County containing your saved location {primary_location_name}.", ""]
+    for f in fires_sorted:
+        nm = f.get("Name", "Unnamed")
+        ac = f.get("AcresBurned"); pc = f.get("PercentContained")
+        text_lines.append(f"  - {nm}: {int(ac) if ac else '?'} acres, {int(float(pc)) if pc is not None else '?'}% contained")
+    text_lines.append("")
+    text_lines.append("Live map: https://firescope.dev")
+    text = "\n".join(text_lines)
+
+    primary_fire_name = fires_sorted[0].get("Name", "your area") if fires_sorted else "your area"
+    subject = (
+        f"FireScope: {n} active fire{'s' if n != 1 else ''} in {county_label} County ({primary_fire_name})"
+        if n > 1 else
+        f"FireScope: {primary_fire_name} active in {county_label} County"
+    )
+
+    try:
+        resp = resend.Emails.send({
+            "from": f"{sender_name} <{sender_email}>",
+            "to": [to_email],
+            "subject": subject,
+            "html": html,
+            "text": text,
+            "headers": _anti_gmail_trim_headers(),
+        })
+        return resp.get("id"), None
+    except Exception as e:
+        logger.warning("resend send (fire alert) failed: %s", e)
+        return None, str(e)
+
+
+@internal_alerts_bp.route("/internal/alerts/fires", methods=["POST"])
+def run_fire_alerts():
+    """Cron-driven wildfires-in-your-county alerts. Bundles every active
+    CAL FIRE incident in any county containing a user's saved location
+    into one email per user per tick, with change-driven dedup."""
+    ok, err = _require_internal_token()
+    if not ok:
+        return jsonify({"error": err}), 401
+
+    session = db.session
+    fires = _fetch_active_fires()
+    scanned = 0
+    sent = 0
+    skipped_dedup = 0
+    skipped_no_overlap = 0
+    errors = 0
+    sent_ids = []
+
+    if not fires:
+        return jsonify({
+            "scanned_users": 0,
+            "active_fires": 0,
+            "sent": 0,
+            "skipped_dedup": 0,
+            "skipped_no_overlap": 0,
+            "errors": 0,
+            "sent_message_ids": [],
+        })
+
+    # Index fires by normalized county for O(1) per-user lookup.
+    fires_by_county = {}
+    for f in fires:
+        county = _norm_county(f.get("County", ""))
+        if not county:
+            continue
+        fires_by_county.setdefault(county, []).append(f)
+
+    q = (
+        session.query(NotificationPreference, User)
+        .join(User, User.id == NotificationPreference.user_id)
+        .filter(
+            NotificationPreference.opted_in == True,
+            NotificationPreference.email_enabled == True,
+            NotificationPreference.fire_alerts_enabled == True,
+            NotificationPreference.unsubscribed_at.is_(None),
+        )
+    )
+    now = datetime.utcnow()
+
+    for pref, user in q.all():
+        scanned += 1
+        if pref.paused_until and pref.paused_until > now:
+            continue
+        locs = session.query(UserLocation).filter(UserLocation.user_id == user.id).all()
+        if not locs:
+            skipped_no_overlap += 1
+            continue
+
+        # Resolve each saved location's county once. Drop duplicates.
+        user_counties = {}  # county_norm -> (location, county_display_name)
+        for loc in locs:
+            try:
+                z = resolve_all(loc.lat, loc.lon).get("county")
+            except Exception:
+                continue
+            if not z:
+                continue
+            cnorm = _norm_county(z.get("name", ""))
+            if cnorm and cnorm not in user_counties:
+                user_counties[cnorm] = (loc, z["name"])
+
+        # Gather all fires matching the user's counties.
+        matched_fires = []
+        primary_loc = None
+        primary_county_label = None
+        for cnorm, (loc, display_name) in user_counties.items():
+            hits = fires_by_county.get(cnorm, [])
+            if not hits:
+                continue
+            if primary_loc is None:
+                primary_loc = loc
+                primary_county_label = display_name
+            matched_fires.extend(hits)
+
+        if not matched_fires:
+            skipped_no_overlap += 1
+            continue
+
+        # Dedup signature: bundle of per-fire fingerprints (id + status + buckets).
+        bundle_sig = _fire_bundle_sig(matched_fires)
+        if _fire_bundle_already_alerted(session, user.id, bundle_sig):
+            skipped_dedup += 1
+            continue
+
+        to_email = (pref.contact_email or user.email or "").strip()
+        if not to_email:
+            errors += 1
+            continue
+
+        msg_id, send_err = _send_fire_alert_email(
+            to_email=to_email,
+            contact_name=getattr(user, "name", None) or "",
+            primary_location_name=primary_loc.name,
+            primary_lat=primary_loc.lat,
+            primary_lon=primary_loc.lon,
+            county_label=primary_county_label,
+            fires=matched_fires,
+        )
+        status = "sent" if msg_id else "failed"
+        session.add(AlertActivity(
+            user_id=user.id,
+            risk_level=90 if any(f.get("IsActive", True) for f in matched_fires) else 60,
+            delivery_status=status,
+            reason=(f"fire_alert:{len(matched_fires)}fires"
+                    if msg_id else f"fire_alert_err:{(send_err or '')[:24]}"),
+            state_signature=bundle_sig,
+        ))
+        if msg_id:
+            sent += 1
+            sent_ids.append(msg_id)
+        else:
+            errors += 1
+
+    try:
+        session.commit()
+    except Exception:
+        session.rollback()
+
+    return jsonify({
+        "scanned_users": scanned,
+        "active_fires": len(fires),
+        "sent": sent,
+        "skipped_dedup": skipped_dedup,
+        "skipped_no_overlap": skipped_no_overlap,
+        "errors": errors,
+        "sent_message_ids": sent_ids,
+    })

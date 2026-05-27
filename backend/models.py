@@ -87,6 +87,10 @@ class NotificationPreference(db.Model):
     breaking_news_enabled = db.Column(db.Boolean, default=False, nullable=False)
     high_risk_enabled = db.Column(db.Boolean, default=True, nullable=False)
     evacuation_enabled = db.Column(db.Boolean, default=True, nullable=False)
+    # Wildfires-in-your-county channel (slice 1D). Opt-in (default False)
+    # because the firing volume is higher than evac/high-risk on bad fire
+    # days — users have to consciously turn this on.
+    fire_alerts_enabled = db.Column(db.Boolean, default=False, nullable=False)
     created_at = db.Column(db.DateTime, server_default=func.now())
     updated_at = db.Column(db.DateTime, server_default=func.now(), onupdate=func.now())
 

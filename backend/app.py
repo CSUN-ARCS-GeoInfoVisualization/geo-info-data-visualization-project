@@ -36,6 +36,14 @@ def _ensure_notification_pref_schema(app):
         'blackout_end': 'TIMESTAMP',
         'last_sent_at': 'TIMESTAMP',
         'unsubscribed_at': 'TIMESTAMP',
+        # Per-channel toggles (older deploys won't have these columns yet).
+        # All BOOLEAN NOT NULL with safe defaults — the existing channels
+        # default to their model-level default, fire_alerts_enabled is the
+        # new opt-in channel added for the wildfire-in-your-county pipeline.
+        'breaking_news_enabled': 'BOOLEAN NOT NULL DEFAULT FALSE',
+        'high_risk_enabled':     'BOOLEAN NOT NULL DEFAULT TRUE',
+        'evacuation_enabled':    'BOOLEAN NOT NULL DEFAULT TRUE',
+        'fire_alerts_enabled':   'BOOLEAN NOT NULL DEFAULT FALSE',
     }
     try:
         from sqlalchemy import inspect, text

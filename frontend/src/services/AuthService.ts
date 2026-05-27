@@ -11,10 +11,11 @@ export type NotificationPreference = {
   contact_email: string | null;
   last_sent_at: string | null;
   unsubscribed_at: string | null;
-  // Per-channel toggles (slice 1A: only high_risk_enabled is wired to a real pipeline)
+  // Per-channel toggles. All wired to real cron pipelines (slices 1A-1D).
   breaking_news_enabled: boolean;
   high_risk_enabled: boolean;
   evacuation_enabled: boolean;
+  fire_alerts_enabled: boolean;
 };
 
 const rawApiUrl = import.meta.env.VITE_API_URL || "http://localhost:5000";
