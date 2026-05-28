@@ -987,6 +987,59 @@ def _build_fire_containment_lookup(active_fires: list | None = None) -> dict:
     return out
 
 
+def _build_fire_status_lookup(active_fires: list | None = None) -> dict:
+    """{fire_match_key: {"pct": float, "acres": float, "county": str}}
+    snapshot of current CAL FIRE state. Used to overwrite article
+    summaries with live numbers — the summary text was frozen at
+    article-ingest time and quickly drifts from reality (e.g. CAL FIRE
+    feed says Bain is 95% contained / 1473 acres, but the ingested
+    article summary still reads '25% contained / 1374.7 acres' because
+    it was scraped days earlier when those were the live values)."""
+    out = {}
+    if active_fires is None:
+        active_fires = _fetch_active_fires() or []
+    for f in active_fires:
+        key = _fire_match_key(f.get("Name", ""))
+        if not key:
+            continue
+        try:
+            pct = float(f.get("PercentContained")) if f.get("PercentContained") is not None else None
+        except (TypeError, ValueError):
+            pct = None
+        try:
+            acres = float(f.get("AcresBurned")) if f.get("AcresBurned") is not None else None
+        except (TypeError, ValueError):
+            acres = None
+        out[key] = {
+            "pct":    pct,
+            "acres":  acres,
+            "county": (f.get("County") or "").strip(),
+        }
+    return out
+
+
+def _live_summary_for(title: str, status_lookup: dict) -> str | None:
+    """If `title` mentions a fire that's in `status_lookup`, return a
+    freshly-built one-line summary using the live CAL FIRE numbers
+    (overrides the stale ingested summary). Returns None when no match
+    so callers can fall back to the article's original summary."""
+    if not title or not status_lookup:
+        return None
+    key = _extract_fire_key_from_title(title)
+    if key is None or key not in status_lookup:
+        return None
+    s = status_lookup[key]
+    parts = []
+    if s.get("county"):
+        parts.append(f"{s['county']} County")
+    if s.get("acres") is not None:
+        parts.append(f"{int(s['acres']):,} acres")
+    if s.get("pct") is not None:
+        pct = s["pct"]
+        parts.append("Fully contained" if pct >= 100 else f"{int(round(pct))}% contained")
+    return " · ".join(parts) if parts else None
+
+
 def _enrich_title_with_containment(title: str, containment: dict) -> str:
     """If the title mentions a fire that's in the containment lookup,
     append a status suffix:
@@ -1135,7 +1188,11 @@ def run_breaking_news_alerts():
     # active CAL FIRE incidents cache. Used below to annotate any news
     # title that mentions a fire by name with that fire's CURRENT
     # containment status ('— 95% contained' / '— Fully contained').
-    containment_lookup = _build_fire_containment_lookup()
+    # Full status lookup also lets us overwrite the stale ingested
+    # summary text with live county/acres/pct values.
+    active_fires_cached = _fetch_active_fires() or []
+    containment_lookup = _build_fire_containment_lookup(active_fires_cached)
+    status_lookup = _build_fire_status_lookup(active_fires_cached)
 
     for pref, user in q.all():
         scanned += 1
@@ -1195,16 +1252,19 @@ def run_breaking_news_alerts():
         articles = filtered
 
         # Build the payload — rewrite NWS titles for inbox-readability,
-        # then enrich any fire-name mention with current containment.
-        # CAL FIRE / GNews / web_discovery titles pass through the NWS
-        # rewrite unchanged and just get the containment annotation.
+        # enrich any fire-name mention with current containment in the
+        # title, AND overwrite the stale ingested summary with live
+        # CAL FIRE numbers when we can match the fire.
         def _display_title(a):
             t = _clean_nws_title(a.title or "", a.summary or "") if a.source_bucket == "nws" else (a.title or "")
             return _enrich_title_with_containment(t, containment_lookup)
+        def _display_summary(a):
+            live = _live_summary_for(a.title or "", status_lookup)
+            return live if live else (a.summary or "")
         payload = [{
             "id": a.article_id,
             "title": _display_title(a),
-            "summary": a.summary,
+            "summary": _display_summary(a),
             "url": a.url,
             "source_label": a.source_label,
             "published_at": a.published_at.isoformat() if a.published_at else "",

@@ -44,6 +44,8 @@ from routes.internal_alerts import (  # noqa: E402
     _dedupe_news_articles,
     _build_fire_containment_lookup,
     _enrich_title_with_containment,
+    _build_fire_status_lookup,
+    _live_summary_for,
 )
 
 
@@ -491,3 +493,43 @@ def test_enrich_title_with_containment_appends_pct_or_fully_contained():
         _enrich_title_with_containment("Verona Fire (Riverside County)", lookup2)
         == "Verona Fire (Riverside County) — Fully contained"
     )
+
+
+def test_build_fire_status_lookup_normalizes_and_handles_nulls():
+    """{fire_match_key: {pct, acres, county}} snapshot for live summary
+    overrides — handles None values from CAL FIRE without crashing."""
+    fires = [
+        {"Name": "Bain Fire", "PercentContained": 95.0, "AcresBurned": 1473.0, "County": "Riverside"},
+        {"Name": "Verona Fire", "PercentContained": None, "AcresBurned": 638.0, "County": "Riverside"},
+        {"Name": "Santa Rosa Island Fire", "PercentContained": 97.0, "AcresBurned": 18379.0, "County": "Santa Barbara"},
+    ]
+    lookup = _build_fire_status_lookup(fires)
+    assert lookup["bain"] == {"pct": 95.0, "acres": 1473.0, "county": "Riverside"}
+    assert lookup["verona"]["pct"] is None
+    assert lookup["verona"]["acres"] == 638.0
+    assert lookup["santarosaisland"]["county"] == "Santa Barbara"
+
+
+def test_live_summary_for_overwrites_stale_summary_with_live_numbers():
+    """The fix for the screenshot bug: title says '95% contained' but the
+    ingested article summary said '25% contained / 1374.7 acres'. Live
+    summary helper produces the truthful one-line replacement."""
+    status = {"bain": {"pct": 95.0, "acres": 1473.0, "county": "Riverside"}}
+    out = _live_summary_for("Bain Fire (Riverside County) — 95% contained", status)
+    assert out == "Riverside County · 1,473 acres · 95% contained"
+
+
+def test_live_summary_for_uses_friendly_label_when_fully_contained():
+    status = {"verona": {"pct": 100.0, "acres": 638.0, "county": "Riverside"}}
+    out = _live_summary_for("Verona Fire (Riverside County)", status)
+    assert out == "Riverside County · 638 acres · Fully contained"
+
+
+def test_live_summary_for_returns_none_on_unmatched_titles():
+    """Articles whose title doesn't mention a fire in the lookup get
+    None so the caller falls back to the original summary."""
+    status = {"bain": {"pct": 95.0, "acres": 1473.0, "county": "Riverside"}}
+    assert _live_summary_for("Red Flag Warning — Lake County", status) is None
+    assert _live_summary_for("Apple Fire spreads east", status) is None
+    assert _live_summary_for("", status) is None
+    assert _live_summary_for("Bain Fire", {}) is None
