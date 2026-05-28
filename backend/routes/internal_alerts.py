@@ -65,6 +65,10 @@ internal_alerts_bp = Blueprint("internal_alerts", __name__)
 
 HIGH_RISK_THRESHOLD = 0.40  # 5-tier NFDRS: 0.40 = "High" tier. Fire on any zone reaching High or above per Ido's spec.
 HIGH_RISK_MAX_LOCATIONS_PER_EMAIL = 20  # cap so a user with 100 saved spots doesn't get a 100-card email; sorted by risk DESC, top 20 win
+# Re-alert cadence: while a saved location stays at/above HIGH_RISK_THRESHOLD,
+# re-send the (otherwise deduped) high-risk email every N hours so an ongoing
+# situation keeps reminding the user instead of going silent after one alert.
+HIGH_RISK_REALERT_HOURS = float(os.getenv("HIGH_RISK_REALERT_HOURS", "6"))
 
 
 def _require_internal_token():
@@ -524,9 +528,14 @@ def _state_signature(tier_bucket: int, hits: list) -> str:
 
 
 def _last_alert_signature(session, user_id):
-    """Most recent SENT alert for this user, or None if never alerted."""
+    """Most recent SENT alert for this user as (signature, created_at).
+
+    Returns (None, None) if the user has never been alerted. The timestamp
+    lets the caller re-fire an unchanged situation after a re-alert window
+    instead of suppressing it forever.
+    """
     row = (
-        session.query(AlertActivity.state_signature)
+        session.query(AlertActivity.state_signature, AlertActivity.created_at)
         .filter(
             AlertActivity.user_id == user_id,
             AlertActivity.delivery_status == "sent",
@@ -534,7 +543,7 @@ def _last_alert_signature(session, user_id):
         .order_by(AlertActivity.created_at.desc())
         .first()
     )
-    return row[0] if row else None
+    return (row[0], row[1]) if row else (None, None)
 
 
 _TIER_BG = {
@@ -776,15 +785,20 @@ def run_high_risk_alerts():
             skipped_below += 1
             continue
 
-        # Change-driven dedup: signature is (tier max, sorted at-risk location ids).
-        # Same signature as last sent => situation unchanged => no email.
+        # Change-driven dedup with a re-alert window: signature is
+        # (tier max, sorted at-risk location ids). A NEW signature always
+        # fires. The SAME signature is suppressed only while the last send is
+        # within HIGH_RISK_REALERT_HOURS — after that the ongoing situation
+        # re-fires as a reminder instead of going silent forever.
         max_risk = max(h["risk"] for h in hits)
         bucket = int(max_risk * 100 // 10) * 10  # 70, 80, 90, 100
         sig = _state_signature(bucket, hits)
-        last_sig = _last_alert_signature(session, user.id)
-        if last_sig == sig:
-            skipped_dedup += 1
-            continue
+        last_sig, last_at = _last_alert_signature(session, user.id)
+        if last_sig == sig and last_at is not None:
+            age_hours = (datetime.utcnow() - last_at).total_seconds() / 3600.0
+            if age_hours < HIGH_RISK_REALERT_HOURS:
+                skipped_dedup += 1
+                continue
 
         to_email = (pref.contact_email or user.email or "").strip()
         if not to_email:
