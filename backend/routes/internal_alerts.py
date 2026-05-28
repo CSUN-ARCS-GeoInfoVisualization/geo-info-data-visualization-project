@@ -103,19 +103,20 @@ def _anti_gmail_trim_headers() -> dict:
 
 
 def _anti_gmail_trim_marker(ref: str | None = None) -> str:
-    """A single hidden HTML row carrying a unique token. Invisible to
-    the reader (zero font-size, zero opacity, display:none-equivalent
-    CSS that still passes Gmail's sanitizer) but counts in Gmail's
-    content-similarity hash, breaking the 'trimmed content' collapse."""
+    """A unique per-send token rendered as an HTML COMMENT. Guaranteed
+    never to display visually in any email client (comments are not
+    rendered by definition) yet still counts in Gmail's content-
+    similarity hash, so consecutive FireScope alerts produce different
+    fingerprints and Gmail stops collapsing them.
+
+    The previous implementation used a <span> with display:none + CSS
+    visibility hacks; Gmail dark mode + some mobile renderers ignore
+    those properties and the marker leaked through as visible text in
+    the body. Recipient called this out on 2026-05-28.
+    """
     import uuid
     ref = ref or uuid.uuid4().hex
-    return (
-        '<span style="display:none;font-size:0;line-height:0;'
-        'max-height:0;max-width:0;opacity:0;overflow:hidden;'
-        'color:transparent;mso-hide:all" aria-hidden="true">'
-        f'FireScope-send-uid:{ref}'
-        '</span>'
-    )
+    return f"<!-- FireScope-send-uid:{ref} -->"
 
 
 def _encode_polyline(coords: list) -> str:
