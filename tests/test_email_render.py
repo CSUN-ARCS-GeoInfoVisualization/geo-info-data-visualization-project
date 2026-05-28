@@ -38,6 +38,8 @@ from routes.internal_alerts import (  # noqa: E402
     _fire_per_alert_sig,
     _fire_bundle_sig,
     _fire_bucket,
+    _extract_ca_counties,
+    _clean_nws_title,
 )
 
 
@@ -328,3 +330,63 @@ def test_fire_alert_email_shell_compliance():
     assert "3 FIRES IN YOUR COUNTY" in html
     assert "Los Angeles County" in html
     assert "3 active" in html
+
+
+# ───────────────────────── Breaking-news NWS county filter ─────────────────────────
+
+NWS_SAMPLE_TITLE = "Red Flag Warning issued May 25 at 1:44PM PDT until May 25 at 11:00PM PDT by NWS Medford OR"
+NWS_SAMPLE_SUMMARY = (
+    "...Critical southwest to west winds and low relative humidity this "
+    "afternoon for eastern Lake County and southeastern Modoc County... * "
+    "IMPACTS...Any fires that develop will likely spread rapidly. "
+    "* AFFECTED AREA...Fire weather zone 285, including Canby, Alturas, and Adin."
+)
+
+
+def test_extract_ca_counties_finds_known_counties_in_nws_text():
+    """Real NWS Red Flag Warning text mentions Lake + Modoc — both real
+    CA counties. We must return both, normalized lowercase, county-suffix
+    stripped (per _norm_county_name)."""
+    counties = _extract_ca_counties(NWS_SAMPLE_SUMMARY)
+    assert "lake" in counties, f"missing 'lake' from {counties}"
+    assert "modoc" in counties, f"missing 'modoc' from {counties}"
+
+
+def test_extract_ca_counties_rejects_non_county_substrings():
+    """'Lake Tahoe' must NOT match — it's a lake, not a county; the
+    required ' County' suffix protects against this."""
+    counties = _extract_ca_counties("Wildfire near Lake Tahoe threatens lakefront homes")
+    assert counties == set(), f"false positive: {counties}"
+
+
+def test_extract_ca_counties_handles_multi_word_county_names():
+    """Verify the regex catches 2- and 3-word counties: Los Angeles,
+    San Luis Obispo, San Bernardino, Contra Costa, Del Norte, El Dorado."""
+    text = ("Affected: Los Angeles County, San Luis Obispo County, "
+            "Contra Costa County, El Dorado County, San Bernardino County, Del Norte County.")
+    counties = _extract_ca_counties(text)
+    for c in ("los angeles", "san luis obispo", "contra costa",
+              "el dorado", "san bernardino", "del norte"):
+        assert c in counties, f"missing {c!r} from {counties}"
+
+
+def test_clean_nws_title_strips_office_and_appends_counties():
+    """The default NWS title is unreadable in an inbox snippet. We rewrite
+    it to '<type> — <Counties> (until <expiry>)' which is scannable."""
+    cleaned = _clean_nws_title(NWS_SAMPLE_TITLE, NWS_SAMPLE_SUMMARY)
+    assert "Red Flag Warning" in cleaned
+    assert "by NWS" not in cleaned, f"NWS office leaked: {cleaned}"
+    assert "Lake County" in cleaned
+    assert "Modoc County" in cleaned
+    assert "until" in cleaned
+    # Stable ordering (sorted) — Lake before Modoc alphabetically.
+    assert cleaned.index("Lake County") < cleaned.index("Modoc County")
+
+
+def test_clean_nws_title_falls_back_on_unmatched_input():
+    """If the title doesn't look like an NWS Atom title, we must not
+    crash or produce empty output — return the original."""
+    weird = "Some non-standard news title"
+    assert _clean_nws_title(weird, "") == weird
+    assert _clean_nws_title("", "") == ""
+    assert _clean_nws_title(None, "") == ""  # NoneType safety

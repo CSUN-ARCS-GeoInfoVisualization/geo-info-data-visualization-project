@@ -835,6 +835,71 @@ def _last_news_send_at(session, user_id):
     return row[0] if row else None
 
 
+def _extract_ca_counties(text: str) -> set:
+    """Return the normalized set of CA county names mentioned in `text`.
+
+    Matches against the known list of 58 CA counties (loaded via
+    _load_ca_counties) so vague substring matches like 'Lake Tahoe'
+    don't get mistaken for 'Lake County'. Requires the literal ' County'
+    suffix in the source text to avoid grabbing place names.
+    """
+    if not text:
+        return set()
+    import re as _re
+    known = {c["name_norm"] for c in _load_ca_counties()}
+    # Match '<TitleCase Words> County' boundaries.
+    out = set()
+    for m in _re.findall(r"([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)*)\s+County\b", text):
+        norm = _norm_county_name(m)
+        if norm in known:
+            out.add(norm)
+    return out
+
+
+def _clean_nws_title(title: str, summary: str = "") -> str:
+    """Rewrite an NWS Atom title into something an email recipient can
+    scan in their inbox.
+
+    Input examples:
+      'Red Flag Warning issued May 25 at 1:44PM PDT until May 25 at 11:00PM PDT by NWS Medford OR'
+      'Fire Weather Watch issued May 23 at 11:59PM PDT until May 25 at 11:00PM PDT by NWS Reno NV'
+    Output examples:
+      'Red Flag Warning — Lake County, Modoc County (until May 25 11:00PM PDT)'
+      'Fire Weather Watch — Lassen County (until May 25 11:00PM PDT)'
+
+    Falls back to the original title if the regex doesn't match — better
+    to show the noisy NWS title than crash the email body.
+    """
+    if not title:
+        return title or ""
+    import re as _re
+    # 1. Pull the alert-type prefix (everything before ' issued').
+    m = _re.match(r"^\s*(.+?)\s+issued\b", title, _re.IGNORECASE)
+    type_part = m.group(1).strip() if m else title.strip()
+
+    # 2. Pull the 'until ...' expiration window if present.
+    until_match = _re.search(r"\buntil\s+(.+?)\s+by\s+NWS\b", title, _re.IGNORECASE)
+    until_text = until_match.group(1).strip() if until_match else ""
+
+    # 3. Extract CA counties from title+summary (title rarely has them,
+    #    summary almost always does — combine to catch both).
+    counties = _extract_ca_counties(f"{title}\n{summary}")
+    # Title-case for display, sorted for stability across resends.
+    county_display = ", ".join(
+        c.title() + " County" for c in sorted(counties)
+    )
+
+    # 4. Assemble.
+    parts = [type_part]
+    if county_display:
+        parts.append(f" — {county_display}")
+    if until_text:
+        parts.append(f" (until {until_text})")
+    cleaned = "".join(parts).strip()
+    # Guard against a degenerate rewrite producing an empty string.
+    return cleaned or title
+
+
 def _send_breaking_news_email(to_email: str, contact_name: str, articles: list, user_id: int | None = None) -> tuple[str | None, str | None]:
     try:
         import resend
@@ -933,6 +998,24 @@ def run_breaking_news_alerts():
     errors = 0
     sent_ids = []
 
+    # Pre-compute per-article CA county set once across all users so we
+    # don't re-extract per (user × article). Over-fetch limit so the
+    # per-user county filter still has enough rows after exclusion.
+    candidates_global = (
+        session.query(NewsArticle)
+        .filter(
+            NewsArticle.is_breaking == True,
+            NewsArticle.published_at > floor,
+        )
+        .order_by(NewsArticle.published_at.desc())
+        .limit(NEWS_MAX_PER_EMAIL * 4)
+        .all()
+    )
+    article_counties = {
+        a.id: _extract_ca_counties(f"{a.title or ''}\n{a.summary or ''}")
+        for a in candidates_global
+    }
+
     for pref, user in q.all():
         scanned += 1
         if pref.paused_until and pref.paused_until > now:
@@ -940,28 +1023,57 @@ def run_breaking_news_alerts():
 
         # Articles published since this user's last news send (or 24h floor).
         cutoff = _last_news_send_at(session, user.id) or floor
-        # Drop subsecond/tz mismatch by clamping to floor.
         if cutoff < floor:
             cutoff = floor
 
-        articles_q = (
-            session.query(NewsArticle)
-            .filter(
-                NewsArticle.is_breaking == True,
-                NewsArticle.published_at > cutoff,
-            )
-            .order_by(NewsArticle.published_at.desc())
-            .limit(NEWS_MAX_PER_EMAIL)
-        )
-        articles = articles_q.all()
-        if not articles:
+        # Resolve this user's saved-location counties ONCE for the
+        # per-article NWS filter below. Users with NO saved locations
+        # bypass the county filter and get all CA-wide NWS items.
+        locs = session.query(UserLocation).filter(UserLocation.user_id == user.id).all()
+        user_counties = set()
+        for loc in locs:
+            try:
+                z = resolve_all(loc.lat, loc.lon).get("county")
+            except Exception:
+                z = None
+            if z:
+                user_counties.add(_norm_county_name(z.get("name", "")))
+        user_counties.discard("")
+
+        # Per-user article filter:
+        #   - drop anything older than this user's cutoff
+        #   - drop NWS articles whose extracted counties don't overlap
+        #     user_counties (only when the user actually has saved
+        #     locations AND the article mentioned specific counties)
+        filtered = []
+        for a in candidates_global:
+            if a.published_at and a.published_at <= cutoff:
+                continue
+            if a.source_bucket == "nws" and user_counties:
+                a_counties = article_counties.get(a.id, set())
+                # If the article mentions specific counties, require
+                # overlap. If it mentions NONE (vague statewide warning),
+                # we keep it as CA-wide context.
+                if a_counties and not (a_counties & user_counties):
+                    continue
+            filtered.append(a)
+            if len(filtered) >= NEWS_MAX_PER_EMAIL:
+                break
+
+        if not filtered:
             skipped_no_new += 1
             continue
+        articles = filtered
 
-        # Build the payload + a deterministic signature for the batch.
+        # Build the payload — rewrite NWS titles for inbox-readability.
+        # CAL FIRE / GNews / web_discovery titles pass through unchanged.
+        def _display_title(a):
+            if a.source_bucket == "nws":
+                return _clean_nws_title(a.title or "", a.summary or "")
+            return a.title or ""
         payload = [{
             "id": a.article_id,
-            "title": a.title,
+            "title": _display_title(a),
             "summary": a.summary,
             "url": a.url,
             "source_label": a.source_label,
