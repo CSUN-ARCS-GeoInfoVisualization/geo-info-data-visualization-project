@@ -912,6 +912,106 @@ def _clean_nws_title(title: str, summary: str = "") -> str:
     return cleaned or title
 
 
+def _extract_fire_key_from_title(title: str) -> str | None:
+    """Return a normalized fire-match key for any fire name mentioned in
+    `title` (matched by '<Title Cased Words> Fire' boundary), or None
+    if no fire mention. Uses _fire_match_key so 'Bain Fire' and
+    'Bain' collapse to the same key — same matching used for NIFC
+    perimeter lookups in fire alerts."""
+    if not title:
+        return None
+    import re as _re
+    # Longest match wins so 'Santa Rosa Island Fire' beats 'Island Fire'.
+    matches = _re.findall(r"([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)*)\s+Fire\b", title)
+    if not matches:
+        return None
+    longest = max(matches, key=len)
+    return _fire_match_key(longest + " Fire") or None
+
+
+def _dedupe_news_articles(articles: list) -> list:
+    """Two-pass dedupe on a list of NewsArticle rows (already newest-
+    first). Keeps the FIRST occurrence (= newest) of each dupe group.
+
+    Pass 1 — exact (source_bucket, normalized_title) duplicates: same
+    source writing the same headline twice (URL params differ but the
+    article is the same content). Three live cases on 2026-05-28:
+      - 3x 'More than 17,000 under evacuation orders...' from web_discovery
+      - 2x 'Air Quality Alert issued May 19 at 9:37PM PDT...' from nws
+      - 2x 'Air Quality Alert issued May 19 at 9:42PM PDT...' from nws
+
+    Pass 2 — same-fire-different-source: extract '<X> Fire' from each
+    title; if multiple articles point to the same fire from different
+    sources (e.g. 'Bain Fire (Riverside County)' from cal_fire AND
+    'California secures federal assistance to support response to
+    Bain Fire in Riverside County' from emergency), keep only the
+    newest. Articles with no extractable fire name pass through.
+    """
+    if not articles:
+        return []
+    out = []
+    seen_exact = set()
+    seen_fire_keys = set()
+    for a in articles:
+        title_norm = " ".join((a.title or "").lower().split())
+        exact_key = (a.source_bucket or "", title_norm)
+        if exact_key in seen_exact:
+            continue
+        fire_key = _extract_fire_key_from_title(a.title or "")
+        if fire_key and fire_key in seen_fire_keys:
+            continue
+        seen_exact.add(exact_key)
+        if fire_key:
+            seen_fire_keys.add(fire_key)
+        out.append(a)
+    return out
+
+
+def _build_fire_containment_lookup(active_fires: list | None = None) -> dict:
+    """{fire_match_key: percent_contained} from active CAL FIRE incidents,
+    so a news article that mentions a fire by name can be annotated
+    with that fire's CURRENT containment status (instead of leaving
+    the recipient to wonder if it's still burning)."""
+    out = {}
+    if active_fires is None:
+        active_fires = _fetch_active_fires() or []
+    for f in active_fires:
+        key = _fire_match_key(f.get("Name", ""))
+        pct = f.get("PercentContained")
+        if not key or pct is None:
+            continue
+        try:
+            out[key] = float(pct)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _enrich_title_with_containment(title: str, containment: dict) -> str:
+    """If the title mentions a fire that's in the containment lookup,
+    append a status suffix:
+      - 100% contained -> '— Fully contained'
+      - else            -> '— XX% contained'
+    Otherwise return the title unchanged."""
+    if not title or not containment:
+        return title or ""
+    key = _extract_fire_key_from_title(title)
+    if key is None or key not in containment:
+        return title
+    pct = containment[key]
+    if pct >= 100:
+        suffix = " — Fully contained"
+    else:
+        suffix = f" — {int(round(pct))}% contained"
+    # Skip the suffix if the title already mentions containment in any
+    # form ('is now contained', '95% contained', 'fully contained', etc.)
+    # so we don't render redundant 'Santa Rosa Island Fire is now
+    # contained — Fully contained'.
+    if "contained" in title.lower():
+        return title
+    return title + suffix
+
+
 def _send_breaking_news_email(to_email: str, contact_name: str, articles: list, user_id: int | None = None) -> tuple[str | None, str | None]:
     try:
         import resend
@@ -1012,21 +1112,30 @@ def run_breaking_news_alerts():
 
     # Pre-compute per-article CA county set once across all users so we
     # don't re-extract per (user × article). Over-fetch limit so the
-    # per-user county filter still has enough rows after exclusion.
-    candidates_global = (
+    # per-user county filter + dedupe still has enough rows after
+    # exclusion (bumped to *8 because dedupe can drop ~half on busy days).
+    raw_candidates = (
         session.query(NewsArticle)
         .filter(
             NewsArticle.is_breaking == True,
             NewsArticle.published_at > floor,
         )
         .order_by(NewsArticle.published_at.desc())
-        .limit(NEWS_MAX_PER_EMAIL * 4)
+        .limit(NEWS_MAX_PER_EMAIL * 8)
         .all()
     )
+    # Two-pass dedupe across sources: exact (source, title) duplicates +
+    # cross-source same-fire duplicates. Newest of each group wins.
+    candidates_global = _dedupe_news_articles(raw_candidates)
     article_counties = {
         a.id: _extract_ca_counties(f"{a.title or ''}\n{a.summary or ''}")
         for a in candidates_global
     }
+    # Containment lookup: {fire_match_key: pct} built once from the
+    # active CAL FIRE incidents cache. Used below to annotate any news
+    # title that mentions a fire by name with that fire's CURRENT
+    # containment status ('— 95% contained' / '— Fully contained').
+    containment_lookup = _build_fire_containment_lookup()
 
     for pref, user in q.all():
         scanned += 1
@@ -1085,12 +1194,13 @@ def run_breaking_news_alerts():
             continue
         articles = filtered
 
-        # Build the payload — rewrite NWS titles for inbox-readability.
-        # CAL FIRE / GNews / web_discovery titles pass through unchanged.
+        # Build the payload — rewrite NWS titles for inbox-readability,
+        # then enrich any fire-name mention with current containment.
+        # CAL FIRE / GNews / web_discovery titles pass through the NWS
+        # rewrite unchanged and just get the containment annotation.
         def _display_title(a):
-            if a.source_bucket == "nws":
-                return _clean_nws_title(a.title or "", a.summary or "")
-            return a.title or ""
+            t = _clean_nws_title(a.title or "", a.summary or "") if a.source_bucket == "nws" else (a.title or "")
+            return _enrich_title_with_containment(t, containment_lookup)
         payload = [{
             "id": a.article_id,
             "title": _display_title(a),
@@ -2304,6 +2414,18 @@ def _send_fire_alert_email(
         county = f.get("County") or "—"
         acres = f.get("AcresBurned")
         pct = f.get("PercentContained")
+        # Fallback: if CAL FIRE doesn't have containment but the matched
+        # NIFC perimeter does, use that. Future-proofs for fires that
+        # CAL FIRE drops from its active list while NIFC still tracks.
+        if pct is None and perim_idx:
+            perim = _matched_perimeter_for(f, perim_idx)
+            if perim:
+                np = (perim.get("properties") or {}).get("attr_PercentContained")
+                if np is not None:
+                    try:
+                        pct = float(np)
+                    except (TypeError, ValueError):
+                        pct = None
         updated = (f.get("Updated") or "")[:16].replace("T", " ")
         url = f.get("Url") or "https://firescope.dev"
         active = bool(f.get("IsActive", True))

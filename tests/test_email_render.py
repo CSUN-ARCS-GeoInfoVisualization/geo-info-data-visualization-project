@@ -40,6 +40,10 @@ from routes.internal_alerts import (  # noqa: E402
     _fire_bucket,
     _extract_ca_counties,
     _clean_nws_title,
+    _extract_fire_key_from_title,
+    _dedupe_news_articles,
+    _build_fire_containment_lookup,
+    _enrich_title_with_containment,
 )
 
 
@@ -390,3 +394,100 @@ def test_clean_nws_title_falls_back_on_unmatched_input():
     assert _clean_nws_title(weird, "") == weird
     assert _clean_nws_title("", "") == ""
     assert _clean_nws_title(None, "") == ""  # NoneType safety
+
+
+# ───────────────────────── Breaking-news dedup + containment ─────────────────────────
+
+
+class _StubArt:
+    """Minimal NewsArticle stand-in for dedup-helper tests."""
+    def __init__(self, title, source_bucket, published_at=None, aid="x"):
+        self.title = title
+        self.source_bucket = source_bucket
+        self.published_at = published_at
+        self.article_id = aid
+
+
+def test_extract_fire_key_picks_longest_match():
+    """'Santa Rosa Island Fire' must collapse to 'santarosaisland'
+    (same key NIFC perimeter lookup uses), not 'island'."""
+    assert _extract_fire_key_from_title("Santa Rosa Island Fire") == "santarosaisland"
+    assert _extract_fire_key_from_title("Bain Fire (Riverside County)") == "bain"
+    assert _extract_fire_key_from_title(
+        "California secures federal assistance to support response to Bain Fire in Riverside County"
+    ) == "bain"
+    assert _extract_fire_key_from_title("No fire mentioned here") is None
+    assert _extract_fire_key_from_title("") is None
+    assert _extract_fire_key_from_title(None) is None
+
+
+def test_dedupe_news_articles_drops_exact_source_title_dupes():
+    """Two web_discovery rows with identical title -> keep newest only."""
+    arts = [
+        _StubArt("More than 17,000 under evacuation orders", "web_discovery", aid="a"),
+        _StubArt("More than 17,000 under evacuation orders", "web_discovery", aid="b"),
+        _StubArt("Fast-growing brush fire threatens homes", "web_discovery", aid="c"),
+    ]
+    out = _dedupe_news_articles(arts)
+    ids = [a.article_id for a in out]
+    assert ids == ["a", "c"], f"unexpected dedup result: {ids}"
+
+
+def test_dedupe_news_articles_drops_cross_source_same_fire():
+    """cal_fire + emergency both mentioning 'Bain Fire' -> keep newest only."""
+    arts = [
+        _StubArt("Bain Fire (Riverside County)", "cal_fire", aid="cf"),
+        _StubArt(
+            "California secures federal assistance to support response to Bain Fire in Riverside County",
+            "emergency", aid="em",
+        ),
+        _StubArt("Verona Fire (Riverside County)", "cal_fire", aid="vf"),
+    ]
+    out = _dedupe_news_articles(arts)
+    kept = [a.article_id for a in out]
+    # Bain Fire collapses to one entry (the first, which is newest in
+    # this fixture); Verona Fire passes through.
+    assert "cf" in kept
+    assert "em" not in kept
+    assert "vf" in kept
+
+
+def test_build_fire_containment_lookup_normalizes_keys():
+    """{fire_match_key: pct} from a CAL FIRE-shaped list of dicts."""
+    fires = [
+        {"Name": "Bain Fire", "PercentContained": 95},
+        {"Name": "Santa Rosa Island Fire", "PercentContained": 97.0},
+        {"Name": "Verona Fire", "PercentContained": None},   # ignored
+        {"Name": "", "PercentContained": 50},                # ignored
+    ]
+    lookup = _build_fire_containment_lookup(fires)
+    assert lookup == {"bain": 95.0, "santarosaisland": 97.0}
+
+
+def test_enrich_title_with_containment_appends_pct_or_fully_contained():
+    """Titles mentioning a known fire get the current containment status
+    appended; titles without a fire pass through unchanged; already-
+    annotated titles don't get a second suffix."""
+    lookup = {"bain": 95.0, "santarosaisland": 100.0}
+    assert (
+        _enrich_title_with_containment("Bain Fire (Riverside County)", lookup)
+        == "Bain Fire (Riverside County) — 95% contained"
+    )
+    assert (
+        _enrich_title_with_containment("Santa Rosa Island Fire is now contained", lookup)
+        == "Santa Rosa Island Fire is now contained"  # already says 'contained' → no double-suffix
+    )
+    assert (
+        _enrich_title_with_containment("Apple Fire spreads east", lookup)
+        == "Apple Fire spreads east"  # not in lookup
+    )
+    assert (
+        _enrich_title_with_containment("Red Flag Warning — Lake County", lookup)
+        == "Red Flag Warning — Lake County"  # no fire name
+    )
+    # Fully contained -> different suffix
+    lookup2 = {"verona": 100.0}
+    assert (
+        _enrich_title_with_containment("Verona Fire (Riverside County)", lookup2)
+        == "Verona Fire (Riverside County) — Fully contained"
+    )
