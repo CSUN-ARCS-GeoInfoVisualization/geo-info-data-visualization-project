@@ -949,29 +949,11 @@ def run_breaking_news_alerts():
             .filter(
                 NewsArticle.is_breaking == True,
                 NewsArticle.published_at > cutoff,
-                # Channel name is "Breaking FIRE News" — exclude NWS
-                # weather predictions (Red Flag Warnings, Fire Weather
-                # Watches, etc.) which are not actual fire events.
-                # Recipient flagged these as noise 2026-05-28. CAL FIRE
-                # incidents + actual fire news articles still come
-                # through via other source_buckets (cal_fire, gnews, etc.).
-                NewsArticle.source_bucket != 'nws',
             )
             .order_by(NewsArticle.published_at.desc())
-            .limit(NEWS_MAX_PER_EMAIL * 2)  # over-fetch so the post-filter still hits the cap
+            .limit(NEWS_MAX_PER_EMAIL)
         )
-        # Belt-and-suspenders: drop anything whose title is a weather
-        # warning even if its source_bucket isn't NWS (e.g. if a
-        # future feed mirrors NWS alerts under a different bucket).
-        _WEATHER_TITLE_PREFIXES = (
-            "red flag warning", "fire weather watch", "fire weather warning",
-            "heat advisory", "excessive heat warning", "special weather statement",
-            "wind advisory", "high wind warning",
-        )
-        articles = [
-            a for a in articles_q.all()
-            if not (a.title or "").lower().lstrip().startswith(_WEATHER_TITLE_PREFIXES)
-        ][:NEWS_MAX_PER_EMAIL]
+        articles = articles_q.all()
         if not articles:
             skipped_no_new += 1
             continue
