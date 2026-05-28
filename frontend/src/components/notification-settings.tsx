@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import {
-  Bell, BellOff, BellRing, Flame, Newspaper, Siren, MapPin, AlertCircle, CheckCircle2,
+  BellOff, BellRing, Flame, Newspaper, Siren, MapPin, AlertCircle, CheckCircle2,
 } from "lucide-react";
 import { Button } from "./ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "./ui/card";
@@ -155,12 +155,7 @@ export function NotificationSettings({ onNavigateToLocations }: NotificationSett
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold flex items-center gap-2.5">
-            <div className="rounded-xl bg-gradient-to-br from-red-500 to-orange-500 p-2 shadow-lg shadow-red-500/20">
-              <Bell className="h-5 w-5 text-white" />
-            </div>
-            Alert Settings
-          </h1>
+          <h1 className="text-2xl font-bold">Alert Settings</h1>
           <p className="text-muted-foreground mt-1">
             Choose which wildfire alerts you want emailed to you.
           </p>
