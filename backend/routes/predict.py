@@ -451,12 +451,21 @@ def _compute_nifc_perimeters() -> dict:
         kept = []
         for feat in (data or {}).get('features', []) or []:
             props = feat.get('properties') or {}
-            if props.get('attr_PercentContained') is None:
-                nm = _norm_fire_name(props.get('poly_IncidentName'))
-                if nm in lookup:
-                    props['attr_PercentContained'] = lookup[nm]
-                    feat['properties'] = props
+            # ALWAYS prefer CAL FIRE's containment when available — it's
+            # the authoritative source for CA fires and updates faster
+            # than NIFC's WFIGS feed. Previously we only enriched when
+            # NIFC's value was null, so a stale NIFC 95% would win over
+            # a fresh CAL FIRE 100% and the perimeter would stay on the
+            # map after the fire was actually out.
+            nm = _norm_fire_name(props.get('poly_IncidentName'))
+            if nm in lookup:
+                props['attr_PercentContained'] = lookup[nm]
+                feat['properties'] = props
             pct = props.get('attr_PercentContained')
+            # Per recipient rule (2026-05-28): only explicit 100%-contained
+            # fires get dropped from the map. Unknown-containment and
+            # partial-containment perimeters stay so the recipient still
+            # sees every fire whose status isn't definitively "done."
             if pct is not None and float(pct) >= 100:
                 continue
             kept.append(feat)
