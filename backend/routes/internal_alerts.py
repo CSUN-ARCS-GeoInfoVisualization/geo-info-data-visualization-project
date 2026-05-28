@@ -842,17 +842,29 @@ def _extract_ca_counties(text: str) -> set:
     _load_ca_counties) so vague substring matches like 'Lake Tahoe'
     don't get mistaken for 'Lake County'. Requires the literal ' County'
     suffix in the source text to avoid grabbing place names.
+
+    For each '<TitleCase Words> County' match, walks each trailing
+    sub-sequence of the matched prefix so direction modifiers like
+    'Eastern Lassen County' also resolve to 'Lassen' (the real CA
+    county), not 'Eastern Lassen' (no such county). NWS Atom titles
+    use those qualifiers all the time.
     """
     if not text:
         return set()
     import re as _re
     known = {c["name_norm"] for c in _load_ca_counties()}
-    # Match '<TitleCase Words> County' boundaries.
     out = set()
     for m in _re.findall(r"([A-Z][A-Za-z]+(?:\s+[A-Z][A-Za-z]+)*)\s+County\b", text):
-        norm = _norm_county_name(m)
-        if norm in known:
-            out.add(norm)
+        # Try the full match first, then each trailing sub-sequence.
+        # 'Eastern Lassen' -> ['Eastern Lassen', 'Lassen']
+        # 'Southern San Diego' -> ['Southern San Diego', 'San Diego', 'Diego']
+        words = m.split()
+        for start in range(len(words)):
+            candidate = " ".join(words[start:])
+            norm = _norm_county_name(candidate)
+            if norm in known:
+                out.add(norm)
+                break  # longest matching suffix wins per match
     return out
 
 
