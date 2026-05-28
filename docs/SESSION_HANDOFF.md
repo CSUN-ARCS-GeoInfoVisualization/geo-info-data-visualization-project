@@ -1,11 +1,57 @@
 # FireScope — Session Handoff
 
-**Stable tag:** `v2.9-stable` (commit `1c19015`, 2026-05-25)
+**Stable tag:** `v3.0-stable` (commit `df6f2fd`, 2026-05-28)
 **Live URL:** https://firescope.dev (custom domain, HTTPS) · https://firescope.netlify.app
 **API:** https://firescope-api.onrender.com/api
-**GitHub Release:** https://github.com/CSUN-ARCS-GeoInfoVisualization/geo-info-data-visualization-project/releases/tag/v2.9-stable
+**GitHub Release:** https://github.com/CSUN-ARCS-GeoInfoVisualization/geo-info-data-visualization-project/releases/tag/v3.0-stable
 
 This document is the single source of truth for picking up FireScope work in a fresh session. Read this first, then `README.md`, then jump in.
+
+---
+
+## What v3.0-stable adds (on top of v2.9)
+
+### New 4th alert channel — wildfires in your county
+- `alerts-fires.yml` cron (`*/10 * * * *`) → `POST /api/internal/alerts/fires`.
+- Per-county bundling: one email per county that has active CAL FIRE incidents containing a saved location (never mixes counties).
+- New model column `notification_preferences.fire_alerts_enabled` (opt-in, default FALSE), auto-migrated via `_ensure_notification_pref_schema` on boot.
+- Change-driven dedup: SHA-256 of per-fire fingerprint `(UniqueId, IsActive, 10pct-containment-bucket, 100-acre-bucket)`.
+- One-final-"Fully contained"-email-then-silence: `fire_closed:<UID>` marker in `alert_activity` permanently excludes a fire from future bundles for that user.
+- Email body uses a "View updated fire perimeters on map" CTA button (static maps were tried then dropped — see commit history `678ecd0`).
+- "Other major active fires in California" context section for ≥5000-acre fires outside the user's counties, labeled "Not near your saved locations."
+
+### Universal one-click email unsubscribe (all 4 channels)
+- RFC 8058 `List-Unsubscribe` + `List-Unsubscribe-Post` headers → native Gmail/Apple unsubscribe button.
+- 3-link footer fallback (this channel / all / manage preferences).
+- Public token-authed endpoint `GET|POST /api/notifications/unsubscribe?u=&c=&t=`, token = `HMAC-SHA256(SECRET_KEY, "unsub:<user>:<channel>")[:24]`.
+- `c=all` flips `opted_in` + `email_enabled` + every channel toggle off.
+
+### Breaking-news pipeline cleanup
+- `_clean_nws_title` — strips "issued … by NWS <office>", appends extracted CA counties + expiry.
+- `_extract_ca_counties` — validates against the 58-county list, walks trailing sub-sequences ("Eastern Lassen" → "Lassen").
+- Per-user CA-county filter on NWS articles (users with no saved locations get the statewide feed).
+- `_dedupe_news_articles` — two-pass: exact (source, title) + cross-source same-fire.
+- `_build_fire_status_lookup` + `_live_summary_for` + `_enrich_title_with_containment` — overwrite stale ingested titles/summaries with live CAL FIRE numbers.
+
+### Map + misc
+- `/api/fire-perimeters` now drops explicit-100%-contained fires AND always prefers CAL FIRE containment over stale NIFC.
+- High-risk alerts capped at 20 locations (`HIGH_RISK_MAX_LOCATIONS_PER_EMAIL`) with truncation disclosure.
+- History page distinguishes loading vs loaded-empty → "No fire perimeters recorded for this year."
+- Email shell is Gmail-bulletproof (pure `<table>`, no structural `<div>`, hex colors, `background-color` not shorthand, per-cell font-family, HTML-comment anti-trim marker, jsDelivr-hosted PNG markers).
+- New env: `MAPBOX_PUBLIC_TOKEN` on Render.
+- 34 regression tests in `tests/test_email_render.py`.
+
+### Files touched in v3.0
+- `backend/routes/internal_alerts.py` (all alert senders + crons + helpers)
+- `backend/routes/notifications.py` (public unsubscribe endpoints)
+- `backend/routes/predict.py` (`_compute_nifc_perimeters` containment filter)
+- `backend/models.py` + `backend/app.py` (`fire_alerts_enabled` column + auto-migration)
+- `frontend/src/components/notification-settings.tsx` (4th channel toggle, bell-icon removal)
+- `frontend/src/components/history.tsx` (empty-year state)
+- `frontend/src/services/AuthService.ts` (`fire_alerts_enabled` type)
+- `frontend/public/email-icons/*.png` (shelter + user-location markers, jsDelivr-served)
+- `.github/workflows/alerts-fires.yml` (new cron)
+- `tests/test_email_render.py` (34 tests)
 
 ---
 
@@ -318,7 +364,8 @@ gh run list --workflow=daily-prewarm.yml --limit 3
 
 | Tag | Date | Headline |
 |---|---|---|
-| **v2.9-stable** | 2026-05-25 | NFDRS 5-tier risk model unified across map / popup / badge / legend / alert email + Shelters & Evac rebuild (smooth overlay, OPEN-only, centered popups, 3 click types) + research-page shelter overlay + county-match evac + shelter-opened sub-channel + direct in-process cache reads in the cron (this section) |
+| **v2.9-stable** | 2026-05-25 | NFDRS 5-tier risk model unified across map / popup / badge / legend / alert email + Shelters & Evac rebuild (smooth overlay, OPEN-only, centered popups, 3 click types) + research-page shelter overlay + county-match evac + shelter-opened sub-channel + direct in-process cache reads in the cron |
+| **v3.0-stable** | 2026-05-28 | 4th alert channel (wildfires in your county, per-county bundling, change-driven dedup, final-contained-then-silent) + universal one-click unsubscribe (RFC 8058 + per-channel + token endpoint) + breaking-news cleanup (NWS title cleaning, per-user county filter, cross-source dedupe, live containment enrichment + summary override) + fire-perimeter map auto-retires 100%-contained fires + high-risk 20-location cap + history empty-year state + Gmail-bulletproof email shell (this section) |
 | **v2.8-stable** | 2026-05-25 | Full alerts system (3 channels) + custom domain `firescope.dev` + Resend email + cached-zone single source of truth across map / badge / widget / email |
 | **v2.7-stable** | 2026-05-21 | Site-wide perf overhaul — 16 endpoints under 1 s, 11 under 500 ms |
 | **v2.6-v2-merged** | 2026-05-20 | Sania's calibrated KBDI random forest + KBDI slider + SHAP attribution charts + spatial-block CV |
