@@ -64,6 +64,7 @@ logger = logging.getLogger(__name__)
 internal_alerts_bp = Blueprint("internal_alerts", __name__)
 
 HIGH_RISK_THRESHOLD = 0.40  # 5-tier NFDRS: 0.40 = "High" tier. Fire on any zone reaching High or above per Ido's spec.
+HIGH_RISK_MAX_LOCATIONS_PER_EMAIL = 20  # cap so a user with 100 saved spots doesn't get a 100-card email; sorted by risk DESC, top 20 win
 
 
 def _require_internal_token():
@@ -596,7 +597,7 @@ def _location_block_html(loc_payload: dict) -> str:
     )
 
 
-def _send_high_risk_email(to_email: str, contact_name: str, locations_payload: list, user_id: int | None = None):
+def _send_high_risk_email(to_email: str, contact_name: str, locations_payload: list, user_id: int | None = None, total_qualifying: int | None = None):
     """Direct Resend SDK call. Bypasses the EmailSender/Renderer scaffolding
     in services/email/ because that machinery is wired to a duplicate ORM
     schema that was never integrated. Slice 1B will re-route through the
@@ -634,12 +635,24 @@ def _send_high_risk_email(to_email: str, contact_name: str, locations_payload: l
         f'</tr>'
         for l, c, r in legend_rows
     )
+    # Truncation note when more than HIGH_RISK_MAX_LOCATIONS_PER_EMAIL
+    # qualifying locations exist for this user (cap is enforced upstream
+    # in the cron loop; this is just the visible disclosure).
+    truncation_note = ""
+    if total_qualifying is not None and total_qualifying > len(locations_payload):
+        truncation_note = (
+            f'<p style="margin:0 0 8px;font-size:12px;color:#888888;line-height:1.45;font-style:italic;">'
+            f'Showing the top {len(locations_payload)} highest-risk of {total_qualifying} '
+            f'qualifying saved locations. See all on the dashboard.'
+            f'</p>'
+        )
     body_inner = (
         f'<p style="margin:0 0 14px;font-size:14px;">Hi {html_escape(name)},</p>'
         '<p style="margin:0 0 8px;font-size:14px;line-height:1.45;">One or more of your saved locations is at '
         '<strong>High</strong> risk or above on the NFDRS 5-tier scale. Below is the current risk by every '
         'zone type &mdash; county, ZIP code, neighborhood, and census tract &mdash; so you can see which '
         'scope is driving the alert.</p>'
+        f'{truncation_note}'
         f'{blocks_html}'
         '<table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" '
         'style="margin-top:18px;border-top:1px solid #eeeeee;">'
@@ -778,11 +791,20 @@ def run_high_risk_alerts():
             errors += 1
             continue
 
+        # Sort all qualifying hits by risk DESC (highest first), then cap
+        # at HIGH_RISK_MAX_LOCATIONS_PER_EMAIL so a user with dozens of
+        # saved high-risk locations still gets a readable email. Each
+        # included location ships with all 4 zone types
+        # (county/zip/neighborhood/census tract) and their live tier
+        # labels, per _zones_for_location().
+        ranked = sorted(hits, key=lambda h: -h["risk"])
+        capped = ranked[:HIGH_RISK_MAX_LOCATIONS_PER_EMAIL]
         msg_id, send_err = _send_high_risk_email(
             to_email=to_email,
             contact_name=getattr(user, "name", None) or "",
-            locations_payload=sorted(hits, key=lambda h: -h["risk"]),
+            locations_payload=capped,
             user_id=user.id,
+            total_qualifying=len(ranked),
         )
         status = "sent" if msg_id else "failed"
         session.add(AlertActivity(
