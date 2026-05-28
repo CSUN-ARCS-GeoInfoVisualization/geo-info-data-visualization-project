@@ -1317,7 +1317,7 @@ def _send_multizone_evac_email(
 
 # Kept as a thin alias for any external callers — production code uses the
 # multizone path directly via run_evacuation_alerts.
-def _send_evacuation_email(to_email, contact_name, location_name, zone_props, nearest_shelters, match_kind: str = "polygon") -> tuple[str | None, str | None]:
+def _send_evacuation_email(to_email, contact_name, location_name, zone_props, nearest_shelters, match_kind: str = "polygon", user_id: int | None = None) -> tuple[str | None, str | None]:
     try:
         import resend
     except ImportError:
