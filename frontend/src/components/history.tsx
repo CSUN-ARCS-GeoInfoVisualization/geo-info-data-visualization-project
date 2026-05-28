@@ -269,8 +269,17 @@ const HistoricalFirePerimetersOverlay = memo(function HistoricalFirePerimetersOv
                 <Flame className="h-4 w-4 text-red-500 shrink-0" />
                 <span className="font-bold text-base">All fires — summary</span>
               </div>
-              {aggregate.count === 0 ? (
+              {fireData == null ? (
+                // Still in-flight — fetch hasn't resolved yet.
                 <p className="text-xs text-muted-foreground">Loading fire perimeters…</p>
+              ) : aggregate.count === 0 ? (
+                // Fetch resolved with zero features — the year genuinely had
+                // no recorded fire perimeters above the min-acres threshold.
+                // Previously we showed the same 'Loading…' message in both
+                // states, which looked like an infinite spinner.
+                <p className="text-xs text-muted-foreground">
+                  No fire perimeters recorded for this year.
+                </p>
               ) : (
                 <>
                   <div className="space-y-1 text-xs">
