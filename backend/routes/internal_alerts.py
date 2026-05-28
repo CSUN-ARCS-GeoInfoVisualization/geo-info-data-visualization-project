@@ -13,7 +13,7 @@ import os
 import math
 import hashlib
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import requests
 from flask import Blueprint, request, jsonify
@@ -1045,9 +1045,17 @@ def run_breaking_news_alerts():
         #   - drop NWS articles whose extracted counties don't overlap
         #     user_counties (only when the user actually has saved
         #     locations AND the article mentioned specific counties)
+        # NewsArticle.published_at comes back from Postgres as tz-aware
+        # (TIMESTAMPTZ column); cutoff is built from datetime.utcnow()
+        # which is naive. Coerce cutoff to UTC-aware so the < comparison
+        # below doesn't crash with TypeError ('can't compare offset-naive
+        # and offset-aware datetimes').
+        cutoff_aware = cutoff
+        if cutoff_aware is not None and cutoff_aware.tzinfo is None:
+            cutoff_aware = cutoff_aware.replace(tzinfo=timezone.utc)
         filtered = []
         for a in candidates_global:
-            if a.published_at and a.published_at <= cutoff:
+            if a.published_at and cutoff_aware and a.published_at <= cutoff_aware:
                 continue
             if a.source_bucket == "nws" and user_counties:
                 a_counties = article_counties.get(a.id, set())
