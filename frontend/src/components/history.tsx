@@ -8,7 +8,6 @@ import {
   TrendingUp,
   Flame,
   MapPin,
-  BarChart3,
   Download,
   Info,
   Clock,
@@ -61,6 +60,61 @@ const causeLabel = (v: any): string => {
   const n = Number(v);
   if (Number.isFinite(n) && CAUSE_LABELS[n]) return `${CAUSE_LABELS[n]} (${n})`;
   return String(v);
+};
+
+// --- Export helpers (selected-year fire perimeters) ---
+// CSV is the attributes-only view (no geometry) for spreadsheet analysis;
+// GeoJSON exports the raw FeatureCollection as-is for GIS tools.
+const CSV_COLUMNS: { key: string; header: string }[] = [
+  { key: 'FIRE_NAME', header: 'Fire Name' },
+  { key: 'YEAR_', header: 'Year' },
+  { key: 'GIS_ACRES', header: 'Acres' },
+  { key: 'ALARM_DATE', header: 'Start Date' },
+  { key: 'CONT_DATE', header: 'Containment Date' },
+  { key: 'CAUSE', header: 'Cause' },
+  { key: 'INC_NUM', header: 'Incident Number' },
+];
+
+const csvCell = (v: any): string => {
+  const s = v == null ? '' : String(v);
+  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+};
+
+// FRAP ALARM_DATE / CONT_DATE arrive as epoch milliseconds — render them as
+// ISO YYYY-MM-DD (locale-independent, sorts correctly in a spreadsheet)
+// instead of dumping the raw timestamp.
+const csvDate = (v: any): string => {
+  if (v == null || v === '') return '';
+  const d = new Date(v);
+  return Number.isNaN(d.getTime()) ? String(v) : d.toISOString().slice(0, 10);
+};
+
+// Largest-first, matching the order used everywhere else on the page.
+const featuresToCsv = (features: any[]): string => {
+  const rows = features
+    .slice()
+    .sort((a, b) => (b.properties?.GIS_ACRES || 0) - (a.properties?.GIS_ACRES || 0))
+    .map((f) => {
+      const p = f.properties || {};
+      return CSV_COLUMNS.map(({ key }) => {
+        if (key === 'CAUSE') return csvCell(causeLabel(p.CAUSE));
+        if (key === 'ALARM_DATE' || key === 'CONT_DATE') return csvCell(csvDate(p[key]));
+        return csvCell(p[key]);
+      }).join(',');
+    });
+  return [CSV_COLUMNS.map((c) => c.header).join(','), ...rows].join('\n');
+};
+
+const triggerDownload = (filename: string, mime: string, content: string) => {
+  const blob = new Blob([content], { type: mime });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
 };
 
 // Normalise FRAP FIRE_NAME / DINS INCIDENTNAME for fuzzy matching.
@@ -570,6 +624,19 @@ export function History() {
     setFocusedFireKey(props ? `${props.OBJECTID ?? ''}-${props.FIRE_NAME ?? ''}-${props.YEAR_ ?? ''}-${props.INC_NUM ?? ''}` : null);
   }, []);
 
+  const hasFeatures = (fireData?.features?.length ?? 0) > 0;
+
+  const handleExportCsv = useCallback(() => {
+    const features: any[] = fireData?.features || [];
+    if (!features.length) return;
+    triggerDownload(`firescope-history-${selectedYear}.csv`, 'text/csv;charset=utf-8', featuresToCsv(features));
+  }, [fireData, selectedYear]);
+
+  const handleExportGeoJson = useCallback(() => {
+    if (!fireData?.features?.length) return;
+    triggerDownload(`firescope-history-${selectedYear}.geojson`, 'application/geo+json', JSON.stringify(fireData));
+  }, [fireData, selectedYear]);
+
   // Memoize the option list JSX — 400+ <option> children would otherwise
   // re-reconcile on every parent render, including selection state changes.
   const quickStats = useMemo(() => {
@@ -710,13 +777,13 @@ export function History() {
           </p>
         </div>
         <div className="flex gap-2">
-          <Button variant="outline">
+          <Button variant="outline" onClick={handleExportCsv} disabled={!hasFeatures}>
             <Download className="h-4 w-4 mr-2" />
-            Export Data
+            Export CSV
           </Button>
-          <Button variant="outline">
-            <BarChart3 className="h-4 w-4 mr-2" />
-            View Statistics
+          <Button variant="outline" onClick={handleExportGeoJson} disabled={!hasFeatures}>
+            <Download className="h-4 w-4 mr-2" />
+            Export GeoJSON
           </Button>
         </div>
       </div>
