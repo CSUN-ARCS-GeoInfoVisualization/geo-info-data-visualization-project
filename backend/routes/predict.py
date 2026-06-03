@@ -434,7 +434,13 @@ def _compute_nifc_perimeters() -> dict:
             'WFIGS_Interagency_Perimeters_YearToDate/FeatureServer/0/query',
             params={
                 'where': "attr_POOState='US-CA' AND (attr_PercentContained IS NULL OR attr_PercentContained < 100)",
-                'outFields': 'poly_IncidentName,poly_GISAcres,poly_FeatureCategory,attr_PercentContained,attr_FireDiscoveryDateTime',
+                # Rich fields for the popup (county/cause/managing-org/fire-id/type).
+                # Verified present in the WFIGS layer; note the org field is
+                # attr_IncidentManagementOrg (NOT ...Organization).
+                'outFields': 'poly_IncidentName,poly_GISAcres,poly_FeatureCategory,'
+                             'attr_PercentContained,attr_FireDiscoveryDateTime,'
+                             'attr_POOCounty,attr_FireCause,attr_IncidentManagementOrg,'
+                             'attr_UniqueFireIdentifier,attr_IncidentTypeCategory,attr_IncidentName',
                 'f': 'geojson',
             },
             timeout=20,
