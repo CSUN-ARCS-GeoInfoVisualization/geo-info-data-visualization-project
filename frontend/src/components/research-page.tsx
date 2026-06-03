@@ -579,25 +579,52 @@ function ResearchMapView() {
   // Which zones the user has explicitly "Saved for 24 hours" (server-side).
   // Maps zone name -> { id, expiresAt } so we can show the saved state and
   // delete the saved row on reset. Slider edits stay transient until saved.
+  // savedZones = the CURRENT zone-type's saved overrides (keyed by zone name) —
+  // used for the per-zone "Saved ✓" UI + reset. savedByType / savedTotal track
+  // the saved count across ALL 4 zone types (the cap is a shared total of 20).
   const [savedZones, setSavedZones] = useState<Record<string, { id: number; expiresAt: string }>>({});
+  const [savedByType, setSavedByType] = useState<Record<string, number>>({ county: 0, zip: 0, neighborhood: 0, tract: 0 });
   const [savingZone, setSavingZone] = useState<string | null>(null);
   const [saveError, setSaveError] = useState<string | null>(null);
-  const MAX_SAVED_ZONES = 20;  // keep in sync with backend MAX_SAVED_OVERRIDES
+  const MAX_SAVED_ZONES = 20;  // TOTAL across all 4 zone types; keep in sync with backend MAX_SAVED_OVERRIDES
+  const savedTotal = Object.values(savedByType).reduce((a, b) => a + b, 0);
 
   // Hydrate saved overrides for the current scope from the server. These are
   // per-user and live 24h server-side, so a researcher's saved slider values
   // survive leaving and returning to the page (and reset to live after expiry).
+  // Recompute saved counts across ALL 4 types (savedByType/savedTotal) + the
+  // current type's savedZones, WITHOUT touching zoneOverrides (so in-session,
+  // unsaved slider work isn't clobbered). Called after every save/reset.
+  const refreshSavedState = async () => {
+    const scope = ZONE_SCOPE[zoneLevel];
+    try {
+      const rows = await apiFetch(`/overrides`).then((r) => (r.ok ? r.json() : []));
+      if (!Array.isArray(rows)) return;
+      const byType: Record<string, number> = { county: 0, zip: 0, neighborhood: 0, tract: 0 };
+      const saved: Record<string, { id: number; expiresAt: string }> = {};
+      for (const o of rows) {
+        byType[o.scope] = (byType[o.scope] || 0) + 1;
+        if (o.scope === scope) saved[o.zone_name || o.zone_id] = { id: o.id, expiresAt: o.expires_at };
+      }
+      setSavedByType(byType);
+      setSavedZones(saved);
+    } catch { /* ignore */ }
+  };
+
   useEffect(() => {
     const scope = ZONE_SCOPE[zoneLevel];
     if (!scope) return;
     let cancelled = false;
-    apiFetch(`/overrides?scope=${scope}`)
+    apiFetch(`/overrides`)  // ALL types — the 20-cap is a shared total
       .then((r) => (r.ok ? r.json() : []))
       .then((rows: any[]) => {
         if (cancelled || !Array.isArray(rows)) return;
         const map: Record<string, any> = {};
         const saved: Record<string, { id: number; expiresAt: string }> = {};
+        const byType: Record<string, number> = { county: 0, zip: 0, neighborhood: 0, tract: 0 };
         for (const o of rows) {
+          byType[o.scope] = (byType[o.scope] || 0) + 1;
+          if (o.scope !== scope) continue;  // only hydrate the current type's sliders
           const key = o.zone_name || o.zone_id;
           // Server stores air_temp_encoded; the sliders still use the legacy
           // `lst` name (same scale) — remap on the way in.
@@ -609,6 +636,7 @@ function ResearchMapView() {
         }
         setZoneOverrides(map);
         setSavedZones(saved);
+        setSavedByType(byType);
         if (rows.length > 0) setUseOverrides(true);
       })
       .catch(() => {});
@@ -657,6 +685,7 @@ function ResearchMapView() {
       if (r.ok) {
         const o = await r.json();
         setSavedZones((prev) => ({ ...prev, [name]: { id: o.id, expiresAt: o.expires_at } }));
+        await refreshSavedState();  // keep the all-types total accurate
       } else {
         const body = await r.json().catch(() => ({}));
         setSaveError(body.error || `Save failed (HTTP ${r.status})`);
@@ -679,6 +708,7 @@ function ResearchMapView() {
       setSavedZones((prev) => { const next = { ...prev }; delete next[name]; return next; });
       try { await apiFetch(`/overrides/${saved.id}`, { method: "DELETE" }); }
       catch (e) { console.warn("override delete failed:", e); }
+      await refreshSavedState();  // keep the all-types total accurate
     }
   };
 
@@ -693,6 +723,7 @@ function ResearchMapView() {
       const scope = ZONE_SCOPE[zoneLevel];
       try { await apiFetch(`/overrides${scope ? `?scope=${scope}` : ""}`, { method: "DELETE" }); }
       catch (e) { console.warn("reset-all failed:", e); }
+      await refreshSavedState();  // keep the all-types total accurate
     }
   };
 
@@ -721,13 +752,11 @@ function ResearchMapView() {
       <div>
         <h1 className="text-3xl font-bold mb-2">Research Map</h1>
         <p className="text-muted-foreground">
-          {Object.keys(zoneRiskData).length > 0
-            ? `${Object.keys(zoneRiskData).length.toLocaleString()} ${ZONE_LABEL[zoneLevel] || "zones"}`
-            : "Loading zones…"}
-          {" · "}
-          <span className={Object.keys(savedZones).length >= MAX_SAVED_ZONES ? "text-red-600 font-semibold" : ""}>
-            {Object.keys(savedZones).length}/{MAX_SAVED_ZONES} zones saved
+          <span className={savedTotal >= MAX_SAVED_ZONES ? "text-red-600 font-semibold" : "font-semibold"}>
+            {savedTotal}/{MAX_SAVED_ZONES} zones saved
           </span>
+          {" — "}
+          Counties {savedByType.county || 0} · ZIP {savedByType.zip || 0} · Neighborhoods {savedByType.neighborhood || 0} · Census Tracts {savedByType.tract || 0}
           {loading && <Loader2 className="inline h-4 w-4 ml-2 animate-spin" />}
         </p>
       </div>
@@ -1108,13 +1137,13 @@ function ResearchMapView() {
                     </div>
 
                     {useOverrides && selectedZone && (() => {
-                      const savedCount = Object.keys(savedZones).length;
-                      const atCap = savedCount >= MAX_SAVED_ZONES && !savedZones[selectedZone];
+                      // The 20-cap is a TOTAL across all 4 zone types.
+                      const atCap = savedTotal >= MAX_SAVED_ZONES && !savedZones[selectedZone];
                       return (
                       <div className="space-y-2">
                         <div className="flex items-center justify-between text-[10px] text-muted-foreground">
-                          <span>Saved zones</span>
-                          <span className={savedCount >= MAX_SAVED_ZONES ? "text-red-600 font-semibold" : ""}>{savedCount}/{MAX_SAVED_ZONES}</span>
+                          <span>Saved zones (all types)</span>
+                          <span className={savedTotal >= MAX_SAVED_ZONES ? "text-red-600 font-semibold" : ""}>{savedTotal}/{MAX_SAVED_ZONES}</span>
                         </div>
                         <button
                           onClick={() => saveOverrideFor24h(selectedZone!)}
@@ -1173,9 +1202,10 @@ function ResearchMapView() {
 
       {/* Override-save policy note (researcher tool) */}
       <p className="text-[11px] text-muted-foreground mt-2">
-        <span className="font-semibold">Saved overrides:</span> you can save up to <span className="font-semibold">20 zones</span> at
-        once. Each saved zone keeps your slider values for <span className="font-semibold">24 hours</span>, then automatically
-        resets to live data and frees its slot. Reset a zone any time to free a slot sooner.
+        <span className="font-semibold">Saved overrides:</span> you can save up to <span className="font-semibold">20 zones total</span>
+        {" "}across all 4 zone types combined (Counties, ZIP Codes, Neighborhoods, Census Tracts). Each saved zone keeps your
+        slider values for <span className="font-semibold">24 hours</span>, then automatically resets to live data and frees its
+        slot. Reset a zone any time to free a slot sooner.
       </p>
 
     </div>

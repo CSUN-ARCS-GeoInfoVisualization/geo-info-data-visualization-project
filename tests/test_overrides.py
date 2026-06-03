@@ -170,6 +170,24 @@ def test_save_cap_blocks_new_zones_but_allows_resave():
     assert len(c.get("/api/overrides", headers=h).get_json()) == MAX_SAVED_OVERRIDES
 
 
+def test_cap_is_total_across_all_zone_types():
+    """The 20-cap is shared across county/zip/neighborhood/tract, not per-type."""
+    from routes.overrides import MAX_SAVED_OVERRIDES
+    app, h, _, _ = _make_app()
+    c = app.test_client()
+    scopes = ["county", "zip", "neighborhood", "tract"]
+    # spread saves across all 4 types up to the cap
+    for i in range(MAX_SAVED_OVERRIDES):
+        sc = scopes[i % 4]
+        r = c.post("/api/overrides", json={**PAYLOAD, "scope": sc, "zone_id": f"{sc}-{i}", "zone_name": f"{sc}-{i}"}, headers=h)
+        assert r.status_code == 200
+    # 21st of ANY type is rejected (shared total, not per-type)
+    over = c.post("/api/overrides", json={**PAYLOAD, "scope": "tract", "zone_id": "tract-extra", "zone_name": "x"}, headers=h)
+    assert over.status_code == 409
+    # GET (all scopes) returns exactly the cap
+    assert len(c.get("/api/overrides", headers=h).get_json()) == MAX_SAVED_OVERRIDES
+
+
 def test_delete_all_resets_every_zone():
     app, h, h2, _ = _make_app()
     c = app.test_client()
