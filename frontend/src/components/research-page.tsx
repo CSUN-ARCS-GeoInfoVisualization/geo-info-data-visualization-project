@@ -382,6 +382,14 @@ const ZONE_SCOPE: Record<string, string> = {
   "census-tracts": "tract",
 };
 
+// Human label for each of the 4 zone types (for the header readout).
+const ZONE_LABEL: Record<string, string> = {
+  "counties": "Counties",
+  "zip-codes": "ZIP Codes",
+  "neighborhoods": "Neighborhoods",
+  "census-tracts": "Census Tracts",
+};
+
 function ResearchMapView() {
   // Shelter overlay state — opt-in researcher tool, default OFF.
   // Lazy-load shelters only the first time the toggle is flipped on so the
@@ -713,7 +721,13 @@ function ResearchMapView() {
       <div>
         <h1 className="text-3xl font-bold mb-2">Research Map</h1>
         <p className="text-muted-foreground">
-          {features.length} hotspots
+          {Object.keys(zoneRiskData).length > 0
+            ? `${Object.keys(zoneRiskData).length.toLocaleString()} ${ZONE_LABEL[zoneLevel] || "zones"}`
+            : "Loading zones…"}
+          {" · "}
+          <span className={Object.keys(savedZones).length >= MAX_SAVED_ZONES ? "text-red-600 font-semibold" : ""}>
+            {Object.keys(savedZones).length}/{MAX_SAVED_ZONES} zones saved
+          </span>
           {loading && <Loader2 className="inline h-4 w-4 ml-2 animate-spin" />}
         </p>
       </div>
