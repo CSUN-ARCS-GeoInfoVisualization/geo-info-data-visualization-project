@@ -23,6 +23,7 @@ overrides_bp = Blueprint('overrides', __name__)
 VALID_SCOPES = {'county', 'zip', 'neighborhood', 'tract'}
 _FEATURES = ('evi', 'air_temp_encoded', 'wind', 'humidity', 'elevation', 'kbdi')
 OVERRIDE_TTL = timedelta(hours=24)
+MAX_SAVED_OVERRIDES = 20  # per user; keep in sync with the research-page legend note
 
 
 def _now():
@@ -125,12 +126,24 @@ def save_override():
 
     _prune_expired(user_id)
 
-    result = predict_from_features(**features)
-    expires_at = _now() + OVERRIDE_TTL
-
     o = (UserOverride.query
          .filter_by(user_id=user_id, scope=scope, zone_id=zone_id)
          .first())
+    # 20-zone cap: re-saving an existing zone is always allowed (it upserts);
+    # a NEW zone is rejected once the user already has MAX_SAVED_OVERRIDES active.
+    if o is None:
+        active = (UserOverride.query
+                  .filter(UserOverride.user_id == user_id,
+                          UserOverride.expires_at > _now())
+                  .count())
+        if active >= MAX_SAVED_OVERRIDES:
+            return jsonify({'error': f'Save limit reached: at most {MAX_SAVED_OVERRIDES} '
+                                     f'zones can be saved at once. Reset a zone to free a slot.',
+                            'limit': MAX_SAVED_OVERRIDES, 'active': active}), 409
+
+    result = predict_from_features(**features)
+    expires_at = _now() + OVERRIDE_TTL
+
     if o is None:
         o = UserOverride(user_id=user_id, scope=scope, zone_id=zone_id)
         db.session.add(o)

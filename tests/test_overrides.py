@@ -152,6 +152,24 @@ def test_delete_is_owner_scoped():
     assert c.delete("/api/overrides/9999", headers=h).status_code == 404
 
 
+def test_save_cap_blocks_new_zones_but_allows_resave():
+    from routes.overrides import MAX_SAVED_OVERRIDES
+    app, h, _, _ = _make_app()
+    c = app.test_client()
+    # fill to the cap
+    for i in range(MAX_SAVED_OVERRIDES):
+        r = c.post("/api/overrides", json={**PAYLOAD, "zone_id": f"z{i}", "zone_name": f"z{i}"}, headers=h)
+        assert r.status_code == 200
+    assert len(c.get("/api/overrides", headers=h).get_json()) == MAX_SAVED_OVERRIDES
+    # a NEW (cap+1) zone is rejected
+    over = c.post("/api/overrides", json={**PAYLOAD, "zone_id": "overflow", "zone_name": "overflow"}, headers=h)
+    assert over.status_code == 409 and over.get_json()["limit"] == MAX_SAVED_OVERRIDES
+    # re-saving an EXISTING zone still works (upsert, no new slot)
+    again = c.post("/api/overrides", json={**PAYLOAD, "zone_id": "z0", "zone_name": "z0", "kbdi": 700.0}, headers=h)
+    assert again.status_code == 200 and again.get_json()["kbdi"] == 700.0
+    assert len(c.get("/api/overrides", headers=h).get_json()) == MAX_SAVED_OVERRIDES
+
+
 def test_delete_all_resets_every_zone():
     app, h, h2, _ = _make_app()
     c = app.test_client()
