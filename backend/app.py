@@ -17,6 +17,7 @@ from routes.research import research_bp
 from routes.shelters import shelters_bp
 from routes.history import history_bp
 from routes.internal_alerts import internal_alerts_bp
+from routes.overrides import overrides_bp
 
 
 def _ensure_notification_pref_schema(app):
@@ -125,6 +126,7 @@ def create_app(config_class=Config):
     app.register_blueprint(shelters_bp, url_prefix='/api')
     app.register_blueprint(history_bp, url_prefix='/api/history')
     app.register_blueprint(internal_alerts_bp, url_prefix='/api')
+    app.register_blueprint(overrides_bp, url_prefix='/api')
 
     # Ensure notification_preferences has every column the ORM model expects.
     # Render has no migration step, so new columns added to the model after the
