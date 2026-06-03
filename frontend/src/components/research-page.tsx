@@ -531,8 +531,11 @@ function ResearchMapView() {
                 const payload: any = {
                   evi: ov.evi,
                   air_temp_encoded: ov.lst,
+                  // humidity isn't a slider — use the override's stored value
+                  // (set at save time) or the zone's live value, NOT a flat 50,
+                  // so the in-session color matches the saved/reloaded color.
                   wind: ov.wind,
-                  humidity: (ov as any).humidity ?? 50,
+                  humidity: (ov as any).humidity ?? liveFeatures(name)?.humidity ?? 50,
                   elevation: ov.elevation,
                   kbdi: (ov as any).kbdi ?? 200,
                   zone_name: name,
@@ -570,6 +573,8 @@ function ResearchMapView() {
   // delete the saved row on reset. Slider edits stay transient until saved.
   const [savedZones, setSavedZones] = useState<Record<string, { id: number; expiresAt: string }>>({});
   const [savingZone, setSavingZone] = useState<string | null>(null);
+  const [saveError, setSaveError] = useState<string | null>(null);
+  const MAX_SAVED_ZONES = 20;  // keep in sync with backend MAX_SAVED_OVERRIDES
 
   // Hydrate saved overrides for the current scope from the server. These are
   // per-user and live 24h server-side, so a researcher's saved slider values
@@ -627,6 +632,7 @@ function ResearchMapView() {
     const scope = ZONE_SCOPE[zoneLevel];
     if (!scope) return;
     setSavingZone(name);
+    setSaveError(null);
     const f = liveFeatures(name);
     try {
       const r = await apiFetch("/overrides", {
@@ -644,9 +650,11 @@ function ResearchMapView() {
         const o = await r.json();
         setSavedZones((prev) => ({ ...prev, [name]: { id: o.id, expiresAt: o.expires_at } }));
       } else {
-        console.warn("override save failed:", r.status);
+        const body = await r.json().catch(() => ({}));
+        setSaveError(body.error || `Save failed (HTTP ${r.status})`);
       }
     } catch (e) {
+      setSaveError("Save failed — check your connection.");
       console.warn("override save failed:", e);
     } finally {
       setSavingZone(null);
@@ -685,7 +693,10 @@ function ResearchMapView() {
     setZoneOverrides((prev) => ({
       ...prev,
       [selectedZone]: {
+        // Seed humidity from the zone's live value (no slider for it) so the
+        // override colors with the same humidity that save/reload will use.
         evi: eviSlider, lst: lstSlider, wind: windSlider, elevation: elevSlider, kbdi: kbdiSlider,
+        humidity: liveFeatures(selectedZone)?.humidity ?? 50,
         ...prev[selectedZone],
         [field]: val,
       },
@@ -1082,19 +1093,32 @@ function ResearchMapView() {
                       </p>
                     </div>
 
-                    {useOverrides && selectedZone && (
+                    {useOverrides && selectedZone && (() => {
+                      const savedCount = Object.keys(savedZones).length;
+                      const atCap = savedCount >= MAX_SAVED_ZONES && !savedZones[selectedZone];
+                      return (
                       <div className="space-y-2">
+                        <div className="flex items-center justify-between text-[10px] text-muted-foreground">
+                          <span>Saved zones</span>
+                          <span className={savedCount >= MAX_SAVED_ZONES ? "text-red-600 font-semibold" : ""}>{savedCount}/{MAX_SAVED_ZONES}</span>
+                        </div>
                         <button
                           onClick={() => saveOverrideFor24h(selectedZone!)}
-                          disabled={savingZone === selectedZone}
+                          disabled={savingZone === selectedZone || atCap}
                           className="w-full text-xs font-medium py-1.5 rounded-md bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
+                          title={atCap ? `Limit of ${MAX_SAVED_ZONES} saved zones reached — reset one to free a slot` : undefined}
                         >
                           {savingZone === selectedZone
                             ? "Saving…"
-                            : savedZones[selectedZone]
-                              ? "Saved ✓ — re-save to refresh 24h"
-                              : "Save for 24 hours"}
+                            : atCap
+                              ? `Limit reached (${MAX_SAVED_ZONES})`
+                              : savedZones[selectedZone]
+                                ? "Saved ✓ — re-save to refresh 24h"
+                                : "Save for 24 hours"}
                         </button>
+                        {saveError && (
+                          <p className="text-[10px] text-center text-red-600">{saveError}</p>
+                        )}
                         {savedZones[selectedZone] && (
                           <p className="text-[10px] text-center text-muted-foreground">
                             Persists for this account until {new Date(savedZones[selectedZone].expiresAt).toLocaleString()}, then reverts to live data.
@@ -1119,7 +1143,8 @@ function ResearchMapView() {
                           </button>
                         </div>
                       </div>
-                    )}
+                      );
+                    })()}
                   </>
                 )}
               </div>
@@ -1131,6 +1156,13 @@ function ResearchMapView() {
           clustered IconLayer; showHowTo=false because researchers don't
           need the "click blue clusters" guidance. */}
       <MapLegend showHowTo={false} showCluster={false} />
+
+      {/* Override-save policy note (researcher tool) */}
+      <p className="text-[11px] text-muted-foreground mt-2">
+        <span className="font-semibold">Saved overrides:</span> you can save up to <span className="font-semibold">20 zones</span> at
+        once. Each saved zone keeps your slider values for <span className="font-semibold">24 hours</span>, then automatically
+        resets to live data and frees its slot. Reset a zone any time to free a slot sooner.
+      </p>
 
     </div>
   );
