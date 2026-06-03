@@ -445,8 +445,6 @@ function ResearchMapView() {
   const [ndviSlider, setNdviSlider] = useState(0.3); // -1 to 1 in theory; 0-1 for vegetation cover
   const [fireBinary, setFireBinary] = useState(false); // binary fire occurrence outcome label
   const [zoneOverrides, setZoneOverrides] = useState<Record<string, { evi: number; lst: number; wind: number; elevation: number; kbdi?: number; humidity?: number; date?: number; latitude?: number; longitude?: number; ta?: number; ndvi?: number; fire?: boolean }>>({});
-  // Debounce timer for persisting slider edits to the server (per-zone, 24h TTL).
-  const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -565,9 +563,15 @@ function ResearchMapView() {
       .catch((e) => console.warn("Risk data load failed:", e));
   }, [zoneGeoJson, zoneLevel, useOverrides, zoneOverrides]);
 
+  // Which zones the user has explicitly "Saved for 24 hours" (server-side).
+  // Maps zone name -> { id, expiresAt } so we can show the saved state and
+  // delete the saved row on reset. Slider edits stay transient until saved.
+  const [savedZones, setSavedZones] = useState<Record<string, { id: number; expiresAt: string }>>({});
+  const [savingZone, setSavingZone] = useState<string | null>(null);
+
   // Hydrate saved overrides for the current scope from the server. These are
-  // per-user and live 24h server-side, so a researcher's slider values survive
-  // leaving and returning to the page (and reset to live data after expiry).
+  // per-user and live 24h server-side, so a researcher's saved slider values
+  // survive leaving and returning to the page (and reset to live after expiry).
   useEffect(() => {
     const scope = ZONE_SCOPE[zoneLevel];
     if (!scope) return;
@@ -577,15 +581,19 @@ function ResearchMapView() {
       .then((rows: any[]) => {
         if (cancelled || !Array.isArray(rows)) return;
         const map: Record<string, any> = {};
+        const saved: Record<string, { id: number; expiresAt: string }> = {};
         for (const o of rows) {
+          const key = o.zone_name || o.zone_id;
           // Server stores air_temp_encoded; the sliders still use the legacy
           // `lst` name (same scale) — remap on the way in.
-          map[o.zone_name || o.zone_id] = {
+          map[key] = {
             evi: o.evi, lst: o.air_temp_encoded, wind: o.wind,
             elevation: o.elevation, kbdi: o.kbdi, humidity: o.humidity,
           };
+          saved[key] = { id: o.id, expiresAt: o.expires_at };
         }
         setZoneOverrides(map);
+        setSavedZones(saved);
         if (rows.length > 0) setUseOverrides(true);
       })
       .catch(() => {});
@@ -594,32 +602,57 @@ function ResearchMapView() {
 
   const zoneNameKey = zoneLevel === "counties" ? "name" : zoneLevel === "zip-codes" ? "zip" : zoneLevel === "census-tracts" ? "tract" : "name";
 
-  // Debounced upsert of one zone's override to the server (per-user, 24h TTL).
-  const persistOverride = (name: string, ov: { evi: number; lst: number; wind: number; elevation: number; kbdi?: number; humidity?: number }) => {
+  // Explicitly persist the selected zone's current slider values for 24h.
+  // Triggered by the "Save for 24 hours" button — NOT on every slider move, so
+  // researchers can freely experiment without writing to the server.
+  const saveOverrideFor24h = async (name: string) => {
     const scope = ZONE_SCOPE[zoneLevel];
     if (!scope) return;
-    if (persistTimer.current) clearTimeout(persistTimer.current);
-    persistTimer.current = setTimeout(() => {
-      apiFetch("/overrides", {
+    setSavingZone(name);
+    try {
+      const r = await apiFetch("/overrides", {
         method: "POST",
         body: JSON.stringify({
           scope, zone_id: name, zone_name: name,
-          evi: ov.evi, air_temp_encoded: ov.lst, wind: ov.wind,
-          humidity: ov.humidity ?? 50, elevation: ov.elevation, kbdi: ov.kbdi ?? 200,
+          evi: eviSlider, air_temp_encoded: lstSlider, wind: windSlider,
+          humidity: 50, elevation: elevSlider, kbdi: kbdiSlider,
         }),
-      }).catch((e) => console.warn("override persist failed:", e));
-    }, 700);
+      });
+      if (r.ok) {
+        const o = await r.json();
+        setSavedZones((prev) => ({ ...prev, [name]: { id: o.id, expiresAt: o.expires_at } }));
+      } else {
+        console.warn("override save failed:", r.status);
+      }
+    } catch (e) {
+      console.warn("override save failed:", e);
+    } finally {
+      setSavingZone(null);
+    }
+  };
+
+  // Clear a zone's override: drop the transient sliders AND delete any saved
+  // 24h row so the zone genuinely reverts to live data.
+  const resetZoneOverride = async (name: string) => {
+    setZoneOverrides((prev) => { const next = { ...prev }; delete next[name]; return next; });
+    const saved = savedZones[name];
+    if (saved) {
+      setSavedZones((prev) => { const next = { ...prev }; delete next[name]; return next; });
+      try { await apiFetch(`/overrides/${saved.id}`, { method: "DELETE" }); }
+      catch (e) { console.warn("override delete failed:", e); }
+    }
   };
 
   const updateZoneOverride = (field: string, val: number) => {
     if (!selectedZone || !useOverrides) return;
-    const merged = {
-      evi: eviSlider, lst: lstSlider, wind: windSlider, elevation: elevSlider, kbdi: kbdiSlider,
-      ...zoneOverrides[selectedZone],
-      [field]: val,
-    };
-    setZoneOverrides((prev) => ({ ...prev, [selectedZone]: merged }));
-    persistOverride(selectedZone, merged);
+    setZoneOverrides((prev) => ({
+      ...prev,
+      [selectedZone]: {
+        evi: eviSlider, lst: lstSlider, wind: windSlider, elevation: elevSlider, kbdi: kbdiSlider,
+        ...prev[selectedZone],
+        [field]: val,
+      },
+    }));
   };
 
   // Convert LST encoded value to Celsius for display
@@ -1008,13 +1041,33 @@ function ResearchMapView() {
                       </p>
                     </div>
 
-                    {useOverrides && selectedZone && zoneOverrides[selectedZone] && (
-                      <button
-                        onClick={() => setZoneOverrides((prev) => { const next = { ...prev }; delete next[selectedZone!]; return next; })}
-                        className="w-full text-xs text-red-500 hover:text-red-700 font-medium py-1.5 border border-red-200 rounded-md hover:bg-red-50"
-                      >
-                        Reset {selectedZone} to live data
-                      </button>
+                    {useOverrides && selectedZone && (
+                      <div className="space-y-2">
+                        <button
+                          onClick={() => saveOverrideFor24h(selectedZone!)}
+                          disabled={savingZone === selectedZone}
+                          className="w-full text-xs font-medium py-1.5 rounded-md bg-red-600 text-white hover:bg-red-700 disabled:opacity-50"
+                        >
+                          {savingZone === selectedZone
+                            ? "Saving…"
+                            : savedZones[selectedZone]
+                              ? "Saved ✓ — re-save to refresh 24h"
+                              : "Save for 24 hours"}
+                        </button>
+                        {savedZones[selectedZone] && (
+                          <p className="text-[10px] text-center text-muted-foreground">
+                            Persists for this account until {new Date(savedZones[selectedZone].expiresAt).toLocaleString()}, then reverts to live data.
+                          </p>
+                        )}
+                        {zoneOverrides[selectedZone] && (
+                          <button
+                            onClick={() => resetZoneOverride(selectedZone!)}
+                            className="w-full text-xs text-red-500 hover:text-red-700 font-medium py-1.5 border border-red-200 rounded-md hover:bg-red-50"
+                          >
+                            Reset {selectedZone} to live data
+                          </button>
+                        )}
+                      </div>
                     )}
                   </>
                 )}
