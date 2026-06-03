@@ -261,3 +261,35 @@ class UserOverride(db.Model):
     expires_at = db.Column(db.DateTime(timezone=True), nullable=False, index=True)
 
     user = db.relationship('User')
+
+
+class TrainingSample(db.Model):
+    """Durable, append-only store for the continuous-retraining dataset.
+
+    Lives in Postgres (not the ephemeral Render filesystem) so daily-ingested
+    samples survive redeploys. OFF the user hot path — only the ingest cron
+    writes it and only the retrain job reads it, so it never affects site speed.
+
+    One row = one labeled point: the 6 model features + the fire/no-fire label,
+    plus provenance (where it came from, when observed). De-duped on
+    (lat, lon, acq_date) so re-runs of the ingest don't double-count.
+    """
+    __tablename__ = 'training_samples'
+    __table_args__ = (
+        db.UniqueConstraint('lat', 'lon', 'acq_date', name='uq_training_sample_point'),
+    )
+
+    id = db.Column(db.Integer, primary_key=True)
+    lat = db.Column(db.Float, nullable=False)
+    lon = db.Column(db.Float, nullable=False)
+    acq_date = db.Column(db.String(10), nullable=False)  # YYYY-MM-DD of observation
+    # Six model features (same order/scale as ml/inference.py + the 2020 base CSV).
+    evi = db.Column(db.Float, nullable=False)
+    air_temp_encoded = db.Column(db.Float, nullable=False)
+    wind = db.Column(db.Float, nullable=False)
+    humidity = db.Column(db.Float, nullable=False)
+    elevation = db.Column(db.Float, nullable=False)
+    kbdi = db.Column(db.Float, nullable=False)
+    fire = db.Column(db.Integer, nullable=False)         # 1 = FIRMS detection, 0 = sampled no-fire
+    source = db.Column(db.String(32), nullable=False, default='firms_viirs')
+    ingested_at = db.Column(db.DateTime(timezone=True), server_default=func.now(), index=True)

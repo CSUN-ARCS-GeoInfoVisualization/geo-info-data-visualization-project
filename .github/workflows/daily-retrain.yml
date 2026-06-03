@@ -1,0 +1,77 @@
+name: Daily training ingest + gated retrain
+
+# Continuous model improvement:
+#   - ingest  (daily, SAFE): pull FIRMS detections + features into training_samples
+#   - retrain (daily): evaluate a monotonic candidate against the gate.
+#       * scheduled runs are DRY-RUN — they log whether it WOULD promote, but
+#         never touch the production model.
+#       * to actually promote (swap the live model), trigger manually with
+#         promote=true. That commits the new model + scaler, which deploys.
+# This keeps daily data accumulation flowing while the first/each model swap
+# stays a deliberate, reviewable action.
+
+on:
+  schedule:
+    - cron: '0 8 * * *'        # 08:00 UTC daily (after the 06:00 prewarm)
+  workflow_dispatch:
+    inputs:
+      promote:
+        description: 'Actually promote the model if the gate passes (commits + deploys)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+jobs:
+  ingest:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ingest a day of FIRMS detections + features
+        run: |
+          curl -sS -X POST "https://firescope-api.onrender.com/api/internal/ml/ingest?days=1" \
+            -H "X-Internal-Token: ${{ secrets.INTERNAL_CRON_TOKEN }}" \
+            -w "\ningest HTTP %{http_code}\n"
+
+  retrain:
+    needs: ingest
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install deps
+        run: pip install -r backend/requirements.txt
+      - name: Provide the 2020 base dataset
+        # The base CSV is gitignored; restore it from the repo secret (base64).
+        run: |
+          mkdir -p backend/ml/training_data
+          echo "${{ secrets.TRAINING_BASE_CSV_B64 }}" | base64 -d > backend/ml/training_data/california_2020_kbdi.csv || true
+      - name: Gated retrain
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        working-directory: backend
+        run: |
+          NOW=$(date -u +%Y-%m-%dT%H:%M:%S)
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.promote }}" = "true" ]; then
+            echo "PROMOTE mode"; python -m ml.retrain_and_gate --now "$NOW"
+          else
+            echo "DRY-RUN mode (scheduled)"; python -m ml.retrain_and_gate --dry-run --now "$NOW"
+          fi
+      - name: Commit promoted model
+        if: github.event_name == 'workflow_dispatch' && inputs.promote
+        run: |
+          if ! git diff --quiet -- backend/ml/models; then
+            git config user.name 'IdoCohen560'
+            git config user.email 'ido.the.cohen@gmail.com'
+            git add backend/ml/models/wildfire_model_predictive.pkl \
+                    backend/ml/models/wildfire_scaler_predictive.pkl \
+                    backend/ml/models/model_metadata.json \
+                    backend/ml/models/RETRAIN_LOG.md \
+                    backend/ml/models/archive || true
+            git commit -m "model: automated gated retrain promotion ($(date -u +%F))"
+            git push
+          else
+            echo "No model change to commit (gate rejected or no diff)."
+          fi
