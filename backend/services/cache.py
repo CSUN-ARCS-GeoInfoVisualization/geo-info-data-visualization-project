@@ -88,6 +88,7 @@ def _make_entry(data, ttl_seconds: int, content_type: str = 'application/json') 
         'etag': '"' + etag + '"',
         'content_type': content_type,
         'expires': _time.time() + ttl_seconds,
+        'data': data,  # raw payload so get_cached_data() can serve from cache
     }
 
 
@@ -128,6 +129,10 @@ def _load_from_db(cache_key: str) -> dict | None:
             return None
         body = bytes(row.body)
         body_br = bytes(row.body_br) if getattr(row, 'body_br', None) else None
+        try:
+            data = json.loads(body)  # so get_cached_data() can serve DB hits
+        except Exception:
+            data = None
         return {
             'body': body,
             'body_br': body_br,
@@ -135,6 +140,7 @@ def _load_from_db(cache_key: str) -> dict | None:
             'content_type': row.content_type,
             'expires': 0.0,
             'computed_at': row.computed_at.timestamp() if row.computed_at else 0.0,
+            'data': data,
         }
     except Exception as e:
         logger.warning('endpoint_cache DB read failed for %s: %s', cache_key, e)
@@ -150,6 +156,13 @@ def _save_to_db(cache_key: str, entry: dict) -> None:
     try:
         from datetime import datetime, timezone
         from models import db, EndpointCache
+        # Clear any failed/dirty transaction left by an earlier query on this
+        # session, otherwise the commit below silently rolls back and the cache
+        # never persists (root-caused 2026-06-03: calfire_incidents never saved).
+        try:
+            db.session.rollback()
+        except Exception:
+            pass
         now_dt = datetime.now(timezone.utc)
         row = EndpointCache.query.filter_by(cache_key=cache_key).first()
         if row is None:
