@@ -1,6 +1,5 @@
 {
-  "data_year": 2020,
-  "evi_spring_target": "2020-05-01",
+  "model_type": "monotonic_hgb_isotonic",
   "feature_cols": [
     "evi",
     "air_temp_encoded",
@@ -9,5 +8,16 @@
     "elevation",
     "kbdi"
   ],
-  "trained_at": "2026-05-04T18:22:03"
+  "monotonic_cst": [
+    0,
+    1,
+    1,
+    -1,
+    0,
+    1
+  ],
+  "trained_at": "2026-06-03T20:32:42",
+  "dataset": "california_2020_kbdi.csv(1350) + california_daily.csv(57)",
+  "rows": 1407,
+  "heldout_auroc": 0.8881438910174543
 }
