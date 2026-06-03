@@ -12,6 +12,7 @@ repo by the calling workflow (CSV append + commit). That keeps the growing
 training set in free storage with zero database cost-risk.
 """
 import os
+import time
 import random
 import logging
 
@@ -28,9 +29,13 @@ FIRMS_MAP_KEY = os.getenv("FIRMS_MAP_KEY", "")
 FIRMS_BASE = "https://firms.modaps.eosdis.nasa.gov/api/area/csv"
 CA_BBOX = (-124.0, 32.0, -114.0, 42.0)  # lon_min, lat_min, lon_max, lat_max
 
-# Per-run caps: bound endpoint runtime (each point = a few feature fetches).
-MAX_FIRE_PER_RUN = 60
-MAX_NOFIRE_PER_RUN = 60
+# Per-run caps: bound endpoint runtime. Each point = several external feature
+# fetches (~0.5-1s when cold), and the gunicorn worker timeout is 90s, so we keep
+# the point count low AND enforce a hard wall-clock budget below. The dataset
+# grows across daily runs, so a modest per-run count is fine.
+MAX_FIRE_PER_RUN = 15
+MAX_NOFIRE_PER_RUN = 15
+TIME_BUDGET_SECONDS = 55  # stop computing well before the 90s worker timeout
 
 # Column order the workflow appends to california_daily.csv (must match the base
 # CSV header: the 6 features + label, plus provenance).
@@ -107,8 +112,13 @@ def ingest():
             nofire_pts.append((la, lo, acq))
 
     rows = []
+    start = time.monotonic()
+    truncated = False
     for label, pts in ((1, fire_pts), (0, nofire_pts)):
         for lat, lon, acq_date in pts:
+            if time.monotonic() - start > TIME_BUDGET_SECONDS:
+                truncated = True
+                break
             if not acq_date:
                 continue
             try:
@@ -121,6 +131,8 @@ def ingest():
                 **feats, "fire": label,
                 "source": "firms_viirs" if label else "sampled_nofire",
             })
+        if truncated:
+            break
 
     return jsonify({"ok": True, "fires_seen": len(fires), "count": len(rows),
-                    "columns": ROW_COLS, "rows": rows}), 200
+                    "truncated": truncated, "columns": ROW_COLS, "rows": rows}), 200
