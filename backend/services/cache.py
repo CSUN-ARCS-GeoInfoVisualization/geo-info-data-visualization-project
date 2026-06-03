@@ -148,7 +148,9 @@ def _load_from_db(cache_key: str) -> dict | None:
 
 def _save_to_db(cache_key: str, entry: dict) -> None:
     try:
+        from datetime import datetime, timezone
         from models import db, EndpointCache
+        now_dt = datetime.now(timezone.utc)
         row = EndpointCache.query.filter_by(cache_key=cache_key).first()
         if row is None:
             row = EndpointCache(
@@ -157,6 +159,7 @@ def _save_to_db(cache_key: str, entry: dict) -> None:
                 body_br=entry.get('body_br'),
                 etag=entry['etag'].strip('"'),
                 content_type=entry.get('content_type', 'application/json'),
+                computed_at=now_dt,
             )
             db.session.add(row)
         else:
@@ -164,6 +167,11 @@ def _save_to_db(cache_key: str, entry: dict) -> None:
             row.body_br = entry.get('body_br')
             row.etag = entry['etag'].strip('"')
             row.content_type = entry.get('content_type', 'application/json')
+            # CRITICAL: advance computed_at on every write. Without this the
+            # timestamp stayed frozen at first-insert, so freshness checks saw an
+            # ever-growing age and recomputed on EVERY request (no cache benefit),
+            # which also masked staleness. (Root-caused 2026-06-03.)
+            row.computed_at = now_dt
         db.session.commit()
     except Exception as e:
         logger.warning('endpoint_cache DB write failed for %s: %s', cache_key, e)
@@ -204,7 +212,13 @@ def serve_cached(
     db_entry = _load_from_db(cache_key)
     if db_entry is not None:
         age = now - (db_entry.get('computed_at') or 0)
-        if age <= db_freshness:
+        # Observability backstop: if a row's age is wildly past its freshness
+        # window, the timestamp is likely frozen — log it loudly so a stuck cache
+        # is visible instead of silent, then fall through to recompute regardless.
+        if age > max(db_freshness * 4, 3600):
+            logger.warning('endpoint_cache %s is %.0fs old (freshness=%ds) — forcing recompute',
+                           cache_key, age, db_freshness)
+        elif age <= db_freshness:
             db_entry['expires'] = now + ttl_seconds
             _mem[cache_key] = db_entry
             return _respond(db_entry)
