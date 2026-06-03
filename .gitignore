@@ -37,7 +37,11 @@ migrations/__pycache__/
 migrations/versions/__pycache__/
 
 # ML — generated artifacts (do not commit)
-backend/ml/training_data/
+# training_data is committed (the continuous-retrain dataset lives in the repo),
+# except for any ad-hoc/local scratch files.
+backend/ml/training_data/*
+!backend/ml/training_data/california_2020_kbdi.csv
+!backend/ml/training_data/california_daily.csv
 backend/ml/charts/
 backend/ml/models/*_backup_*.pkl
 backend/ml/.appeears_task_id

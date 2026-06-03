@@ -45,9 +45,11 @@ _SCALER_OUT = os.path.join(_MODELS_DIR, "wildfire_scaler_predictive.pkl")
 _META_OUT = os.path.join(_MODELS_DIR, "model_metadata.json")
 _LOG = os.path.join(_MODELS_DIR, "RETRAIN_LOG.md")
 
-# Frozen 2020 base. The continuously-ingested rows live in the Postgres
-# training_samples table; _load_dataset() unions the two.
+# Both committed to the repo (zero DB cost-risk). The frozen 2020 base never
+# changes; the daily file is appended by the ingest cron. _load_dataset() unions
+# them and de-dups.
 _BASE = os.path.join(_TRAIN_DIR, "california_2020_kbdi.csv")
+_DAILY = os.path.join(_TRAIN_DIR, "california_daily.csv")
 
 AUROC_TOL = 0.005
 BRIER_TOL = 0.005
@@ -57,33 +59,20 @@ _DB_COLS = FEATURE_COLS + ["fire"]
 
 
 def _load_dataset():
-    """Union the frozen 2020 base CSV with all durable training_samples from
-    Postgres (the continuously-ingested rows). Falls back to CSV-only when no
-    DATABASE_URL is configured (e.g. local dev). Returns (df, description)."""
+    """Union the frozen 2020 base CSV with the daily-appended CSV (both committed
+    to the repo). De-dups identical rows so a re-ingested point can't double-count.
+    Returns (df, description)."""
     frames, parts = [], []
-    if os.path.exists(_BASE):
-        frames.append(pd.read_csv(_BASE)[_DB_COLS])
-        parts.append(os.path.basename(_BASE))
-
-    db_url = os.getenv("DATABASE_URL", "")
-    if db_url:
-        # SQLAlchemy needs postgresql:// (Render hands out postgres://).
-        if db_url.startswith("postgres://"):
-            db_url = db_url.replace("postgres://", "postgresql://", 1)
-        try:
-            import sqlalchemy
-            eng = sqlalchemy.create_engine(db_url)
-            cols = ", ".join(_DB_COLS)
-            ts = pd.read_sql(f"SELECT {cols} FROM training_samples", eng)
-            if len(ts):
-                frames.append(ts)
-                parts.append(f"training_samples({len(ts)})")
-        except Exception as e:
-            print(f"  training_samples read skipped: {e}")
+    for path in (_BASE, _DAILY):
+        if os.path.exists(path):
+            d = pd.read_csv(path)
+            if set(_DB_COLS).issubset(d.columns) and len(d):
+                frames.append(d[_DB_COLS])
+                parts.append(f"{os.path.basename(path)}({len(d)})")
 
     if not frames:
-        raise FileNotFoundError("no training data: base CSV missing and no DB rows")
-    df = pd.concat(frames, ignore_index=True).dropna(subset=_DB_COLS)
+        raise FileNotFoundError(f"no training data found at {_BASE} or {_DAILY}")
+    df = pd.concat(frames, ignore_index=True).dropna(subset=_DB_COLS).drop_duplicates()
     return df, " + ".join(parts)
 
 
