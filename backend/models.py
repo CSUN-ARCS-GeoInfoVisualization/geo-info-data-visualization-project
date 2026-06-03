@@ -217,7 +217,9 @@ class EndpointCache(db.Model):
     body_br = db.Column(db.LargeBinary, nullable=True)  # Brotli pre-compressed
     etag = db.Column(db.String(64), nullable=False)
     content_type = db.Column(db.String(64), nullable=False, default='application/json')
-    computed_at = db.Column(db.DateTime(timezone=True), server_default=func.now(), index=True)
+    # onupdate so the timestamp advances on every refresh (belt-and-suspenders
+    # with the explicit set in services/cache._save_to_db).
+    computed_at = db.Column(db.DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), index=True)
 
 
 class UserOverride(db.Model):
