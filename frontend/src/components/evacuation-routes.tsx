@@ -143,7 +143,7 @@ function FireFacilitiesOverlay({
   onRouteTo?: (target: { lat: number; lng: number; label: string }) => void;
   showFires?: boolean;
   showEvacZones?: boolean;
-  onZonesLoaded?: (count: number) => void;
+  onZonesLoaded?: (c: { orders: number; warnings: number }) => void;
   fitBoundsRef?: React.MutableRefObject<(() => void) | null>;
   onSheltersLoaded?: (count: number) => void;
   fitSheltersRef?: React.MutableRefObject<(() => void) | null>;
@@ -198,7 +198,12 @@ function FireFacilitiesOverlay({
         .then((data) => {
           if (!cancelled && data?.features) {
             setEvacZones(data);
-            onZonesLoaded?.(data.features.length);
+            // The Cal OES feed mixes Orders and Warnings — count them separately
+            // so the header is accurate (not "N orders" when some are warnings).
+            const st = (f: any) => String((f.properties || {}).STATUS || '').toLowerCase();
+            const orders = data.features.filter((f: any) => st(f).includes('order')).length;
+            const warnings = data.features.filter((f: any) => st(f).includes('warning')).length;
+            onZonesLoaded?.({ orders, warnings });
           }
         })
         .catch((e) => console.warn('Evac zones fetch failed:', e));
@@ -282,29 +287,37 @@ function FireFacilitiesOverlay({
     return names[usageCode] || 'Shelter';
   };
 
-  // Load GeoJSON data
+  // Load OPEN shelters, and refetch on an interval so a shelter that CLOSES
+  // drops off live (parity with the evac-zone refresh) without a page reload.
   useEffect(() => {
-    apiFetch('/shelters?state=CA')
-      .then(response => response.json())
-      .then(data => {
-        // User-facing page shows ONLY shelters that are currently active.
-        // Defensive CA-bbox filter on top of the server-side state=CA filter
-        // guards against any upstream feed bugs that slip a non-CA row in.
-        const filtered = (data.features || []).filter((f: any) => {
-          const p = f.properties || {};
-          if (p.state !== 'CA') return false;
-          if (String(p.shelter_status_code || '').toUpperCase() !== 'OPEN') return false;
-          const coords = f.geometry?.coordinates;
-          const lon = coords?.[0], lat = coords?.[1];
-          return isInCA(lat, lon);
+    let cancelled = false;
+    const load = () => {
+      apiFetch('/shelters?state=CA')
+        .then(response => response.json())
+        .then(data => {
+          if (cancelled) return;
+          // User-facing page shows ONLY shelters that are currently OPEN.
+          // Defensive CA-bbox filter on top of the server-side state=CA filter
+          // guards against any upstream feed bugs that slip a non-CA row in.
+          const filtered = (data.features || []).filter((f: any) => {
+            const p = f.properties || {};
+            if (p.state !== 'CA') return false;
+            if (String(p.shelter_status_code || '').toUpperCase() !== 'OPEN') return false;
+            const coords = f.geometry?.coordinates;
+            const lon = coords?.[0], lat = coords?.[1];
+            return isInCA(lat, lon);
+          });
+          console.log('Active CA shelters:', filtered.length, '/', (data.features || []).length, 'total');
+          setFacilitiesData(filtered);
+          onSheltersLoaded?.(filtered.length);
+        })
+        .catch(error => {
+          console.error('Error loading shelter data:', error);
         });
-        console.log('Active CA shelters:', filtered.length, '/', (data.features || []).length, 'total');
-        setFacilitiesData(filtered);
-        onSheltersLoaded?.(filtered.length);
-      })
-      .catch(error => {
-        console.error('Error loading shelter data:', error);
-      });
+    };
+    load();
+    const interval = setInterval(load, 300_000); // 5 min — aligns with the server-side shelter cache
+    return () => { cancelled = true; clearInterval(interval); };
   }, []);
 
   // Close tooltip when clicking outside
@@ -1156,7 +1169,7 @@ export function EvacuationRoutes() {
   const [routeTarget, setRouteTarget] = useState<{ lat: number; lng: number; label: string } | null>(null);
   const [showFires, setShowFires] = useState(true);
   const [showEvacZones, setShowEvacZones] = useState(true);
-  const [activeZoneCount, setActiveZoneCount] = useState(0);
+  const [evacCounts, setEvacCounts] = useState<{ orders: number; warnings: number }>({ orders: 0, warnings: 0 });
   const fitZonesRef = useRef<(() => void) | null>(null);
   const [openShelterCount, setOpenShelterCount] = useState(0);
   const fitSheltersRef = useRef<(() => void) | null>(null);
@@ -1227,22 +1240,25 @@ export function EvacuationRoutes() {
 
       {/* Active Evacuation Banner — always visible so users see the live state,
           even when zero. Matches the always-on shelter banner below. */}
-      <Alert className={`border-l-4 ${activeZoneCount > 0 ? 'border-l-red-500 bg-red-50' : 'border-l-zinc-300 bg-zinc-50'}`}>
-        <AlertTriangle className={`h-4 w-4 ${activeZoneCount > 0 ? 'text-red-600' : 'text-zinc-500'}`} />
+      <Alert className={`border-l-4 ${evacCounts.orders > 0 ? 'border-l-red-500 bg-red-50' : (evacCounts.warnings > 0 ? 'border-l-orange-500 bg-orange-50' : 'border-l-zinc-300 bg-zinc-50')}`}>
+        <AlertTriangle className={`h-4 w-4 ${evacCounts.orders > 0 ? 'text-red-600' : (evacCounts.warnings > 0 ? 'text-orange-600' : 'text-zinc-500')}`} />
         <AlertDescription>
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div className="text-sm">
-              {activeZoneCount > 0 ? (
+              {evacCounts.orders + evacCounts.warnings > 0 ? (
                 <>
-                  <strong className="text-red-700">{activeZoneCount} active evacuation order{activeZoneCount === 1 ? '' : 's'}</strong> in California right now (Cal OES live feed). They appear as red dots on the map below — click "Show on map" to zoom to them.
+                  <strong className="text-red-700">{evacCounts.orders} active evacuation order{evacCounts.orders === 1 ? '' : 's'}</strong>
+                  {' and '}
+                  <strong className="text-orange-700">{evacCounts.warnings} warning{evacCounts.warnings === 1 ? '' : 's'}</strong>
+                  {' '}in California right now (Cal OES live feed). Orders show as red zones, warnings as orange — click "Show on map" to zoom to them. Lifted orders drop off automatically.
                 </>
               ) : (
                 <>
-                  <strong className="text-zinc-700">0 active evacuation orders</strong> in California right now (Cal OES live feed). When an order or warning is issued, it'll appear here automatically.
+                  <strong className="text-zinc-700">0 active evacuation orders or warnings</strong> in California right now (Cal OES live feed). When an order or warning is issued, it'll appear here automatically.
                 </>
               )}
             </div>
-            {activeZoneCount > 0 && (
+            {evacCounts.orders + evacCounts.warnings > 0 && (
               <Button
                 size="sm"
                 variant="destructive"
@@ -1338,7 +1354,7 @@ export function EvacuationRoutes() {
                 onRouteTo={handleRouteTo}
                 showFires={showFires}
                 showEvacZones={showEvacZones}
-                onZonesLoaded={setActiveZoneCount}
+                onZonesLoaded={setEvacCounts}
                 fitBoundsRef={fitZonesRef}
                 onSheltersLoaded={setOpenShelterCount}
                 fitSheltersRef={fitSheltersRef}
