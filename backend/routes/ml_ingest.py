@@ -4,20 +4,20 @@ POST /api/internal/ml/ingest  (X-Internal-Token, hit by the daily GitHub Action)
 
 Pulls the last N days of FIRMS VIIRS fire detections over California, samples a
 matched set of no-fire points, computes the 6 model features for each via the
-same live modules production already uses, and appends them to training_samples
-(de-duped on lat/lon/acq_date). Off the user hot path; capped per run so a day's
-ingest is bounded in both runtime and DB growth.
+same live modules production already uses, and RETURNS them as JSON rows.
+
+It does NOT persist anything: feature computation happens here (on Render, where
+the live modules + their caches live), but the rows are stored in the GitHub
+repo by the calling workflow (CSV append + commit). That keeps the growing
+training set in free storage with zero database cost-risk.
 """
 import os
-import math
 import random
 import logging
 
 import requests
 from flask import Blueprint, request, jsonify
-from sqlalchemy import text
 
-from models import db, TrainingSample
 from data.features import get_feature
 from data.live_weather import get_weather
 
@@ -28,14 +28,17 @@ FIRMS_MAP_KEY = os.getenv("FIRMS_MAP_KEY", "")
 FIRMS_BASE = "https://firms.modaps.eosdis.nasa.gov/api/area/csv"
 CA_BBOX = (-124.0, 32.0, -114.0, 42.0)  # lon_min, lat_min, lon_max, lat_max
 
-# Per-run caps: bound runtime (each point = a few feature fetches) and DB growth.
+# Per-run caps: bound endpoint runtime (each point = a few feature fetches).
 MAX_FIRE_PER_RUN = 60
 MAX_NOFIRE_PER_RUN = 60
-ROW_CAP = 200_000  # hard safety ceiling on the table (256MB DB has years of room)
+
+# Column order the workflow appends to california_daily.csv (must match the base
+# CSV header: the 6 features + label, plus provenance).
+ROW_COLS = ["lat", "lon", "acq_date", "evi", "air_temp_encoded", "wind",
+            "humidity", "elevation", "kbdi", "fire", "source"]
 
 
 def _features_for(lat, lon):
-    """The 6 model features for a point, via the live modules prod already uses."""
     wx = get_weather(lat, lon) or {}
     return {
         "evi": float(get_feature(lat, lon, "evi")),
@@ -52,7 +55,6 @@ def _far_from_fires(lat, lon, fires, min_deg=0.15):
 
 
 def _fetch_firms(days):
-    """Return [(lat, lon, acq_date)] of CA VIIRS detections over the last `days`."""
     if not FIRMS_MAP_KEY:
         return []
     lon0, lat0, lon1, lat1 = CA_BBOX
@@ -85,9 +87,6 @@ def ingest():
     if request.headers.get("X-Internal-Token", "") != expected:
         return jsonify({"error": "invalid X-Internal-Token"}), 401
 
-    if db.session.query(TrainingSample).count() >= ROW_CAP:
-        return jsonify({"ok": True, "skipped": "row cap reached", "added": 0}), 200
-
     days = int(request.args.get("days", 1))
     try:
         fires = _fetch_firms(days)
@@ -97,19 +96,17 @@ def ingest():
 
     rng = random.Random(20260603)
     fire_pts = fires[:MAX_FIRE_PER_RUN]
-
-    # Matched no-fire points: random CA land points kept clear of any detection.
     lon0, lat0, lon1, lat1 = CA_BBOX
     acq = fires[0][2] if fires else request.args.get("date", "")
+
     nofire_pts, tries = [], 0
     while len(nofire_pts) < min(MAX_NOFIRE_PER_RUN, max(len(fire_pts), 10)) and tries < 2000:
         tries += 1
-        la = rng.uniform(lat0, lat1)
-        lo = rng.uniform(lon0, lon1)
+        la, lo = rng.uniform(lat0, lat1), rng.uniform(lon0, lon1)
         if _far_from_fires(la, lo, fires):
             nofire_pts.append((la, lo, acq))
 
-    added, skipped = 0, 0
+    rows = []
     for label, pts in ((1, fire_pts), (0, nofire_pts)):
         for lat, lon, acq_date in pts:
             if not acq_date:
@@ -119,19 +116,11 @@ def ingest():
             except Exception as e:
                 logger.warning("feature fetch failed @ %.3f,%.3f: %s", lat, lon, e)
                 continue
-            row = TrainingSample(
-                lat=round(lat, 5), lon=round(lon, 5), acq_date=acq_date,
-                fire=label, source=("firms_viirs" if label else "sampled_nofire"),
-                **feats,
-            )
-            db.session.add(row)
-            try:
-                db.session.commit()
-                added += 1
-            except Exception:
-                db.session.rollback()  # unique(lat,lon,acq_date) -> already ingested
-                skipped += 1
+            rows.append({
+                "lat": round(lat, 5), "lon": round(lon, 5), "acq_date": acq_date,
+                **feats, "fire": label,
+                "source": "firms_viirs" if label else "sampled_nofire",
+            })
 
-    total = db.session.query(TrainingSample).count()
-    return jsonify({"ok": True, "fires_seen": len(fires), "added": added,
-                    "skipped_dupes": skipped, "table_total": total}), 200
+    return jsonify({"ok": True, "fires_seen": len(fires), "count": len(rows),
+                    "columns": ROW_COLS, "rows": rows}), 200
