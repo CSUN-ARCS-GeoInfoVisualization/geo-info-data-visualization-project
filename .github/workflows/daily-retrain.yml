@@ -35,7 +35,9 @@ jobs:
         with:
           python-version: '3.12'
       - name: Install deps
-        run: pip install -r backend/requirements.txt
+        # requirements.txt covers inference (numpy/scikit-learn/joblib); pandas is
+        # training-only, so add it explicitly for the retrain step.
+        run: pip install -r backend/requirements.txt pandas
 
       - name: Ingest a day of FIRMS detections + features
         env:
