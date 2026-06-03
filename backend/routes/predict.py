@@ -491,6 +491,15 @@ _EVAC_ZONE_CACHE: dict = {"data": None, "expires": 0.0}
 _EVAC_ZONE_TTL = 60  # Cal OES pipeline refreshes ~10 min upstream; 60s keeps UI fresh
 
 
+# Cal OES retains stale/test zones in the "active" feed (verified 2026-06: the
+# 16 returned zones included 2023 flooding zones and explicit "**TEST**" records
+# alongside genuinely-current orders). We drop TEST-tagged zones and anything not
+# edited within this window so users only see CURRENTLY-active orders. Real active
+# evacuations are re-confirmed frequently (the genuine zones were edited ~1h ago),
+# so a 7-day window keeps current emergencies and drops lingering/stale entries.
+_EVAC_STALE_MS = 7 * 24 * 3600 * 1000  # 7 days
+
+
 def _compute_evac_zones() -> dict:
     try:
         r = http_requests.get(
@@ -498,8 +507,11 @@ def _compute_evac_zones() -> dict:
             'CA_EVACUATIONS_PROD/FeatureServer/0/query',
             params={
                 'where': "1=1",
-                'outFields': 'COUNTY,ZONE_NAME,ZONE_ID,STATUS,EVENT_TYPE,'
-                             'CRITICAL_INFO,PUBLIC_INFO,STATEWIDE_LAST_UPDATED',
+                # NOTES carries the real cause (e.g. "Fire near Marron Valley Rd");
+                # EDIT_DATE is the real last-updated stamp (the STATEWIDE_* one is
+                # null upstream). Both were previously not requested.
+                'outFields': 'COUNTY,CITY,ZONE_NAME,ZONE_ID,STATUS,EVENT_TYPE,'
+                             'CRITICAL_INFO,PUBLIC_INFO,NOTES,EDIT_DATE,STATEWIDE_LAST_UPDATED',
                 'outSR': '4326',
                 'f': 'geojson',
             },
@@ -507,7 +519,22 @@ def _compute_evac_zones() -> dict:
             headers={'User-Agent': 'FireScopeProxy/1.0'},
         )
         r.raise_for_status()
-        return r.json() or {'type': 'FeatureCollection', 'features': []}
+        data = r.json() or {'type': 'FeatureCollection', 'features': []}
+
+        cutoff = (time.time() * 1000) - _EVAC_STALE_MS
+        kept = []
+        for f in data.get('features', []) or []:
+            p = f.get('properties', {}) or {}
+            if 'TEST' in str(p.get('NOTES') or '').upper():
+                continue  # explicit test record
+            ed = p.get('EDIT_DATE')
+            if not isinstance(ed, (int, float)) or ed < cutoff:
+                continue  # stale (or unknown age) — not a current emergency
+            kept.append(f)
+        logger.info('Evac zones: %d active after filtering (from %d upstream)',
+                    len(kept), len(data.get('features', []) or []))
+        data['features'] = kept
+        return data
     except Exception as e:
         logger.warning('Cal OES evacuation zones proxy failed: %s', e)
         return {'type': 'FeatureCollection', 'features': []}
