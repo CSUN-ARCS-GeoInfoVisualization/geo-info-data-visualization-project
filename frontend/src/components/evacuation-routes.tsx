@@ -783,17 +783,21 @@ function FireFacilitiesOverlay({
                 {p.ZONE_ID && (<><dt className="col-span-1 text-zinc-500">Zone ID</dt><dd className="col-span-2 font-mono text-[11px]">{p.ZONE_ID}</dd></>)}
                 {p.COUNTY && (<><dt className="col-span-1 text-zinc-500">County</dt><dd className="col-span-2">{p.COUNTY}</dd></>)}
                 {p.EVENT_TYPE && (<><dt className="col-span-1 text-zinc-500">Event</dt><dd className="col-span-2">{p.EVENT_TYPE}</dd></>)}
-                {p.STATEWIDE_LAST_UPDATED && (
+                {(p.STATEWIDE_LAST_UPDATED || p.EDIT_DATE) && (
                   <>
                     <dt className="col-span-1 text-zinc-500">Last updated</dt>
                     <dd className="col-span-2">
-                      {new Date(p.STATEWIDE_LAST_UPDATED).toLocaleString()}
-                      {' '}
-                      <span className="text-zinc-400">({Math.max(1, Math.round((Date.now() - new Date(p.STATEWIDE_LAST_UPDATED).getTime()) / 60000))} min ago)</span>
+                      {new Date(p.STATEWIDE_LAST_UPDATED || p.EDIT_DATE).toLocaleString()}
                     </dd>
                   </>
                 )}
               </dl>
+              {p.NOTES && !/test/i.test(String(p.NOTES)) && (
+                <div className="border-l-3 border-amber-500 pl-3 py-1 bg-amber-50/60 text-zinc-900 text-sm rounded-r">
+                  <div className="font-semibold text-xs text-amber-800 mb-0.5">Details</div>
+                  {p.NOTES}
+                </div>
+              )}
               {p.CRITICAL_INFO && (
                 <div className="border-l-3 border-red-500 pl-3 py-1 bg-red-50/60 text-zinc-900 text-sm rounded-r">
                   <div className="font-semibold text-xs text-red-800 mb-0.5">Critical info</div>
