@@ -44,10 +44,13 @@ jobs:
       - name: Install deps
         run: pip install -r backend/requirements.txt
       - name: Provide the 2020 base dataset
-        # The base CSV is gitignored; restore it from the repo secret (base64).
+        # The base CSV is gitignored; restore it from two repo secrets (gzip+base64,
+        # split because a single secret can't exceed 48 KB).
         run: |
           mkdir -p backend/ml/training_data
-          echo "${{ secrets.TRAINING_BASE_CSV_B64 }}" | base64 -d > backend/ml/training_data/california_2020_kbdi.csv || true
+          printf '%s%s' "${{ secrets.TRAINING_BASE_CSV_GZ_B64_1 }}" "${{ secrets.TRAINING_BASE_CSV_GZ_B64_2 }}" \
+            | base64 -d | gunzip > backend/ml/training_data/california_2020_kbdi.csv
+          wc -l backend/ml/training_data/california_2020_kbdi.csv
       - name: Gated retrain
         env:
           DATABASE_URL: ${{ secrets.DATABASE_URL }}
