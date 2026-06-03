@@ -739,7 +739,8 @@ function FireFacilitiesOverlay({
                 {p.attr_POOState && (<><dt className="col-span-1 text-zinc-500">State</dt><dd className="col-span-2">{p.attr_POOState}</dd></>)}
                 {discovered && (<><dt className="col-span-1 text-zinc-500">Discovered</dt><dd className="col-span-2">{discovered}</dd></>)}
                 {p.attr_FireCause && (<><dt className="col-span-1 text-zinc-500">Cause</dt><dd className="col-span-2">{p.attr_FireCause}</dd></>)}
-                {p.attr_IncidentManagementOrganization && (<><dt className="col-span-1 text-zinc-500">Managing org</dt><dd className="col-span-2">{p.attr_IncidentManagementOrganization}</dd></>)}
+                {p.attr_IncidentManagementOrg && (<><dt className="col-span-1 text-zinc-500">Managing org</dt><dd className="col-span-2">{p.attr_IncidentManagementOrg}</dd></>)}
+                {p.attr_IncidentTypeCategory && (<><dt className="col-span-1 text-zinc-500">Incident type</dt><dd className="col-span-2">{p.attr_IncidentTypeCategory}</dd></>)}
                 {p.attr_UniqueFireIdentifier && (<><dt className="col-span-1 text-zinc-500">Fire ID</dt><dd className="col-span-2 font-mono text-[11px]">{p.attr_UniqueFireIdentifier}</dd></>)}
               </dl>
               <div className="pt-2 border-t border-zinc-100 text-[11px] text-zinc-400">
