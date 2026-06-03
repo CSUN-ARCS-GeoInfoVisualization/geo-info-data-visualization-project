@@ -139,6 +139,7 @@ function FireFacilitiesOverlay({
   fitBoundsRef,
   onSheltersLoaded,
   fitSheltersRef,
+  onFiresLoaded,
 }: {
   smallDots?: boolean;
   onRouteTo?: (target: { lat: number; lng: number; label: string }) => void;
@@ -148,6 +149,7 @@ function FireFacilitiesOverlay({
   fitBoundsRef?: React.MutableRefObject<(() => void) | null>;
   onSheltersLoaded?: (count: number) => void;
   fitSheltersRef?: React.MutableRefObject<(() => void) | null>;
+  onFiresLoaded?: (count: number) => void;
 }) {
   const map = useMap();
   // Ref-based overlay (v2.7 GoogleRiskMap pattern): create the deck.gl
@@ -185,7 +187,7 @@ function FireFacilitiesOverlay({
     apiFetch('/fire-perimeters')
       .then((r) => (r.ok ? r.json() : { features: [] }))
       .then((data) => {
-        if (data?.features) setFirePerimeters(data);
+        if (data?.features) { setFirePerimeters(data); onFiresLoaded?.(data.features.length); }
       })
       .catch((e) => console.warn('NIFC perimeters fetch failed (evac):', e));
   }, []);
@@ -1178,6 +1180,7 @@ export function EvacuationRoutes() {
   const [evacCounts, setEvacCounts] = useState<{ orders: number; warnings: number }>({ orders: 0, warnings: 0 });
   const fitZonesRef = useRef<(() => void) | null>(null);
   const [openShelterCount, setOpenShelterCount] = useState(0);
+  const [activeFireCount, setActiveFireCount] = useState(0);
   const fitSheltersRef = useRef<(() => void) | null>(null);
 
   const handleRouteTo = (target: { lat: number; lng: number; label: string }) => {
@@ -1308,13 +1311,13 @@ export function EvacuationRoutes() {
       </Alert>
 
       {/* Active Fires Banner — total live active fire perimeters in CA. */}
-      <Alert className={`border-l-4 ${(firePerimeters?.features?.length || 0) > 0 ? 'border-l-red-500 bg-red-50' : 'border-l-zinc-300 bg-zinc-50'}`}>
-        <Flame className={`h-4 w-4 ${(firePerimeters?.features?.length || 0) > 0 ? 'text-red-600' : 'text-zinc-500'}`} />
+      <Alert className={`border-l-4 ${activeFireCount > 0 ? 'border-l-red-500 bg-red-50' : 'border-l-zinc-300 bg-zinc-50'}`}>
+        <Flame className={`h-4 w-4 ${activeFireCount > 0 ? 'text-red-600' : 'text-zinc-500'}`} />
         <AlertDescription>
           <div className="text-sm">
-            {(firePerimeters?.features?.length || 0) > 0 ? (
+            {activeFireCount > 0 ? (
               <>
-                <strong className="text-red-700">{firePerimeters.features.length} active fire{firePerimeters.features.length === 1 ? '' : 's'}</strong> burning in California right now (NIFC live feed). They appear as red/orange perimeters on the map below; fully-contained fires drop off automatically.
+                <strong className="text-red-700">{activeFireCount} active fire{activeFireCount === 1 ? '' : 's'}</strong> burning in California right now (NIFC live feed). They appear as red/orange perimeters on the map below; fully-contained fires drop off automatically.
               </>
             ) : (
               <>
@@ -1382,6 +1385,7 @@ export function EvacuationRoutes() {
                 fitBoundsRef={fitZonesRef}
                 onSheltersLoaded={setOpenShelterCount}
                 fitSheltersRef={fitSheltersRef}
+                onFiresLoaded={setActiveFireCount}
               />
               <SavedLocationsOverlay />
             </Map>
