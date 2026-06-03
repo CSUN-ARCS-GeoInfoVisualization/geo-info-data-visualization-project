@@ -433,12 +433,15 @@ def _compute_nifc_perimeters() -> dict:
             'https://services3.arcgis.com/T4QMspbfLg3qTGWY/arcgis/rest/services/'
             'WFIGS_Interagency_Perimeters_YearToDate/FeatureServer/0/query',
             params={
-                'where': "attr_POOState='US-CA' AND (attr_PercentContained IS NULL OR attr_PercentContained < 100)",
-                # Rich fields for the popup (county/cause/managing-org/fire-id/type).
-                # Verified present in the WFIGS layer; note the org field is
-                # attr_IncidentManagementOrg (NOT ...Organization).
+                # REAL active fires only: wildfire-type, not declared out, not
+                # 100% contained. Excludes the non-fire dispatch records (ASSIST,
+                # "NEED FRE CODE") + already-out fires. Staleness (perimeter not
+                # updated recently) is filtered below via poly_DateCurrent.
+                'where': ("attr_POOState='US-CA' AND attr_IncidentTypeCategory='WF' "
+                          "AND attr_FireOutDateTime IS NULL "
+                          "AND (attr_PercentContained IS NULL OR attr_PercentContained < 100)"),
                 'outFields': 'poly_IncidentName,poly_GISAcres,poly_FeatureCategory,'
-                             'attr_PercentContained,attr_FireDiscoveryDateTime,'
+                             'attr_PercentContained,attr_FireDiscoveryDateTime,poly_DateCurrent,'
                              'attr_POOCounty,attr_FireCause,attr_IncidentManagementOrg,'
                              'attr_UniqueFireIdentifier,attr_IncidentTypeCategory,attr_IncidentName',
                 'f': 'geojson',
@@ -454,9 +457,16 @@ def _compute_nifc_perimeters() -> dict:
 
     try:
         lookup = _fetch_containment_by_name()
+        # A perimeter not updated within this window is treated as stale — the
+        # fire is no longer being tracked as current, so "there's no fire there."
+        stale_cutoff_ms = (time.time() - 14 * 24 * 3600) * 1000
         kept = []
         for feat in (data or {}).get('features', []) or []:
             props = feat.get('properties') or {}
+            # Drop stale perimeters: poly_DateCurrent missing or older than 14d.
+            dc = props.get('poly_DateCurrent')
+            if not isinstance(dc, (int, float)) or dc < stale_cutoff_ms:
+                continue
             # ALWAYS prefer CAL FIRE's containment when available — it's
             # the authoritative source for CA fires and updates faster
             # than NIFC's WFIGS feed. Previously we only enriched when
