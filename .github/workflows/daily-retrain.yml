@@ -91,4 +91,15 @@ jobs:
           else
             git commit -m "ml: daily ingest$( [ "${{ inputs.promote }}" = "true" ] && echo ' + model promotion')  ($(date -u +%F))"
             git push
+            echo "pushed=true" >> "$GITHUB_OUTPUT"
           fi
+        id: commit
+
+      - name: Trigger domain-deployment sync (deploy)
+        # A push made with GITHUB_TOKEN does NOT trigger other workflows, so the
+        # commit above won't auto-fire sync-domain-deployment. workflow_dispatch
+        # IS an allowed exception, so trigger it explicitly to reach Render/Netlify.
+        if: steps.commit.outputs.pushed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run sync-domain-deployment.yml --repo "${{ github.repository }}"
