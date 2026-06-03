@@ -1,11 +1,18 @@
-"""Per-user saved risk-override snapshots.
+"""Per-user, per-zone risk overrides with a 24h time-to-live.
 
-A signed-in user saves the slider values they tried for a zone; the resulting
-risk_score+label are computed once (via the live model) and frozen on the row,
-so the history panel and the email digest never recompute and never drift.
+A signed-in researcher adjusts the sliders for a zone; the values are persisted
+server-side so the override survives leaving and returning to the page. Exactly
+ONE active override per (user, scope, zone) — re-saving the same zone upserts
+and refreshes the 24h window. Expired rows are pruned on the next read/write,
+so the zone automatically falls back to live data and the row is freed.
+
+The resulting risk_score+label are computed once (via the live model) and frozen
+on the row, so reads never recompute and never drift.
 
 Auth mirrors routes/locations.py: JWT identity -> int user id, owner-scoped.
 """
+from datetime import datetime, timedelta, timezone
+
 from flask import Blueprint, request, jsonify
 from flask_jwt_extended import jwt_required, get_jwt_identity
 from models import db, UserOverride
@@ -15,6 +22,11 @@ overrides_bp = Blueprint('overrides', __name__)
 
 VALID_SCOPES = {'county', 'zip', 'neighborhood', 'tract'}
 _FEATURES = ('evi', 'air_temp_encoded', 'wind', 'humidity', 'elevation', 'kbdi')
+OVERRIDE_TTL = timedelta(hours=24)
+
+
+def _now():
+    return datetime.now(timezone.utc)
 
 
 def _coerce_user_id():
@@ -23,6 +35,18 @@ def _coerce_user_id():
         return int(raw)
     except (TypeError, ValueError):
         return None
+
+
+def _prune_expired(user_id):
+    """Delete the user's expired overrides so the space frees back up and those
+    zones revert to live data. Called on every read/write."""
+    deleted = (UserOverride.query
+               .filter(UserOverride.user_id == user_id,
+                       UserOverride.expires_at <= _now())
+               .delete(synchronize_session=False))
+    if deleted:
+        db.session.commit()
+    return deleted
 
 
 def _serialize(o: UserOverride) -> dict:
@@ -41,13 +65,15 @@ def _serialize(o: UserOverride) -> dict:
         'label': o.label,
         'note': o.note,
         'created_at': o.created_at.isoformat() if o.created_at else None,
+        'updated_at': o.updated_at.isoformat() if o.updated_at else None,
+        'expires_at': o.expires_at.isoformat() if o.expires_at else None,
     }
 
 
 @overrides_bp.route('/overrides', methods=['GET'])
 @jwt_required()
 def list_overrides():
-    """List the current user's saved overrides, newest first.
+    """List the current user's *active* (non-expired) overrides, newest first.
 
     Optional ?scope=county|zip|neighborhood|tract filter.
     """
@@ -55,21 +81,24 @@ def list_overrides():
     if not user_id:
         return jsonify({'error': 'Invalid token'}), 401
 
-    q = UserOverride.query.filter_by(user_id=user_id)
+    _prune_expired(user_id)
+
+    q = UserOverride.query.filter(UserOverride.user_id == user_id,
+                                  UserOverride.expires_at > _now())
     scope = request.args.get('scope')
     if scope is not None:
         if scope not in VALID_SCOPES:
             return jsonify({'error': f'scope must be one of {sorted(VALID_SCOPES)}'}), 400
-        q = q.filter_by(scope=scope)
-    rows = q.order_by(UserOverride.created_at.desc()).all()
+        q = q.filter(UserOverride.scope == scope)
+    rows = q.order_by(UserOverride.updated_at.desc()).all()
     return jsonify([_serialize(o) for o in rows])
 
 
 @overrides_bp.route('/overrides', methods=['POST'])
 @jwt_required()
 def save_override():
-    """Save a snapshot. Computes risk_score+label from the 6 features at save
-    time so the stored values never drift from what the user saw."""
+    """Upsert the override for (user, scope, zone): refreshes values + the 24h
+    window. risk_score+label are computed from the 6 features at save time."""
     user_id = _coerce_user_id()
     if not user_id:
         return jsonify({'error': 'Invalid token'}), 401
@@ -92,28 +121,36 @@ def save_override():
     note = data.get('note')
     if note is not None:
         note = str(note).strip()[:280] or None
+    zone_name = (str(data['zone_name']).strip()[:128] if data.get('zone_name') else None)
+
+    _prune_expired(user_id)
 
     result = predict_from_features(**features)
+    expires_at = _now() + OVERRIDE_TTL
 
-    o = UserOverride(
-        user_id=user_id,
-        scope=scope,
-        zone_id=zone_id,
-        zone_name=(str(data['zone_name']).strip()[:128] if data.get('zone_name') else None),
-        risk_score=result['risk_score'],
-        label=result['label'],
-        note=note,
-        **features,
-    )
-    db.session.add(o)
+    o = (UserOverride.query
+         .filter_by(user_id=user_id, scope=scope, zone_id=zone_id)
+         .first())
+    if o is None:
+        o = UserOverride(user_id=user_id, scope=scope, zone_id=zone_id)
+        db.session.add(o)
+    # Upsert the values + refresh the window.
+    o.zone_name = zone_name
+    o.note = note
+    for k, v in features.items():
+        setattr(o, k, v)
+    o.risk_score = result['risk_score']
+    o.label = result['label']
+    o.expires_at = expires_at
+
     db.session.commit()
-    return jsonify(_serialize(o)), 201
+    return jsonify(_serialize(o)), 200
 
 
 @overrides_bp.route('/overrides/<int:override_id>', methods=['DELETE'])
 @jwt_required()
 def delete_override(override_id):
-    """Owner-scoped delete."""
+    """Owner-scoped delete (manual clear before expiry)."""
     user_id = _coerce_user_id()
     if not user_id:
         return jsonify({'error': 'Invalid token'}), 401

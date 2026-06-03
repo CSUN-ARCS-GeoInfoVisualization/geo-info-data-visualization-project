@@ -373,6 +373,15 @@ function UnifiedResearchOverlay({ features, showHeatmap, zoneGeoJson, zoneRiskDa
 /* ------------------------------------------------------------------ */
 /*  Researcher / Admin view — interactive map with sliders             */
 /* ------------------------------------------------------------------ */
+
+// Map the UI's zoneLevel onto the server's override scope vocabulary.
+const ZONE_SCOPE: Record<string, string> = {
+  "counties": "county",
+  "zip-codes": "zip",
+  "neighborhoods": "neighborhood",
+  "census-tracts": "tract",
+};
+
 function ResearchMapView() {
   // Shelter overlay state — opt-in researcher tool, default OFF.
   // Lazy-load shelters only the first time the toggle is flipped on so the
@@ -435,7 +444,9 @@ function ResearchMapView() {
   const [taSlider, setTaSlider] = useState(0); // MODIS thermal anomalies level, 0-100
   const [ndviSlider, setNdviSlider] = useState(0.3); // -1 to 1 in theory; 0-1 for vegetation cover
   const [fireBinary, setFireBinary] = useState(false); // binary fire occurrence outcome label
-  const [zoneOverrides, setZoneOverrides] = useState<Record<string, { evi: number; lst: number; wind: number; elevation: number; date?: number; latitude?: number; longitude?: number; ta?: number; ndvi?: number; fire?: boolean }>>({});
+  const [zoneOverrides, setZoneOverrides] = useState<Record<string, { evi: number; lst: number; wind: number; elevation: number; kbdi?: number; humidity?: number; date?: number; latitude?: number; longitude?: number; ta?: number; ndvi?: number; fire?: boolean }>>({});
+  // Debounce timer for persisting slider edits to the server (per-zone, 24h TTL).
+  const persistTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -554,18 +565,61 @@ function ResearchMapView() {
       .catch((e) => console.warn("Risk data load failed:", e));
   }, [zoneGeoJson, zoneLevel, useOverrides, zoneOverrides]);
 
+  // Hydrate saved overrides for the current scope from the server. These are
+  // per-user and live 24h server-side, so a researcher's slider values survive
+  // leaving and returning to the page (and reset to live data after expiry).
+  useEffect(() => {
+    const scope = ZONE_SCOPE[zoneLevel];
+    if (!scope) return;
+    let cancelled = false;
+    apiFetch(`/overrides?scope=${scope}`)
+      .then((r) => (r.ok ? r.json() : []))
+      .then((rows: any[]) => {
+        if (cancelled || !Array.isArray(rows)) return;
+        const map: Record<string, any> = {};
+        for (const o of rows) {
+          // Server stores air_temp_encoded; the sliders still use the legacy
+          // `lst` name (same scale) — remap on the way in.
+          map[o.zone_name || o.zone_id] = {
+            evi: o.evi, lst: o.air_temp_encoded, wind: o.wind,
+            elevation: o.elevation, kbdi: o.kbdi, humidity: o.humidity,
+          };
+        }
+        setZoneOverrides(map);
+        if (rows.length > 0) setUseOverrides(true);
+      })
+      .catch(() => {});
+    return () => { cancelled = true; };
+  }, [zoneLevel]);
+
   const zoneNameKey = zoneLevel === "counties" ? "name" : zoneLevel === "zip-codes" ? "zip" : zoneLevel === "census-tracts" ? "tract" : "name";
+
+  // Debounced upsert of one zone's override to the server (per-user, 24h TTL).
+  const persistOverride = (name: string, ov: { evi: number; lst: number; wind: number; elevation: number; kbdi?: number; humidity?: number }) => {
+    const scope = ZONE_SCOPE[zoneLevel];
+    if (!scope) return;
+    if (persistTimer.current) clearTimeout(persistTimer.current);
+    persistTimer.current = setTimeout(() => {
+      apiFetch("/overrides", {
+        method: "POST",
+        body: JSON.stringify({
+          scope, zone_id: name, zone_name: name,
+          evi: ov.evi, air_temp_encoded: ov.lst, wind: ov.wind,
+          humidity: ov.humidity ?? 50, elevation: ov.elevation, kbdi: ov.kbdi ?? 200,
+        }),
+      }).catch((e) => console.warn("override persist failed:", e));
+    }, 700);
+  };
 
   const updateZoneOverride = (field: string, val: number) => {
     if (!selectedZone || !useOverrides) return;
-    setZoneOverrides((prev) => ({
-      ...prev,
-      [selectedZone]: {
-        evi: eviSlider, lst: lstSlider, wind: windSlider, elevation: elevSlider, kbdi: kbdiSlider,
-        ...prev[selectedZone],
-        [field]: val,
-      },
-    }));
+    const merged = {
+      evi: eviSlider, lst: lstSlider, wind: windSlider, elevation: elevSlider, kbdi: kbdiSlider,
+      ...zoneOverrides[selectedZone],
+      [field]: val,
+    };
+    setZoneOverrides((prev) => ({ ...prev, [selectedZone]: merged }));
+    persistOverride(selectedZone, merged);
   };
 
   // Convert LST encoded value to Celsius for display

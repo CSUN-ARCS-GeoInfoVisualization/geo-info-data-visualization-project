@@ -221,18 +221,26 @@ class EndpointCache(db.Model):
 
 
 class UserOverride(db.Model):
-    """A saved risk-override snapshot: the slider values a user tried for one
-    zone, with the resulting risk_score+label frozen at save time so the
-    history panel and email digest never recompute (and never drift).
+    """A per-user, per-zone risk override that lives for 24h then expires.
+
+    A researcher adjusts the sliders for a zone; those values are persisted so
+    the override survives leaving and returning to the page. Exactly ONE active
+    override per (user, scope, zone) — re-saving the same zone upserts the
+    values and refreshes the 24h window. After expiry the row is pruned and the
+    zone falls back to live data.
 
     Features mirror the live model signature (predict_from_features /
     /api/predict-custom): evi, air_temp_encoded, wind, humidity, elevation, kbdi.
+    risk_score+label are frozen at save time so reads never recompute.
     """
     __tablename__ = 'user_overrides'
+    __table_args__ = (
+        db.UniqueConstraint('user_id', 'scope', 'zone_id', name='uq_user_override_zone'),
+    )
 
     id = db.Column(db.Integer, primary_key=True)
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False, index=True)
-    # Which zone level this snapshot belongs to + the zone it pins to.
+    # Which zone level this override belongs to + the zone it pins to.
     scope = db.Column(db.String(16), nullable=False)   # 'county'|'zip'|'neighborhood'|'tract'
     zone_id = db.Column(db.String(64), nullable=False)
     zone_name = db.Column(db.String(128), nullable=True)
@@ -248,5 +256,8 @@ class UserOverride(db.Model):
     label = db.Column(db.String(32), nullable=False)
     note = db.Column(db.String(280), nullable=True)
     created_at = db.Column(db.DateTime(timezone=True), server_default=func.now())
+    updated_at = db.Column(db.DateTime(timezone=True), server_default=func.now(), onupdate=func.now())
+    # 24h from the last save. Expired rows are pruned on the next read/write.
+    expires_at = db.Column(db.DateTime(timezone=True), nullable=False, index=True)
 
     user = db.relationship('User')
