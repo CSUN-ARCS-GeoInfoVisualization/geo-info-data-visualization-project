@@ -150,7 +150,7 @@ def save_override():
 @overrides_bp.route('/overrides/<int:override_id>', methods=['DELETE'])
 @jwt_required()
 def delete_override(override_id):
-    """Owner-scoped delete (manual clear before expiry)."""
+    """Owner-scoped delete (manual clear before expiry) — resets one zone."""
     user_id = _coerce_user_id()
     if not user_id:
         return jsonify({'error': 'Invalid token'}), 401
@@ -162,3 +162,23 @@ def delete_override(override_id):
     db.session.delete(o)
     db.session.commit()
     return jsonify({'ok': True})
+
+
+@overrides_bp.route('/overrides', methods=['DELETE'])
+@jwt_required()
+def delete_all_overrides():
+    """Clear ALL of the user's overrides (reset-all-zones). Optional ?scope=
+    limits it to one zone level."""
+    user_id = _coerce_user_id()
+    if not user_id:
+        return jsonify({'error': 'Invalid token'}), 401
+
+    q = UserOverride.query.filter(UserOverride.user_id == user_id)
+    scope = request.args.get('scope')
+    if scope is not None:
+        if scope not in VALID_SCOPES:
+            return jsonify({'error': f'scope must be one of {sorted(VALID_SCOPES)}'}), 400
+        q = q.filter(UserOverride.scope == scope)
+    deleted = q.delete(synchronize_session=False)
+    db.session.commit()
+    return jsonify({'ok': True, 'deleted': deleted})
