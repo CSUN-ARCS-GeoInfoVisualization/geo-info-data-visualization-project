@@ -45,20 +45,46 @@ _SCALER_OUT = os.path.join(_MODELS_DIR, "wildfire_scaler_predictive.pkl")
 _META_OUT = os.path.join(_MODELS_DIR, "model_metadata.json")
 _LOG = os.path.join(_MODELS_DIR, "RETRAIN_LOG.md")
 
-# Rolling, append-only dataset seeded from the 2020 base. The daily ingest grows
-# this; retrain reads it. Falls back to the frozen base if the rolling file
-# doesn't exist yet.
-_ROLLING = os.path.join(_TRAIN_DIR, "california_rolling.csv")
+# Frozen 2020 base. The continuously-ingested rows live in the Postgres
+# training_samples table; _load_dataset() unions the two.
 _BASE = os.path.join(_TRAIN_DIR, "california_2020_kbdi.csv")
 
 AUROC_TOL = 0.005
 BRIER_TOL = 0.005
 
 
+_DB_COLS = FEATURE_COLS + ["fire"]
+
+
 def _load_dataset():
-    path = _ROLLING if os.path.exists(_ROLLING) else _BASE
-    df = pd.read_csv(path)
-    return df, path
+    """Union the frozen 2020 base CSV with all durable training_samples from
+    Postgres (the continuously-ingested rows). Falls back to CSV-only when no
+    DATABASE_URL is configured (e.g. local dev). Returns (df, description)."""
+    frames, parts = [], []
+    if os.path.exists(_BASE):
+        frames.append(pd.read_csv(_BASE)[_DB_COLS])
+        parts.append(os.path.basename(_BASE))
+
+    db_url = os.getenv("DATABASE_URL", "")
+    if db_url:
+        # SQLAlchemy needs postgresql:// (Render hands out postgres://).
+        if db_url.startswith("postgres://"):
+            db_url = db_url.replace("postgres://", "postgresql://", 1)
+        try:
+            import sqlalchemy
+            eng = sqlalchemy.create_engine(db_url)
+            cols = ", ".join(_DB_COLS)
+            ts = pd.read_sql(f"SELECT {cols} FROM training_samples", eng)
+            if len(ts):
+                frames.append(ts)
+                parts.append(f"training_samples({len(ts)})")
+        except Exception as e:
+            print(f"  training_samples read skipped: {e}")
+
+    if not frames:
+        raise FileNotFoundError("no training data: base CSV missing and no DB rows")
+    df = pd.concat(frames, ignore_index=True).dropna(subset=_DB_COLS)
+    return df, " + ".join(parts)
 
 
 def decide(cand_m, cand_phys_ok, cand_bad_features, prod_m, prod_phys_ok):
@@ -97,7 +123,7 @@ def _metrics(model, scaler, X, y):
 
 def evaluate(now_iso):
     """Train a candidate and return a decision dict. Pure — writes nothing."""
-    df, path = _load_dataset()
+    df, dataset_desc = _load_dataset()
     X = df[FEATURE_COLS].values
     y = df["fire"].values
     Xtr, Xte, ytr, yte = train_test_split(X, y, test_size=0.2, stratify=y, random_state=42)
@@ -121,7 +147,7 @@ def evaluate(now_iso):
 
     return {
         "when": now_iso,
-        "dataset": os.path.basename(path),
+        "dataset": dataset_desc,
         "rows": int(len(df)),
         "candidate": {"metrics": cand_m, "physics_ok": cand_phys_ok, "physics": cand_phys},
         "production": {"metrics": prod_m, "physics_ok": prod_phys_ok},
