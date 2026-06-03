@@ -9,7 +9,8 @@ import {
   Users,
   Clock,
   CheckCircle,
-  ExternalLink
+  ExternalLink,
+  Flame
 } from "lucide-react";
 import { Card, CardContent, CardHeader, CardTitle } from "./ui/card";
 import { Button } from "./ui/button";
@@ -1301,6 +1302,24 @@ export function EvacuationRoutes() {
               >
                 Show on map
               </Button>
+            )}
+          </div>
+        </AlertDescription>
+      </Alert>
+
+      {/* Active Fires Banner — total live active fire perimeters in CA. */}
+      <Alert className={`border-l-4 ${(firePerimeters?.features?.length || 0) > 0 ? 'border-l-red-500 bg-red-50' : 'border-l-zinc-300 bg-zinc-50'}`}>
+        <Flame className={`h-4 w-4 ${(firePerimeters?.features?.length || 0) > 0 ? 'text-red-600' : 'text-zinc-500'}`} />
+        <AlertDescription>
+          <div className="text-sm">
+            {(firePerimeters?.features?.length || 0) > 0 ? (
+              <>
+                <strong className="text-red-700">{firePerimeters.features.length} active fire{firePerimeters.features.length === 1 ? '' : 's'}</strong> burning in California right now (NIFC live feed). They appear as red/orange perimeters on the map below; fully-contained fires drop off automatically.
+              </>
+            ) : (
+              <>
+                <strong className="text-zinc-700">0 active fires</strong> in California right now (NIFC live feed).
+              </>
             )}
           </div>
         </AlertDescription>

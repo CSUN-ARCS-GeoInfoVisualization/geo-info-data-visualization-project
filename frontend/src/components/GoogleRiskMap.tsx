@@ -414,7 +414,9 @@ export function ActiveFiresMap({
   return (
     <div className="space-y-3">
       <div>
-        <h3 className="text-sm font-semibold tracking-tight">Active Fires</h3>
+        <h3 className="text-sm font-semibold tracking-tight">
+          Active Fires{nifcPerimeters?.features?.length ? ` — ${nifcPerimeters.features.length} active in California` : ''}
+        </h3>
         <p className="text-xs text-muted-foreground">Live NIFC perimeter polygons for active California wildfires (fully contained fires hidden)</p>
       </div>
       <div style={{ height: 420, position: 'relative' }} className="w-full rounded-lg overflow-hidden border shadow-sm">
