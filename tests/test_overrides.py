@@ -152,6 +152,27 @@ def test_delete_is_owner_scoped():
     assert c.delete("/api/overrides/9999", headers=h).status_code == 404
 
 
+def test_delete_all_resets_every_zone():
+    app, h, h2, _ = _make_app()
+    c = app.test_client()
+    c.post("/api/overrides", json=PAYLOAD, headers=h)
+    c.post("/api/overrides", json={**PAYLOAD, "zone_id": "Kern", "zone_name": "Kern"}, headers=h)
+    c.post("/api/overrides", json={**PAYLOAD, "scope": "zip", "zone_id": "90001"}, headers=h)
+    # another user's override must survive
+    c.post("/api/overrides", json=PAYLOAD, headers=h2)
+    # scope-limited reset-all clears only county rows
+    r = c.delete("/api/overrides?scope=county", headers=h)
+    assert r.status_code == 200 and r.get_json()["deleted"] == 2
+    rows = c.get("/api/overrides", headers=h).get_json()
+    assert len(rows) == 1 and rows[0]["scope"] == "zip"
+    # full reset-all clears the rest
+    assert c.delete("/api/overrides", headers=h).get_json()["deleted"] == 1
+    assert len(c.get("/api/overrides", headers=h).get_json()) == 0
+    # other user untouched
+    assert len(c.get("/api/overrides", headers=h2).get_json()) == 1
+    assert c.delete("/api/overrides?scope=bogus", headers=h).status_code == 400
+
+
 if __name__ == "__main__":
     for name, fn in sorted(globals().items()):
         if name.startswith("test_") and callable(fn):

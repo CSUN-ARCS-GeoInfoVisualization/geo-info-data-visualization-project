@@ -423,7 +423,7 @@ function ResearchMapView() {
   const [nifcPerimeters, setNifcPerimeters] = useState<any>(null);
   const [selectedPerimeter, setSelectedPerimeter] = useState<any>(null);
   const [useOverrides, setUseOverrides] = useState(false);
-  const [eviSlider, setEviSlider] = useState(500);
+  const [eviSlider, setEviSlider] = useState(0.3); // EVI is 0–1 (matches the model's training scale)
   const [lstSlider, setLstSlider] = useState(14000);
   const [windSlider, setWindSlider] = useState(7);
   const [elevSlider, setElevSlider] = useState(500);
@@ -550,7 +550,9 @@ function ResearchMapView() {
             })
           );
           for (const r of results) {
-            if (r) zones[r.name] = { risk_score: r.risk_score, label: r.label };
+            // Preserve the zone's live `features` block so Reset can snap the
+            // sliders back to live values even while an override is applied.
+            if (r) zones[r.name] = { ...zones[r.name], risk_score: r.risk_score, label: r.label };
           }
         }
         setZoneRiskData(zones);
@@ -602,6 +604,22 @@ function ResearchMapView() {
 
   const zoneNameKey = zoneLevel === "counties" ? "name" : zoneLevel === "zip-codes" ? "zip" : zoneLevel === "census-tracts" ? "tract" : "name";
 
+  // The live (non-overridden) model-input values for a zone, as returned in the
+  // risk payload's `features` block. Used to seed/reset the sliders so they
+  // always reflect the zone the researcher is actually looking at.
+  const liveFeatures = (name: string): any => (zoneRiskData as any)?.[name]?.features;
+
+  // Set every slider to a zone's live feature values (any of the 4 zone types).
+  const applyLiveFeatures = (name: string) => {
+    const f = liveFeatures(name);
+    if (!f) return;
+    if (typeof f.evi === "number") setEviSlider(f.evi);
+    if (typeof f.air_temp_encoded === "number") setLstSlider(f.air_temp_encoded);
+    if (typeof f.wind === "number") setWindSlider(f.wind);
+    if (typeof f.elevation === "number") setElevSlider(f.elevation);
+    if (typeof f.kbdi === "number") setKbdiSlider(f.kbdi);
+  };
+
   // Explicitly persist the selected zone's current slider values for 24h.
   // Triggered by the "Save for 24 hours" button — NOT on every slider move, so
   // researchers can freely experiment without writing to the server.
@@ -609,13 +627,17 @@ function ResearchMapView() {
     const scope = ZONE_SCOPE[zoneLevel];
     if (!scope) return;
     setSavingZone(name);
+    const f = liveFeatures(name);
     try {
       const r = await apiFetch("/overrides", {
         method: "POST",
         body: JSON.stringify({
           scope, zone_id: name, zone_name: name,
           evi: eviSlider, air_temp_encoded: lstSlider, wind: windSlider,
-          humidity: 50, elevation: elevSlider, kbdi: kbdiSlider,
+          // No humidity slider — carry the zone's live humidity so the saved
+          // score matches the model, defaulting only if it's unavailable.
+          humidity: typeof f?.humidity === "number" ? f.humidity : 50,
+          elevation: elevSlider, kbdi: kbdiSlider,
         }),
       });
       if (r.ok) {
@@ -631,15 +653,30 @@ function ResearchMapView() {
     }
   };
 
-  // Clear a zone's override: drop the transient sliders AND delete any saved
-  // 24h row so the zone genuinely reverts to live data.
+  // Reset ONE zone: drop its transient override, delete any saved 24h row, and
+  // (if it's the selected zone) snap the sliders back to its live values.
   const resetZoneOverride = async (name: string) => {
     setZoneOverrides((prev) => { const next = { ...prev }; delete next[name]; return next; });
+    if (name === selectedZone) applyLiveFeatures(name);
     const saved = savedZones[name];
     if (saved) {
       setSavedZones((prev) => { const next = { ...prev }; delete next[name]; return next; });
       try { await apiFetch(`/overrides/${saved.id}`, { method: "DELETE" }); }
       catch (e) { console.warn("override delete failed:", e); }
+    }
+  };
+
+  // Reset ALL zones in the current view: clear every transient override + saved
+  // row for this scope, and snap the selected zone's sliders back to live.
+  const resetAllZones = async () => {
+    const hadSaved = Object.keys(savedZones).length > 0;
+    setZoneOverrides({});
+    setSavedZones({});
+    if (selectedZone) applyLiveFeatures(selectedZone);
+    if (hadSaved) {
+      const scope = ZONE_SCOPE[zoneLevel];
+      try { await apiFetch(`/overrides${scope ? `?scope=${scope}` : ""}`, { method: "DELETE" }); }
+      catch (e) { console.warn("reset-all failed:", e); }
     }
   };
 
@@ -700,6 +737,10 @@ function ResearchMapView() {
                     setWindSlider(ov.wind);
                     setElevSlider(ov.elevation);
                     if (typeof ov.kbdi === "number") setKbdiSlider(ov.kbdi);
+                  } else {
+                    // No override yet — seed the sliders with this zone's live
+                    // values so they reflect the zone you're actually on.
+                    applyLiveFeatures(name);
                   }
                 }}
                 nifcPerimeters={nifcPerimeters}
@@ -1005,8 +1046,8 @@ function ResearchMapView() {
 
                     <div className="space-y-3">
                       <div>
-                        <label className="text-xs font-medium flex justify-between">🌿 Vegetation (EVI) <span className="text-muted-foreground">{eviSlider}</span></label>
-                        <input type="range" min={0} max={5000} step={100} value={eviSlider} onChange={(e) => { const v = Number(e.target.value); setEviSlider(v); updateZoneOverride("evi", v); }} disabled={!useOverrides || !selectedZone} className="w-full mt-1 accent-green-500 disabled:opacity-40" />
+                        <label className="text-xs font-medium flex justify-between">🌿 Vegetation (EVI) <span className="text-muted-foreground">{eviSlider.toFixed(2)}</span></label>
+                        <input type="range" min={0} max={1} step={0.01} value={eviSlider} onChange={(e) => { const v = Number(e.target.value); setEviSlider(v); updateZoneOverride("evi", v); }} disabled={!useOverrides || !selectedZone} className="w-full mt-1 accent-green-500 disabled:opacity-40" />
                       </div>
                       <div>
                         <label className="text-xs font-medium flex justify-between">🌡️ Temperature <span className="text-muted-foreground">{lstFahrenheit}°F</span></label>
@@ -1059,14 +1100,24 @@ function ResearchMapView() {
                             Persists for this account until {new Date(savedZones[selectedZone].expiresAt).toLocaleString()}, then reverts to live data.
                           </p>
                         )}
-                        {zoneOverrides[selectedZone] && (
+                        <div className="grid grid-cols-2 gap-2">
                           <button
                             onClick={() => resetZoneOverride(selectedZone!)}
-                            className="w-full text-xs text-red-500 hover:text-red-700 font-medium py-1.5 border border-red-200 rounded-md hover:bg-red-50"
+                            disabled={!zoneOverrides[selectedZone] && !savedZones[selectedZone]}
+                            className="text-xs text-red-500 hover:text-red-700 font-medium py-1.5 border border-red-200 rounded-md hover:bg-red-50 disabled:opacity-40"
+                            title={`Reset ${selectedZone} sliders to its live values and clear any saved override`}
                           >
-                            Reset {selectedZone} to live data
+                            Reset this zone
                           </button>
-                        )}
+                          <button
+                            onClick={() => resetAllZones()}
+                            disabled={Object.keys(zoneOverrides).length === 0 && Object.keys(savedZones).length === 0}
+                            className="text-xs text-red-600 hover:text-red-800 font-medium py-1.5 border border-red-300 rounded-md hover:bg-red-50 disabled:opacity-40"
+                            title="Clear every override in this view and reset sliders to live data"
+                          >
+                            Reset all zones
+                          </button>
+                        </div>
                       </div>
                     )}
                   </>
