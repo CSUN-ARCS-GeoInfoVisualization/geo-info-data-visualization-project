@@ -1,11 +1,66 @@
 # FireScope — Session Handoff
 
-**Stable tag:** `v3.0-stable` (commit `df6f2fd`, 2026-05-28)
+**Stable tag:** `v3.1-stable` (commit `0b7ed78`, 2026-06-03)
 **Live URL:** https://firescope.dev (custom domain, HTTPS) · https://firescope.netlify.app
 **API:** https://firescope-api.onrender.com/api
-**GitHub Release:** https://github.com/CSUN-ARCS-GeoInfoVisualization/geo-info-data-visualization-project/releases/tag/v3.0-stable
+**GitHub Release:** https://github.com/CSUN-ARCS-GeoInfoVisualization/geo-info-data-visualization-project/releases/tag/v3.1-stable
 
 This document is the single source of truth for picking up FireScope work in a fresh session. Read this first, then `README.md`, then jump in.
+
+---
+
+## What v3.1-stable adds (on top of v3.0)
+
+A large release: a physically-correct **monotonic risk model + continuous daily retraining**, **per-user saved zone overrides** on the researcher page, a **live-data accuracy pass** across the Shelters & Evac + Active Fires surfaces, and an **infrastructure overhaul** (cache durability, deploy reliability, a build-time typecheck gate) that closed two production-outage classes found during the work.
+
+### Monotonic risk model (PROMOTED to production)
+The shipped CalibratedRF (1,022 rows) had learned physically-backwards relationships — verified live: **wind anti-correlated** with risk, **humidity inverted** at the dry end, **KBDI dipping then saturating**, and a **dead EVI slider** (UI sent 0–5000 but the model's EVI is 0–1). Replaced with `backend/ml/train_monotonic.py`:
+- `HistGradientBoostingClassifier(monotonic_cst=[0,1,1,-1,0,1])` over `[evi, air_temp_encoded, wind, humidity, elevation, kbdi]` (temp/wind/kbdi increasing, humidity decreasing; evi/elevation free), isotonic-calibrated.
+- A **PDP physical-direction gate** (`validate_monotonicity`/`gate_passes`) — a candidate is REJECTED if any constrained feature points the wrong way.
+- Tradeoff (honest): physics-correct but ~6pp lower in-distribution AUROC on the 2020 base; the continuous pipeline recovers accuracy as data accumulates. Live KBDI/humidity now move correctly; wind/temp are inert (data-limited, not inverted).
+- Model metadata: `model_type: monotonic_hgb_isotonic`. Old model archived to `backend/ml/models/archive/`.
+
+### Continuous retraining pipeline (entirely in GitHub — zero DB cost-risk)
+- **Dataset in the repo**, not the DB: `backend/ml/training_data/california_2020_kbdi.csv` (committed base) + `california_daily.csv` (appended daily).
+- `POST /api/internal/ml/ingest` (token-authed) pulls the day's FIRMS VIIRS detections + matched no-fire points, computes the 6 features via the live modules prod already uses, and RETURNS them (no DB write); a 55s time budget keeps it under the 90s gunicorn timeout.
+- `backend/ml/retrain_and_gate.py` trains the monotonic candidate on base ∪ daily, applies a **physics-hard + metric gate**, archives + promotes on pass, appends `models/RETRAIN_LOG.md`.
+- `.github/workflows/daily-retrain.yml`: daily ingest → append → gated retrain (DRY-RUN on schedule, promote only on manual dispatch with `promote=true`) → commit dataset (+ model on promote). 15 tests across the ML modules.
+
+### Per-user saved zone overrides (researcher page)
+- New `user_overrides` table (per user, per zone, 24h TTL, upsert-per-zone) + `POST/GET/DELETE /api/overrides`. risk_score+label frozen at save time. Expired rows pruned on read.
+- UI: **"Save for 24 hours"** button (sliders stay transient until saved); **Reset this zone / Reset all zones**; sliders seed/reset to each zone's **live feature values** for all 4 zone types; **EVI slider fixed to 0–1**; color-drift-on-reload fixed (humidity consistency).
+- **20-zone cap is a shared TOTAL across all 4 zone types** (enforced server-side); header shows `N/20 zones saved — Counties a · ZIP b · Neighborhoods c · Census Tracts d`; map legend notes the policy.
+
+### Live-data accuracy pass
+- **Evacuation zones**: split **orders vs warnings** in the header (was mislabelling warnings as orders); filter to genuinely-active — drop `**TEST**` records + zones not edited within 7 days (Cal OES retains stale/test zones); surface the real cause via `NOTES` + `EDIT_DATE` last-updated (the descriptive fields it used before are null upstream).
+- **Shelters**: OPEN-only (live) + a 5-min refetch so a closing shelter drops off without a reload.
+- **Active fires**: `/api/fire-perimeters` now shows only REAL active fires — `IncidentTypeCategory='WF'`, `FireOutDateTime IS NULL`, <100% contained, AND perimeter current within 14 days (`poly_DateCurrent`). Verified live: **77 → 7** (drops sub-acre fragments + non-fire dispatch records like `ASSIST`/`NEED FRE CODE`). Fire popup enriched with county/cause/managing-org/fire-id/type. **Total active fires** shown on the dashboard ("Active Fires — N active in California") + a Shelters & Evac fires banner.
+
+### Infrastructure overhaul (closed two outage classes)
+- **Cache durability** — root-caused a 13-day stale-feed freeze: `endpoint_cache.computed_at` was set only on INSERT (no `onupdate`), so it froze at first-insert and the freshness logic broke. Fixed: timestamp advances on every write; `_save_to_db` rolls back any dirty transaction first (silent-rollback was why calfire never persisted); `get_cached_data` now actually caches (entries carry `data`); `serve_cached` force-recomputes + logs any row past 4× its freshness window. Live feeds self-heal — a multi-day freeze can't recur.
+- **Deploy reliability** — `.github/workflows/restart-after-backend-deploy.yml`: Render reports a deploy "live" but does NOT reliably restart gunicorn (old workers serve stale code — the deeper root cause of the stale feeds). On `backend/**` pushes this waits for the deploy then calls the Render **restart API** (which DOES swap the code; verified 77→7 at 75s). `RENDER_API_KEY` is a repo secret.
+- **Typecheck gate** — the frontend had **no tsconfig**, so esbuild never type-checked and `nifcPerimeters is not defined` shipped and white-screened the app post-login. Added a lenient `frontend/tsconfig.json` + `frontend/scripts/typecheck-gate.cjs` wired into `npm run build` — fails the build on fatal runtime-crash codes (TS2304 cannot-find-name, use-before-decl, etc.), proven to catch the exact bug. ~100 pre-existing non-fatal type errors intentionally don't block (yet).
+
+### Files touched in v3.1 (high level)
+```
+backend/ml/train_monotonic.py, retrain_and_gate.py            (NEW — monotonic model + gate)
+backend/ml/training_data/california_2020_kbdi.csv             (committed base dataset)
+backend/routes/overrides.py, ml_ingest.py                     (NEW — overrides API + ingest)
+backend/routes/predict.py                                     (evac + fire active-only filters, fields)
+backend/services/cache.py, models.py                          (cache durability + UserOverride)
+backend/routes/shelters.py is unchanged; evac/shelter logic in frontend
+frontend/src/components/research-page.tsx                     (overrides UI, header, EVI slider)
+frontend/src/components/evacuation-routes.tsx                 (orders/warnings, fires banner, refresh)
+frontend/src/components/GoogleRiskMap.tsx                     (Active Fires count)
+frontend/tsconfig.json, scripts/typecheck-gate.cjs, package.json  (NEW — typecheck gate)
+.github/workflows/daily-retrain.yml, restart-after-backend-deploy.yml  (NEW)
+migrations/versions/...overrides + ttl + drop training_samples
+```
+
+### Operational notes (don't relearn the hard way)
+- **After a BACKEND code change, verify it's actually live** (curl the changed behavior). The `restart-after-backend-deploy` workflow handles this automatically now, but if a change still doesn't appear, force it: `POST https://api.render.com/v1/services/srv-d71dltgule4c73cqkbj0/restart` (or `{"clearCache":"clear"}` to `/deploys`).
+- **To bust a stuck live cache**: `DELETE FROM endpoint_cache WHERE cache_key IN ('evac_zones','fire_perimeters','calfire_incidents:false','shelters_ca')` — SAFE (NOT the forbidden `zone_risk_cache`). `history_*` rows are intentionally permanent.
+- **Continuous-retrain build plans live OUTSIDE the repo** (`~/.firescope-plans/`) — never commit them (public CSUN repo).
 
 ---
 
@@ -364,6 +419,7 @@ gh run list --workflow=daily-prewarm.yml --limit 3
 
 | Tag | Date | Headline |
 |---|---|---|
+| **v3.0-stable** | 2026-05-28 | 4th alert channel (wildfires in your county) + universal one-click unsubscribe + breaking-news cleanup + fire-perimeter auto-retire + Gmail-bulletproof email shell |
 | **v2.9-stable** | 2026-05-25 | NFDRS 5-tier risk model unified across map / popup / badge / legend / alert email + Shelters & Evac rebuild (smooth overlay, OPEN-only, centered popups, 3 click types) + research-page shelter overlay + county-match evac + shelter-opened sub-channel + direct in-process cache reads in the cron |
 | **v3.0-stable** | 2026-05-28 | 4th alert channel (wildfires in your county, per-county bundling, change-driven dedup, final-contained-then-silent) + universal one-click unsubscribe (RFC 8058 + per-channel + token endpoint) + breaking-news cleanup (NWS title cleaning, per-user county filter, cross-source dedupe, live containment enrichment + summary override) + fire-perimeter map auto-retires 100%-contained fires + high-risk 20-location cap + history empty-year state + Gmail-bulletproof email shell (this section) |
 | **v2.8-stable** | 2026-05-25 | Full alerts system (3 channels) + custom domain `firescope.dev` + Resend email + cached-zone single source of truth across map / badge / widget / email |
@@ -414,14 +470,17 @@ curl -X POST "https://api.render.com/deploy/srv-d71dltgule4c73cqkbj0?key=IW-X7zt
 
 ## Next up — queue (priority order)
 
-### 1. Per-zone independent overrides (researcher page)
-Originally queued from v2.2. Now blocked behind a 19-step plan saved local-only — see the project's working notes; do not commit that plan into this repo.
+### 1. Per-zone independent overrides (researcher page) — ✅ DONE in v3.1-stable
+Shipped: per-user 24h-TTL saved overrides at all 4 zone levels, "Save for 24 hours" button, reset this/all zones, 20-zone shared total cap, EVI slider scale fix. See the v3.1 section above. (Email-digest real-risk join — orig step 13 — remains future work.)
+
+<details><summary>original v2.2 spec (for reference)</summary>
 
 - State: `zoneOverrides: Map<string, {evi, lst, wind, humidity, elevation, kbdi}>`
 - Researcher clicks a zone → sliders show that zone's saved snapshot (or live defaults)
 - Adjusting sliders only affects the selected zone's risk color
 - Multiple zones may carry independent overrides simultaneously
 - **Where:** `frontend/src/components/research-page.tsx`
+</details>
 
 ### 2. FIRMS hotspots as polygon zones (not circles)
 Convert each FIRMS point into a small polygon sized by FRP (fire radiative power). Use `GeoJsonLayer` with generated polygons instead of `ScatterplotLayer` dots.
