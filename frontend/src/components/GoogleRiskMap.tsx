@@ -411,10 +411,21 @@ export function ActiveFiresMap({
   center = { lat: 36.7783, lng: -119.4179 },
   zoom = 6,
 }: { center?: { lat: number; lng: number }; zoom?: number } = {}) {
+  // Self-contained count (in-scope) — /fire-perimeters is cached, so this is cheap
+  // and avoids reaching into the child overlay's state.
+  const [fireCount, setFireCount] = useState<number | null>(null);
+  useEffect(() => {
+    apiFetch('/fire-perimeters')
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => { if (d?.features) setFireCount(d.features.length); })
+      .catch(() => {});
+  }, []);
   return (
     <div className="space-y-3">
       <div>
-        <h3 className="text-sm font-semibold tracking-tight">Active Fires</h3>
+        <h3 className="text-sm font-semibold tracking-tight">
+          Active Fires{fireCount != null ? ` — ${fireCount} active in California` : ''}
+        </h3>
         <p className="text-xs text-muted-foreground">Live NIFC perimeter polygons for active California wildfires (fully contained fires hidden)</p>
       </div>
       <div style={{ height: 420, position: 'relative' }} className="w-full rounded-lg overflow-hidden border shadow-sm">
