@@ -460,10 +460,13 @@ Force-rebuild Netlify (rare — clears edge cache):
 netlify api createSiteBuild --data '{"site_id":"4d02944f-31ae-486b-a273-56dfe3d5016b","clear_cache":true}'
 ```
 
-Manual Render redeploy (rare):
+Manual Render redeploy (rare) — uses the authenticated API; `RENDER_API_KEY` is a repo secret / your
+local env, never committed:
 
 ```bash
-curl -X POST "https://api.render.com/deploy/srv-d71dltgule4c73cqkbj0?key=IW-X7ztdGiA"
+curl -X POST "https://api.render.com/v1/services/srv-d71dltgule4c73cqkbj0/deploys" \
+  -H "Authorization: Bearer $RENDER_API_KEY" -H "Content-Type: application/json" -d '{}'
+# add '{"clearCache":"clear"}' to force a clean build; or .../restart to swap workers in place
 ```
 
 ---
