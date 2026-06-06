@@ -24,7 +24,7 @@ flowchart TB
     subgraph BE[" Flask API · Render / gunicorn "]
         direction TB
         ING["56 routes · 14 modules<br/>predict · research · history · shelters · news · alerts"]
-        AUTHN["auth · JWT · roles<br/>user / researcher / admin"]
+        AUTHN["auth · JWT · roles<br/>resident / researcher / admin"]
         FEAT["feature spine · data/features.py:get_feature<br/>EVI · USGS 3DEP→open-elev · KBDI · weather"]
         INF["risk model · monotonic HGB + isotonic<br/>loaded once · 6 features → Risk_label"]
     end
@@ -147,6 +147,19 @@ Flask API served by gunicorn — **56 routes across 14 blueprint modules** under
 Supporting packages: `ml/` (monotonic model, inference, train + retrain-and-gate), `services/`
 (`cache`, `email/{provider,renderer,sender,tracker,retry}`, `aggregator`, `scheduler`, `persistence`),
 `data/features.py` (the shared feature spine), `models.py` (13 SQLAlchemy models), `tests/` (pytest).
+
+### Roles & access control
+Auth is JWT-based; authorization is enforced server-side via three seeded roles
+(`backend/seed.py`: `Resident`, `Researcher`, `Admin`):
+
+| Role | Scope |
+|---|---|
+| **Resident** (public/base) | Default on signup — saved locations + the four email alert channels, plus the dashboard / history / shelters / evacuation views |
+| **Researcher** | Resident scope + the Research page; `_require_researcher_or_admin()` gates `/api/research/fire-data` and `/api/research/risk-grid`. Granted only through an admin-approved row in `role_requests` |
+| **Admin** | `require_admin()` gates every `/api/admin/*` route — user management, role-request approval, model config, manual alert triggers/digests, stats |
+
+The promotion path: a Resident POSTs `/api/me/role-request` (requested role `Researcher`); an Admin
+approves via `/api/admin/role-requests/<id>/approve`, which flips the user's `role_id`.
 
 ### Caching — three tiers
 Risk reads are cached at three levels, innermost first:
