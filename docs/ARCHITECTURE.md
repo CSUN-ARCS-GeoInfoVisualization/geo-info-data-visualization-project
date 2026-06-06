@@ -10,6 +10,7 @@ internals see [`backend/ml/README.md`](../backend/ml/README.md).
 ## System at a glance
 
 ```mermaid
+%%{init: {'themeVariables': {'edgeLabelBackground': '#ffffff'}, 'themeCSS': '.edgeLabel rect{opacity:1 !important;fill:#ffffff !important;} .edgeLabel,.edgeLabel p,.edgeLabel span,.edgeLabel div{background-color:#ffffff !important;color:#16181d !important;}'}}%%
 flowchart TB
     subgraph SRC[" External data sources "]
         direction LR
@@ -174,6 +175,7 @@ cost-risk), the ingest reuses the same `get_feature` spine as production, and a 
 only if it survives a physics-direction + metric gate:
 
 ```mermaid
+%%{init: {'themeVariables': {'edgeLabelBackground': '#ffffff'}, 'themeCSS': '.edgeLabel rect{opacity:1 !important;fill:#ffffff !important;} .edgeLabel,.edgeLabel p,.edgeLabel span,.edgeLabel div{background-color:#ffffff !important;color:#16181d !important;}'}}%%
 flowchart LR
     F["FIRMS detections<br/>+ matched no-fire points"] --> EN["enrich via get_feature<br/>(same spine as prod)"]
     EN --> DS["append in-repo dataset<br/>california_daily.csv"]
