@@ -25,6 +25,7 @@ on:
 
 permissions:
   contents: write
+  actions: write   # needed for `gh workflow run` to dispatch sync-domain-deployment
 
 jobs:
   ingest-and-retrain:
