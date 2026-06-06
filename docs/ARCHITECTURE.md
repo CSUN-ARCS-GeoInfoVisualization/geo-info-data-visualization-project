@@ -69,7 +69,7 @@ flowchart TB
     ING <--> EC
     AUTHN --> USR
     ING --> ST
-    BE -->|"cached JSON"| FE
+    ING -->|"cached JSON"| OV
     OV --- TI
     AL --> ING
     AL --> ACT
