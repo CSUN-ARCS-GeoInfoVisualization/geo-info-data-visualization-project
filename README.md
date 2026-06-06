@@ -102,6 +102,7 @@ pre-warming — runs as **GitHub-Actions crons**, so there is no always-on worke
 only re-emailed when the situation changes.
 
 ```mermaid
+%%{init: {'themeVariables': {'edgeLabelBackground': '#ffffff'}, 'themeCSS': '.edgeLabel rect{opacity:1 !important;fill:#ffffff !important;} .edgeLabel,.edgeLabel p,.edgeLabel span,.edgeLabel div{background-color:#ffffff !important;color:#16181d !important;}'}}%%
 flowchart TB
     subgraph SRC[" External data sources "]
         direction LR
@@ -173,6 +174,7 @@ flowchart TB
 cost-risk) and a candidate only ships if it survives a physics-direction gate:
 
 ```mermaid
+%%{init: {'themeVariables': {'edgeLabelBackground': '#ffffff'}, 'themeCSS': '.edgeLabel rect{opacity:1 !important;fill:#ffffff !important;} .edgeLabel,.edgeLabel p,.edgeLabel span,.edgeLabel div{background-color:#ffffff !important;color:#16181d !important;}'}}%%
 flowchart LR
     F["FIRMS detections<br/>+ matched no-fire points"] --> EN["enrich via get_feature<br/>same spine as production"]
     EN --> DS["append to in-repo dataset<br/>california_daily.csv"]
