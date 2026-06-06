@@ -87,6 +87,25 @@ metric gate, and promotes on pass. Details in [`backend/ml/README.md`](backend/m
 
 The in-app **Settings → About** page lists every source with badges.
 
+## Architecture
+
+Open feeds are ingested and proxied by a Flask API, cached in Postgres, and scored by the risk model;
+a React + deck.gl frontend renders the maps, while GitHub-Actions crons drive alerts and the daily
+retrain — so there's no always-on worker.
+
+```mermaid
+flowchart LR
+    SRC["Open feeds<br/>FIRMS · CAL FIRE · NIFC<br/>Cal OES · NWS · Census"] --> ING["Flask ingest<br/>+ proxies"]
+    ING --> CACHE[("endpoint_cache<br/>Postgres")]
+    ING --> ML["Monotonic risk model<br/>loaded once at startup"]
+    CACHE --> MAP["React + deck.gl<br/>Google Maps"]
+    ML --> MAP
+    CRON["GitHub Actions"] --> ALERT["Alert engine"] --> MAIL["Email<br/>Resend / SMTP"]
+    CRON --> RT["Daily retrain + physics gate"] --> ML
+```
+
+Full system design, component breakdown, and deploy topology in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
 ## Getting started
 
 ### Option 1 — Docker (recommended)
