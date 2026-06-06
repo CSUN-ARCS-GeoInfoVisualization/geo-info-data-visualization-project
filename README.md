@@ -81,7 +81,8 @@ metric gate, and promotes on pass. Details in [`backend/ml/README.md`](backend/m
   (132,000+ structures, 2013→present)
 - **Emergency management** — Cal OES `CA_EVACUATIONS_PROD` (Genasys PROTECT + county feeds),
   CalOES shelter mirror (8,014 facilities)
-- **Weather & news** — NOAA NWS ATOM feed, Open-Meteo, GNews
+- **Weather & news** — Open-Meteo + NASA POWER (weather), NOAA NWS ATOM feed, GNews + Google
+  Programmable Search (wildfire news)
 - **Boundaries** — U.S. Census TIGER/Line (58 counties · 1,769 ZIPs · 8,041 tracts · 1,521 neighborhoods)
 - **Mapping** — Google Maps Platform, deck.gl v9
 
@@ -89,22 +90,100 @@ The in-app **Settings → About** page lists every source with badges.
 
 ## Architecture
 
-Open feeds are ingested and proxied by a Flask API, cached in Postgres, and scored by the risk model;
-a React + deck.gl frontend renders the maps, while GitHub-Actions crons drive alerts and the daily
-retrain — so there's no always-on worker.
+A dozen open feeds are proxied by a **Flask API of 56 routes across 14 modules**, scored by a
+monotonic risk model loaded once at startup, and served through a **three-tier Postgres cache** —
+per-tile `FeatureCache` (EVI / elevation / KBDI) → `ZoneRiskCache` → lock-guarded, brotli-compressed
+`EndpointCache` — to a **React + deck.gl** frontend. A single feature spine
+(`data/features.py:get_feature`, with USGS 3DEP falling back to open-elevation) computes the inputs
+for **both** live inference and the retrain ingest, so the model trains on exactly the features
+production serves. Everything time-based — four alert channels, the daily retrain, cache
+pre-warming — runs as **GitHub-Actions crons**, so there is no always-on worker. Roles
+(user / researcher / admin) gate the API; alert dedup is ledgered in `AlertActivity` so users are
+only re-emailed when the situation changes.
+
+```mermaid
+flowchart TB
+    subgraph SRC[" External data sources "]
+        direction LR
+        SAT["NASA FIRMS · MODIS EVI<br/>Earth Engine · POWER"]
+        FIRE["CAL FIRE · NIFC WFIGS · DINS<br/>ArcGIS feature services"]
+        WX["Open-Meteo · NOAA NWS"]
+        EMS["Cal OES — evac zones + shelters"]
+        CEN["U.S. Census · USGS 3DEP"]
+    end
+
+    subgraph BE[" Flask API · Render / gunicorn "]
+        direction TB
+        ING["56 routes · 14 modules<br/>predict · research · history · shelters · news · alerts"]
+        AUTHN["auth · JWT · roles<br/>user / researcher / admin"]
+        FEAT["feature spine · data/features.py<br/>EVI · USGS 3DEP→open-elev · KBDI · weather"]
+        INF["risk model · monotonic HGB + isotonic<br/>loaded once · 6 features → Risk_label"]
+    end
+
+    subgraph CA[" Postgres cache tiers "]
+        direction TB
+        FCA[("FeatureCache<br/>per-tile EVI · elevation · KBDI")]
+        ZRC[("ZoneRiskCache")]
+        EC[("EndpointCache<br/>brotli + ETag · lock-guarded")]
+    end
+
+    subgraph ST[" Postgres · app state "]
+        direction LR
+        USR[("users · roles · locations<br/>prefs · overrides")]
+        ACT[("AlertActivity<br/>dedup ledger")]
+    end
+
+    subgraph FE[" React + Vite · Netlify "]
+        direction TB
+        OV["deck.gl overlays<br/>county · ZIP · tract · neighborhood · FIRMS"]
+        PG["dashboard · research · history<br/>shelters & evac · alerts · admin"]
+        TI["riskTiers.ts · 5-tier NFDRS SSOT"]
+    end
+
+    subgraph JOBS[" GitHub Actions crons "]
+        direction TB
+        AL["alert crons ×4<br/>high-risk · news · evac · county-fire"]
+        RTR["daily retrain + gate"]
+        PW["prewarm · backfill"]
+    end
+
+    subgraph MAILP[" Email "]
+        direction LR
+        RN["renderer"]
+        PV["Resend / SMTP"]
+    end
+
+    SAT & FIRE & WX & EMS & CEN --> ING
+    ING --> FEAT --> INF
+    FEAT <--> FCA
+    INF --> ZRC
+    ING <--> EC
+    AUTHN --> USR
+    ING --> ST
+    BE -->|"cached JSON"| FE
+    OV --- TI
+    AL --> ING
+    AL --> ACT
+    AL --> MAILP --> SUB(["subscribers"])
+    RTR --> INF
+    PW --> CA
+```
+
+**Continuous retraining** runs entirely in GitHub — the dataset is committed in-repo (zero DB
+cost-risk) and a candidate only ships if it survives a physics-direction gate:
 
 ```mermaid
 flowchart LR
-    SRC["Open feeds<br/>FIRMS · CAL FIRE · NIFC<br/>Cal OES · NWS · Census"] --> ING["Flask ingest<br/>+ proxies"]
-    ING --> CACHE[("endpoint_cache<br/>Postgres")]
-    ING --> ML["Monotonic risk model<br/>loaded once at startup"]
-    CACHE --> MAP["React + deck.gl<br/>Google Maps"]
-    ML --> MAP
-    CRON["GitHub Actions"] --> ALERT["Alert engine"] --> MAIL["Email<br/>Resend / SMTP"]
-    CRON --> RT["Daily retrain + physics gate"] --> ML
+    F["FIRMS detections<br/>+ matched no-fire points"] --> EN["enrich via get_feature<br/>same spine as production"]
+    EN --> DS["append to in-repo dataset<br/>california_daily.csv"]
+    DS --> TR["train monotonic candidate"]
+    TR --> G{"physics + metric gate"}
+    G -->|pass| PR["archive old · promote .pkl"]
+    G -->|fail| KEEP["keep current model<br/>log rejection"]
+    PR --> INF["inference loads new model"]
 ```
 
-Full system design, component breakdown, and deploy topology in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+Full component breakdown, request lifecycle, and deploy topology in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Getting started
 
