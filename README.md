@@ -49,6 +49,20 @@ Senior research project at **California State University, Northridge** (ARCS, 20
 | **Alerts** | Per-user master switch + four channel toggles (high-risk zones / breaking news / evacuation / wildfire-in-your-county); RFC 8058 one-click unsubscribe. |
 | **Admin** | User management, refresh schedules, model configuration. |
 
+## User roles
+
+FireScope has three account roles (seeded as `Resident`, `Researcher`, `Admin` in
+`backend/seed.py`), enforced server-side — not just hidden in the UI.
+
+| Role | Who they are | What they can do |
+|---|---|---|
+| **Public** (`Resident`) | The default role for anyone who signs up | Dashboard, history, shelters & evacuation, and active-fire views; save locations; opt into all four email alert channels (high-risk zones, breaking news, evacuation, wildfire-in-your-county) |
+| **Researcher** | A user granted access via an **admin-approved in-app role request** | Everything a public user can, **plus the Research page** — per-zone slider overrides with live risk recompute, FIRMS hotspots, the risk grid, and the 8,014-shelter overlay (`/api/research/fire-data` and `/api/research/risk-grid` are gated to Researcher + Admin) |
+| **Admin** | Seeded administrators and promoted users | Everything, **plus** user management, approving/denying role requests, model configuration, manual alert triggers and digests, and platform stats (every `/api/admin/*` route is `require_admin`) |
+
+A signed-in user requests Researcher access from the Research page; an admin approves it from the
+admin console (the `role_requests` table tracks pending/approved/denied).
+
 ## Risk model
 
 A **physically-correct monotonic model** predicting wildfire risk from six live features:
@@ -116,7 +130,7 @@ flowchart TB
     subgraph BE[" Flask API · Render / gunicorn "]
         direction TB
         ING["56 routes · 14 modules<br/>predict · research · history · shelters · news · alerts"]
-        AUTHN["auth · JWT · roles<br/>user / researcher / admin"]
+        AUTHN["auth · JWT · roles<br/>resident / researcher / admin"]
         FEAT["feature spine · data/features.py<br/>EVI · USGS 3DEP→open-elev · KBDI · weather"]
         INF["risk model · monotonic HGB + isotonic<br/>loaded once · 6 features → Risk_label"]
     end
