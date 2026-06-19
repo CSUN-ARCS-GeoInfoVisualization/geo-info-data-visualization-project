@@ -395,7 +395,7 @@ export function GoogleRiskMap({
                     <span style={{ fontVariantNumeric: 'tabular-nums' }}>{selectedZone.features.kbdi?.toFixed(0) ?? '—'}</span>
                   </div>
                 </div>
-                <div style={{ marginTop: 8, fontSize: 10, color: '#9ca3af' }}>Calibrated Random Forest · MODIS EVI + Open-Meteo + USGS 3DEP + NASA POWER (KBDI).</div>
+                <div style={{ marginTop: 8, fontSize: 10, color: '#9ca3af' }}>Monotonic gradient-boosted model (isotonic-calibrated) · MODIS EVI + Open-Meteo + USGS 3DEP + NASA POWER (KBDI).</div>
               </>
             ) : (
               <div style={{ fontSize: 11, color: '#6b7280' }}>Parameter breakdown loading…</div>

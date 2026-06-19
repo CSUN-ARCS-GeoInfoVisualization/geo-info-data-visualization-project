@@ -71,7 +71,7 @@ A **physically-correct monotonic model** predicting wildfire risk from six live 
 `[evi, air_temp_encoded, wind, humidity, elevation, kbdi]` (temperature / wind / KBDI increasing,
 humidity decreasing; EVI / elevation free), isotonic-calibrated. A **PDP physical-direction gate**
 rejects any candidate whose constrained features point the wrong way — so the shipped model can't
-learn the backwards relationships the prior CalibratedRF did (wind anti-correlated, humidity
+learn the backwards relationships the prior calibrated model did (wind anti-correlated, humidity
 inverted, KBDI saturating).
 
 | Feature | Source |

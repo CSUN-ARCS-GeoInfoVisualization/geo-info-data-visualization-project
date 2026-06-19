@@ -27,20 +27,18 @@ The nearest fallback location is selected using great-circle (haversine) distanc
 
 | Property | Value |
 |---|---|
-| Algorithm | Random Forest (300 trees, `class_weight=balanced`), sigmoid-calibrated |
+| Algorithm | Monotonicity-constrained `HistGradientBoostingClassifier`, isotonic-calibrated |
+| Trainer | `train_monotonic.py` (model) + `retrain_and_gate.py` (gated promotion) |
 | File | `models/wildfire_model_predictive.pkl` |
-| Training data | 1,022 samples — 511 FIRMS fire detections, 511 generated no-fire points (California, 2020), date-restratified |
-| Evaluation | 10-fold stratified CV + spatial-block CV (~55 km cells) |
-| Accuracy | 91.7% |
-| ROC-AUC | 0.964 |
+| Training data | Rolling: `training_data/california_2020_kbdi.csv` base + `training_data/california_daily.csv` (grown daily by the FIRMS ingest cron), de-duped |
+| Evaluation | 80/20 stratified held-out split; promotion gated on physics (monotonicity) + AUROC/Brier non-regression |
+| Metrics | See `models/RETRAIN_LOG.md` and `models/model_metadata.json` (last promotion 2026-06-03: held-out AUROC ≈ 0.888) |
 | Features | EVI, air temperature (encoded), wind speed, humidity, elevation, KBDI |
-| Output | Risk probability (0–1) + label (Low / Medium / High / Extreme) |
+| Output | Risk probability (0–1) + 5-tier NFDRS label (Low / Moderate / High / Very High / Extreme) |
 
-The production model is wrapped in `CalibratedClassifierCV` (sigmoid / Platt scaling, cv=5) so `predict_proba` returns calibrated probabilities — meaning the Low/Medium/High/Extreme thresholds in `inference.py` correspond to actual empirical fire frequencies rather than raw vote counts.
+The model is trained with **monotonic constraints** (`monotonic_cst=[0,1,1,-1,0,1]` for EVI, air temp, wind, humidity, elevation, KBDI) so risk can only rise with temperature, wind, and drought and fall with humidity — it can never learn a physically-backwards relationship. It is then wrapped in `CalibratedClassifierCV` with **isotonic** regression (`cv=5`) so `predict_proba` returns calibrated probabilities; the 5-tier thresholds in `inference.py` correspond to empirical fire frequencies rather than raw scores.
 
-Spatial-block CV groups all rows in the same ~55 km cell into one fold, so the model is tested on regions it never saw during training. Reporting both random and spatial CV quantifies how much apparent skill came from spatial autocorrelation.
-
-See `charts/RESULTS.md` for full metrics, confusion matrix, and feature importances.
+**Promotion gate.** Before any retrained candidate replaces the live model it must pass two checks (`retrain_and_gate.py`): (1) a hard PDP physical-direction check (`validate_monotonicity` sweeps each constrained feature across its range and requires it to move the correct direction), then (2) held-out AUROC and Brier must not regress versus the current model. A model that fails physics is never shipped, even if its raw accuracy looks higher.
 
 ## Feature encoding
 
@@ -91,7 +89,7 @@ ml/
 │   ├── feature_distributions.png
 │   └── calibration_curve.png  # Predicted vs observed fire frequency, before/after sigmoid calibration
 └── models/
-    ├── wildfire_model_predictive.pkl    # Calibrated RandomForest classifier
+    ├── wildfire_model_predictive.pkl    # Current live model: monotonic HGB + isotonic calibration
     ├── wildfire_scaler_predictive.pkl   # Fitted StandardScaler
     └── model_metadata.json              # Feature column order + train timestamp
 ```

@@ -169,8 +169,8 @@ export function RiskChart({ title, type = "line", lat = 34.0522, lon = -118.2437
           <p>
             <span className="font-medium text-foreground">How this is calculated.</span>{" "}
             A baseline risk for this location is produced by FireScope's calibrated machine-learning
-            model (random forest, six inputs: vegetation greenness, temperature, wind, humidity,
-            elevation, and the Keetch-Byram drought index). That baseline is then nudged up or down
+            model (a gradient-boosted model with built-in physical constraints, six inputs: vegetation
+            greenness, temperature, wind, humidity, elevation, and the Keetch-Byram drought index). That baseline is then nudged up or down
             for each of the next 7 days using the local Open-Meteo weather forecast — hotter, drier,
             and windier days push the line higher.
           </p>
