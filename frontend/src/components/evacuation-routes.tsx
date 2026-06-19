@@ -483,7 +483,6 @@ function FireFacilitiesOverlay({
                 x: info.x,
                 y: info.y,
                 props: info.object.properties || {},
-                center: bboxCenter(info.object.geometry),
               });
               return true;
             }
@@ -510,7 +509,7 @@ function FireFacilitiesOverlay({
           onClick: (info: any) => {
             if (info.object) {
               console.log('[evac] centroid marker click', info.object?.props);
-              setZoneTooltip({ x: info.x, y: info.y, props: info.object.props, center: info.object.center });
+              setZoneTooltip({ x: info.x, y: info.y, props: info.object.props });
               return true;
             }
             return false;
@@ -819,34 +818,12 @@ function FireFacilitiesOverlay({
                   {p.PUBLIC_INFO}
                 </div>
               )}
-              {Array.isArray(zoneTooltip?.center) && zoneTooltip.center.length === 2 && (
-                <div className="grid grid-cols-2 gap-2 pt-2 border-t border-zinc-100">
-                  {onRouteTo && (
-                    <Button
-                      size="sm"
-                      className="bg-emerald-600 hover:bg-emerald-700"
-                      onClick={() => {
-                        onRouteTo({
-                          lat: zoneTooltip.center[1],
-                          lng: zoneTooltip.center[0],
-                          label: p.ZONE_NAME || p.ZONE_ID || 'Evacuation zone',
-                        });
-                        setZoneTooltip(null);
-                      }}
-                    >
-                      Route on this map
-                    </Button>
-                  )}
-                  <a
-                    href={`https://www.google.com/maps/dir/?api=1&destination=${zoneTooltip.center[1]},${zoneTooltip.center[0]}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="inline-flex items-center justify-center rounded-md bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-3 py-2"
-                  >
-                    Open in Google Maps
-                  </a>
-                </div>
-              )}
+              {/* No directions buttons here on purpose: this card is an
+                  evacuation ORDER / WARNING / SHELTER-IN-PLACE zone, not a
+                  destination. Orders/warnings mean leave the area; a
+                  shelter-in-place order means stay indoors — routing the user
+                  INTO the zone would be wrong and unsafe. Directions live only
+                  on the open-shelter card below. */}
               <div className="pt-2 border-t border-zinc-100 text-[11px] text-zinc-400">
                 Source: Cal OES statewide aggregation (CA_EVACUATIONS_PROD) — the same feed Watch Duty consumes.
               </div>
@@ -1339,18 +1316,25 @@ export function EvacuationRoutes() {
               ) : (
                 <>
                   <strong className="text-zinc-700">0 open shelters</strong> in California right now (CalOES live feed). Most pre-staged shelters only activate during an emergency.
+                  {evacCounts.shelterInPlace > 0 && (
+                    <>
+                      {' '}
+                      <span className="text-purple-700">A shelter-in-place order is active (counted above) — that's an instruction to stay indoors where you are, not an open shelter you travel to.</span>
+                    </>
+                  )}
                 </>
               )}
             </div>
-            {openShelterCount > 0 && (
-              <Button
-                size="sm"
-                className="bg-emerald-600 hover:bg-emerald-700"
-                onClick={() => fitSheltersRef.current?.()}
-              >
-                Show on map
-              </Button>
-            )}
+            <Button
+              size="sm"
+              className="bg-emerald-600 hover:bg-emerald-700"
+              onClick={() => {
+                document.getElementById('shelter-finder-map')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                fitSheltersRef.current?.();
+              }}
+            >
+              Show on map
+            </Button>
           </div>
         </AlertDescription>
       </Alert>
