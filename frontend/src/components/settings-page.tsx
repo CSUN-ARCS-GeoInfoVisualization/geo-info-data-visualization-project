@@ -334,6 +334,24 @@ export function SettingsPage({ defaultTab = "profile" }: SettingsPageProps) {
                     badge="ML model"
                     badgeColor="bg-red-100 text-red-700"
                   />
+                  <AboutItem
+                    name="How a risk score is computed"
+                    description="For any location — a county, ZIP, neighborhood, or census-tract centroid, or a custom lat/lon — the six inputs are looked up live, standardized with the model's saved StandardScaler, and passed to the calibrated random forest. The model returns a probability of the 'fire' class between 0.0 and 1.0; that probability IS the risk score. The score is then binned into the five NFDRS tiers using fixed 20% cutoffs — Low (below 0.20), Moderate (0.20–0.40), High (0.40–0.60), Very High (0.60–0.80), Extreme (0.80 and up). The exact same thresholds live on the backend (ml/inference.py) and the frontend (lib/riskTiers.ts), so a zone's map color, popup chip, side-panel badge, and alert email all agree on the tier."
+                    badge="Scoring"
+                    badgeColor="bg-red-100 text-red-700"
+                  />
+                  <AboutItem
+                    name="Live data inputs & where they come from"
+                    description="EVI — vegetation greenness, a proxy for available fuel — from Google Earth Engine's MODIS MOD13Q1 product. Air temperature, wind speed, and relative humidity from Open-Meteo. Ground elevation from USGS 3DEP (with Open-Elevation as a fallback). And the Keetch–Byram Drought Index (KBDI), a 0–800 cumulative soil-moisture-deficit measure of how dry the landscape has become. Every lookup follows a resilient fallback chain — cached map tile → live API → inverse-distance-weighted interpolation from reference stations — so the model always receives a complete six-value feature vector and never has to return a blank score."
+                    badge="Data inputs"
+                    badgeColor="bg-sky-100 text-sky-700"
+                  />
+                  <AboutItem
+                    name="Daily training ingest (NASA FIRMS)"
+                    description="Every day at 08:00 UTC a GitHub Actions workflow (.github/workflows/daily-retrain.yml) calls POST /api/internal/ml/ingest, which pulls the latest NASA FIRMS satellite fire detections, computes the six features at each detection plus sampled no-fire points, and appends them to the committed training set (backend/ml/training_data/california_daily.csv). A candidate model is retrained and scored against a quality gate on every run. Scheduled runs are dry-run — the live model is only swapped in through a manual, gated promotion — so the dataset keeps growing every day while the production model changes only when a new candidate actually beats the gate."
+                    badge="Cron · daily"
+                    badgeColor="bg-amber-100 text-amber-700"
+                  />
                 </div>
               </div>
 
