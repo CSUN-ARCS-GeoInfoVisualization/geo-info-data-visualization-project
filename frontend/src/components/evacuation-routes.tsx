@@ -145,7 +145,7 @@ function FireFacilitiesOverlay({
   onRouteTo?: (target: { lat: number; lng: number; label: string }) => void;
   showFires?: boolean;
   showEvacZones?: boolean;
-  onZonesLoaded?: (c: { orders: number; warnings: number }) => void;
+  onZonesLoaded?: (c: { orders: number; warnings: number; shelterInPlace: number }) => void;
   fitBoundsRef?: React.MutableRefObject<(() => void) | null>;
   onSheltersLoaded?: (count: number) => void;
   fitSheltersRef?: React.MutableRefObject<(() => void) | null>;
@@ -206,7 +206,11 @@ function FireFacilitiesOverlay({
             const st = (f: any) => String((f.properties || {}).STATUS || '').toLowerCase();
             const orders = data.features.filter((f: any) => st(f).includes('order')).length;
             const warnings = data.features.filter((f: any) => st(f).includes('warning')).length;
-            onZonesLoaded?.({ orders, warnings });
+            // "Shelter In Place" is a distinct CalOES directive (stay put, do NOT
+            // evacuate) — neither an order nor a warning, so it was being dropped
+            // from the banner counts entirely. Surface it as its own tally.
+            const shelterInPlace = data.features.filter((f: any) => st(f).includes('shelter')).length;
+            onZonesLoaded?.({ orders, warnings, shelterInPlace });
           }
         })
         .catch((e) => console.warn('Evac zones fetch failed:', e));
@@ -479,6 +483,7 @@ function FireFacilitiesOverlay({
                 x: info.x,
                 y: info.y,
                 props: info.object.properties || {},
+                center: bboxCenter(info.object.geometry),
               });
               return true;
             }
@@ -505,7 +510,7 @@ function FireFacilitiesOverlay({
           onClick: (info: any) => {
             if (info.object) {
               console.log('[evac] centroid marker click', info.object?.props);
-              setZoneTooltip({ x: info.x, y: info.y, props: info.object.props });
+              setZoneTooltip({ x: info.x, y: info.y, props: info.object.props, center: info.object.center });
               return true;
             }
             return false;
@@ -812,6 +817,34 @@ function FireFacilitiesOverlay({
                 <div className="text-sm text-zinc-700">
                   <div className="font-semibold text-xs text-zinc-500 mb-0.5">Public info</div>
                   {p.PUBLIC_INFO}
+                </div>
+              )}
+              {Array.isArray(zoneTooltip?.center) && zoneTooltip.center.length === 2 && (
+                <div className="grid grid-cols-2 gap-2 pt-2 border-t border-zinc-100">
+                  {onRouteTo && (
+                    <Button
+                      size="sm"
+                      className="bg-emerald-600 hover:bg-emerald-700"
+                      onClick={() => {
+                        onRouteTo({
+                          lat: zoneTooltip.center[1],
+                          lng: zoneTooltip.center[0],
+                          label: p.ZONE_NAME || p.ZONE_ID || 'Evacuation zone',
+                        });
+                        setZoneTooltip(null);
+                      }}
+                    >
+                      Route on this map
+                    </Button>
+                  )}
+                  <a
+                    href={`https://www.google.com/maps/dir/?api=1&destination=${zoneTooltip.center[1]},${zoneTooltip.center[0]}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center justify-center rounded-md bg-blue-600 hover:bg-blue-700 text-white text-xs font-semibold px-3 py-2"
+                  >
+                    Open in Google Maps
+                  </a>
                 </div>
               )}
               <div className="pt-2 border-t border-zinc-100 text-[11px] text-zinc-400">
@@ -1177,7 +1210,7 @@ export function EvacuationRoutes() {
   const [routeTarget, setRouteTarget] = useState<{ lat: number; lng: number; label: string } | null>(null);
   const [showFires, setShowFires] = useState(true);
   const [showEvacZones, setShowEvacZones] = useState(true);
-  const [evacCounts, setEvacCounts] = useState<{ orders: number; warnings: number }>({ orders: 0, warnings: 0 });
+  const [evacCounts, setEvacCounts] = useState<{ orders: number; warnings: number; shelterInPlace: number }>({ orders: 0, warnings: 0, shelterInPlace: 0 });
   const fitZonesRef = useRef<(() => void) | null>(null);
   const [openShelterCount, setOpenShelterCount] = useState(0);
   const [activeFireCount, setActiveFireCount] = useState(0);
@@ -1226,6 +1259,16 @@ export function EvacuationRoutes() {
           </p>
         </div>
         <div className="flex gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() =>
+              document.getElementById('shelter-finder-map')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+            }
+          >
+            <MapPin className="h-4 w-4 mr-2" />
+            Find Shelters on Map
+          </Button>
           <Button variant="outline" size="sm" onClick={() => setDirectionsOpen(!directionsOpen)}>
             <Navigation className="h-4 w-4 mr-2" />
             {directionsOpen ? "Hide Directions" : "Get Directions"}
@@ -1249,25 +1292,27 @@ export function EvacuationRoutes() {
 
       {/* Active Evacuation Banner — always visible so users see the live state,
           even when zero. Matches the always-on shelter banner below. */}
-      <Alert className={`border-l-4 ${evacCounts.orders > 0 ? 'border-l-red-500 bg-red-50' : (evacCounts.warnings > 0 ? 'border-l-orange-500 bg-orange-50' : 'border-l-zinc-300 bg-zinc-50')}`}>
-        <AlertTriangle className={`h-4 w-4 ${evacCounts.orders > 0 ? 'text-red-600' : (evacCounts.warnings > 0 ? 'text-orange-600' : 'text-zinc-500')}`} />
+      <Alert className={`border-l-4 ${evacCounts.orders > 0 ? 'border-l-red-500 bg-red-50' : (evacCounts.warnings > 0 ? 'border-l-orange-500 bg-orange-50' : (evacCounts.shelterInPlace > 0 ? 'border-l-purple-500 bg-purple-50' : 'border-l-zinc-300 bg-zinc-50'))}`}>
+        <AlertTriangle className={`h-4 w-4 ${evacCounts.orders > 0 ? 'text-red-600' : (evacCounts.warnings > 0 ? 'text-orange-600' : (evacCounts.shelterInPlace > 0 ? 'text-purple-600' : 'text-zinc-500'))}`} />
         <AlertDescription>
           <div className="flex items-center justify-between gap-3 flex-wrap">
             <div className="text-sm">
-              {evacCounts.orders + evacCounts.warnings > 0 ? (
+              {evacCounts.orders + evacCounts.warnings + evacCounts.shelterInPlace > 0 ? (
                 <>
                   <strong className="text-red-700">{evacCounts.orders} active evacuation order{evacCounts.orders === 1 ? '' : 's'}</strong>
-                  {' and '}
+                  {', '}
                   <strong className="text-orange-700">{evacCounts.warnings} warning{evacCounts.warnings === 1 ? '' : 's'}</strong>
-                  {' '}in California right now (Cal OES live feed). Orders show as red zones, warnings as orange — click "Show on map" to zoom to them. Lifted orders drop off automatically.
+                  {', and '}
+                  <strong className="text-purple-700">{evacCounts.shelterInPlace} shelter-in-place order{evacCounts.shelterInPlace === 1 ? '' : 's'}</strong>
+                  {' '}in California right now (Cal OES live feed). Orders show as red zones, warnings as orange, shelter-in-place as purple — click "Show on map" to zoom to them. Lifted zones drop off automatically.
                 </>
               ) : (
                 <>
-                  <strong className="text-zinc-700">0 active evacuation orders or warnings</strong> in California right now (Cal OES live feed). When an order or warning is issued, it'll appear here automatically.
+                  <strong className="text-zinc-700">0 active evacuation orders, warnings, or shelter-in-place orders</strong> in California right now (Cal OES live feed). When one is issued, it'll appear here automatically.
                 </>
               )}
             </div>
-            {evacCounts.orders + evacCounts.warnings > 0 && (
+            {evacCounts.orders + evacCounts.warnings + evacCounts.shelterInPlace > 0 && (
               <Button
                 size="sm"
                 variant="destructive"
@@ -1329,7 +1374,7 @@ export function EvacuationRoutes() {
       </Alert>
 
       {/* Interactive Map with Fire Facilities */}
-      <Card>
+      <Card id="shelter-finder-map" className="scroll-mt-24">
         <CardHeader className="flex flex-row items-center justify-between flex-wrap gap-3">
           <CardTitle className="flex items-center gap-2">
             <MapPin className="h-5 w-5" />
