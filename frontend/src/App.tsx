@@ -234,7 +234,13 @@ export default function App() {
         <Toaster position="top-right" richColors />
 
         {/* Header */}
-        <header className="border-b bg-white/95 backdrop-blur-sm sticky top-0 z-[1100]">
+        {/* z-index set inline, not via Tailwind `z-[…]`: this project's build
+            does not compile arbitrary z-index utilities (only the standard
+            scale like .z-50), so `z-[1100]` produced NO rule and the header
+            stayed at z-index:auto — sliding behind the map overlays. Inline
+            style always applies. Paired with `isolation:isolate` on <main>
+            below so Google Maps / deck.gl internals can't escape above it. */}
+        <header className="border-b bg-white/95 backdrop-blur-sm sticky top-0" style={{ zIndex: 1100 }}>
           <div className="container mx-auto px-4 sm:px-6 lg:px-8">
             <div className="flex items-center justify-between h-16">
               <div className="flex items-center space-x-4 transition-none">
@@ -361,7 +367,7 @@ export default function App() {
         </header>
 
         {/* Main Content */}
-        <main className="container mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        <main className="container mx-auto px-4 sm:px-6 lg:px-8 py-8" style={{ isolation: 'isolate' }}>
           <Suspense fallback={<PageFallback />}>
             {currentPage === "dashboard" && <Dashboard onAddLocation={() => goToSettings("locations")} />}
             {currentPage === "evacuation-routes" && <EvacuationRoutes />}
