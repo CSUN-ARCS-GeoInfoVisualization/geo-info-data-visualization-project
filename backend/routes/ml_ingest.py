@@ -21,6 +21,7 @@ from flask import Blueprint, request, jsonify
 
 from data.features import get_feature
 from data.live_weather import get_weather
+from data.weather_crosscheck import get_weather_second
 
 logger = logging.getLogger(__name__)
 ml_ingest_bp = Blueprint("ml_ingest", __name__)
@@ -87,11 +88,45 @@ def _features_for(lat, lon):
     return {
         "evi": float(get_feature(lat, lon, "evi")),
         "air_temp_encoded": float(wx.get("air_temp_encoded", get_feature(lat, lon, "air_temp_encoded"))),
-        "wind": float(wx.get("wind", 0.0)),
+        # get_weather returns the key "wind_speed" (not "wind"). The old default
+        # of 0.0 silently recorded wind=0 on every row, making the wind feature
+        # dead. Read the correct key; fall back to the IDW estimate only if the
+        # live fetch had no wind at all.
+        "wind": float(wx["wind_speed"]) if "wind_speed" in wx else float(get_feature(lat, lon, "wind")),
         "humidity": float(wx.get("humidity", 50.0)),
         "elevation": float(get_feature(lat, lon, "elevation")),
         "kbdi": float(get_feature(lat, lon, "kbdi")),
     }
+
+
+# Layer 2c — cross-source corroboration (INGEST ONLY; never the website path).
+# Compares the primary weather (Open-Meteo) against an independent second source
+# (MET Norway) per point and drops the row if they grossly disagree, catching a
+# plausible-but-wrong value that range/outlier checks can't see. Tolerances are
+# deliberately wide: two legitimate providers routinely differ (e.g. coastal
+# humidity by ~25 pts), so we only flag clearly-anomalous gaps, not normal model
+# disagreement. Fail-open: if the second source is unavailable the row is kept.
+CROSSCHECK_ENABLED = os.getenv("INGEST_CROSSCHECK", "1") != "0"
+XCHECK_TEMP_TOL = 12.0       # °C
+XCHECK_HUMIDITY_TOL = 40.0   # percentage points
+XCHECK_WIND_TOL = 15.0       # m/s
+
+
+def _weather_mismatch(row, second):
+    """Return a reason string if the primary and second weather sources grossly
+    disagree for this point, else None."""
+    primary_temp_c = row["air_temp_encoded"] * 0.02 - 273.15
+    checks = (
+        ("temperature", primary_temp_c, second.get("temperature_celsius"), XCHECK_TEMP_TOL),
+        ("humidity", row.get("humidity"), second.get("humidity"), XCHECK_HUMIDITY_TOL),
+        ("wind", row.get("wind"), second.get("wind_speed"), XCHECK_WIND_TOL),
+    )
+    for name, a, b, tol in checks:
+        if a is None or b is None:
+            continue
+        if abs(a - b) > tol:
+            return f"{name} disagree: primary={a:.1f} second={b:.1f} (>{tol})"
+    return None
 
 
 def _far_from_fires(lat, lon, fires, min_deg=0.15):
@@ -174,8 +209,11 @@ def ingest():
         if _far_from_fires(la, lo, fires):
             nofire_pts.append((la, lo, acq))
 
+    crosscheck = CROSSCHECK_ENABLED and request.args.get("crosscheck", "1") != "0"
     rows = []
     dropped = []
+    cross_dropped = []
+    cross_checked = 0
     start = time.monotonic()
     truncated = False
     for label, pts in ((1, fire_pts), (0, nofire_pts)):
@@ -201,6 +239,17 @@ def ingest():
                 logger.warning("ingest row dropped @ %.3f,%.3f: %s", lat, lon, issue)
                 dropped.append({"lat": row["lat"], "lon": row["lon"], "reason": issue})
                 continue
+            # Layer 2c: cross-source corroboration. Fail-open — a missing second
+            # source never discards the row; only a gross disagreement does.
+            if crosscheck:
+                second = get_weather_second(lat, lon)
+                if second:
+                    cross_checked += 1
+                    mm = _weather_mismatch(row, second)
+                    if mm:
+                        logger.warning("ingest row cross-source mismatch @ %.3f,%.3f: %s", lat, lon, mm)
+                        cross_dropped.append({"lat": row["lat"], "lon": row["lon"], "reason": mm})
+                        continue
             rows.append(row)
         if truncated:
             break
@@ -214,6 +263,9 @@ def ingest():
     return jsonify({"ok": True, "fires_seen": len(fires),
                     "firms_lowconf_dropped": firms_lowconf, "count": len(rows),
                     "dropped": len(dropped), "dropped_detail": dropped[:20],
+                    "cross_source_checked": cross_checked,
+                    "cross_source_dropped": len(cross_dropped),
+                    "cross_source_detail": cross_dropped[:20],
                     "quality_ok": quality_ok, "truncated": truncated,
                     "columns": ROW_COLS, "rows": rows}), 200
 
