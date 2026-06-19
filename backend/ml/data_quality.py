@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import os
 import csv
+import random
 
 import numpy as np
 
@@ -106,6 +107,20 @@ def psi(expected: np.ndarray, actual: np.ndarray, bins: int = 10) -> float:
 MIN_DRIFT_ROWS = 30
 
 
+def sample_recent_rows(n: int = 5, window: int = RECENT_WINDOW, daily_path: str = _DAILY) -> list:
+    """A small random sample of recently-ingested rows (full dicts incl. label +
+    source) so a human can eyeball the data in the weekly digest email."""
+    if not os.path.exists(daily_path):
+        return []
+    with open(daily_path, newline="") as f:
+        rows = list(csv.DictReader(f))
+    recent = rows[-window:] if len(rows) > window else rows
+    if not recent:
+        return []
+    rng = random.Random(len(recent))  # varies as data grows; not security-sensitive
+    return rng.sample(recent, min(n, len(recent)))
+
+
 def health_report(recent_window: int = RECENT_WINDOW,
                   base_path: str = _BASE, daily_path: str = _DAILY) -> dict:
     """Statistical health of the recent ingest. Returns a JSON-able report;
@@ -153,4 +168,5 @@ def health_report(recent_window: int = RECENT_WINDOW,
         "drift_evaluated": drift_evaluated,
         "drift": drift,
         "drifted_features": drifted,
+        "sample": sample_recent_rows(),
     }

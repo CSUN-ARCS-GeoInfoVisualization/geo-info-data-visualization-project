@@ -33,15 +33,30 @@ jobs:
       - name: Install deps
         run: pip install -r backend/requirements.txt pandas
 
-      - name: Data-health check (Layer 2 — outliers + drift; emails on issues)
+      - name: Data-health digest (Layer 2 — outliers + drift + row sample)
         env:
           TOKEN: ${{ secrets.INTERNAL_CRON_TOKEN }}
         run: |
-          # Non-blocking: surfaces feed-quality / drift and emails Ido if unhealthy.
-          # The promotion below is still gated independently on the trained model.
-          curl -s -X POST --max-time 60 \
-            -H "X-Internal-Token: $TOKEN" \
-            https://firescope-api.onrender.com/api/internal/ml/data-health || true
+          # Non-blocking weekly digest (digest=1 => always emails the sample +
+          # any outlier/drift warnings). Promotion below is gated independently.
+          curl -s -X POST --max-time 60 -H "X-Internal-Token: $TOKEN" \
+            "https://firescope-api.onrender.com/api/internal/ml/data-health?digest=1" || true
+
+      - name: Backtest the live model on recent real fires (#5)
+        env:
+          TOKEN: ${{ secrets.INTERNAL_CRON_TOKEN }}
+        run: |
+          # Emails only if recall on recent real fires is low. Non-blocking.
+          curl -s -X POST --max-time 120 -H "X-Internal-Token: $TOKEN" \
+            "https://firescope-api.onrender.com/api/internal/ml/backtest?days=3" || true
+
+      - name: Feature audit — cached elevation vs independent DEM (#6)
+        env:
+          TOKEN: ${{ secrets.INTERNAL_CRON_TOKEN }}
+        run: |
+          # Emails only on a cached-feature mismatch. Non-blocking.
+          curl -s -X POST --max-time 90 -H "X-Internal-Token: $TOKEN" \
+            https://firescope-api.onrender.com/api/internal/ml/feature-audit || true
 
       - name: Gated promote (ships only if the candidate clears physics + metrics)
         id: gate

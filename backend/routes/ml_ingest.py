@@ -12,6 +12,7 @@ repo by the calling workflow (CSV append + commit). That keeps the growing
 training set in free storage with zero database cost-risk.
 """
 import os
+import json
 import time
 import random
 import logging
@@ -22,6 +23,7 @@ from flask import Blueprint, request, jsonify
 from data.features import get_feature
 from data.live_weather import get_weather
 from data.weather_crosscheck import get_weather_second
+from ml.geo_checks import on_ca_land, in_any_perimeter
 
 logger = logging.getLogger(__name__)
 ml_ingest_bp = Blueprint("ml_ingest", __name__)
@@ -43,7 +45,12 @@ CA_BBOX = (-124.0, 32.0, -114.0, 42.0)  # lon_min, lat_min, lon_max, lat_max
 # grows across daily runs, so a modest per-run count is fine.
 MAX_FIRE_PER_RUN = 15
 MAX_NOFIRE_PER_RUN = 15
-TIME_BUDGET_SECONDS = 55  # stop computing well before the 90s worker timeout
+# Point-loop budget. Lowered from 55 because each run now also does pre-loop work
+# (active-perimeter load + a wider FIRMS avoidance fetch) and a per-point
+# cross-source weather call; keeping the loop at 35s leaves comfortable headroom
+# under the gunicorn worker timeout. The dataset grows across daily runs, so a
+# smaller per-run yield is fine.
+TIME_BUDGET_SECONDS = 35
 
 # Column order the workflow appends to california_daily.csv (must match the base
 # CSV header: the 6 features + label, plus provenance).
@@ -182,6 +189,26 @@ def _fetch_firms(days):
     return out, low
 
 
+def _load_active_perimeters():
+    """Active NIFC fire perimeters for the no-fire label check. Prefer the cached
+    copy (already warmed by the website / daily prewarm); fall back to the live
+    compute. Fail-open to an empty set so a fetch problem never blocks ingest."""
+    try:
+        from services.cache import _load_from_db
+        entry = _load_from_db("fire_perimeters")
+        if entry and entry.get("data"):
+            data = entry["data"]
+            return json.loads(data) if isinstance(data, str) else data
+    except Exception as e:
+        logger.warning("perimeter cache read failed: %s", e)
+    try:
+        from routes.predict import _compute_nifc_perimeters
+        return _compute_nifc_perimeters()
+    except Exception as e:
+        logger.warning("perimeter live compute failed: %s", e)
+        return {"features": []}
+
+
 @ml_ingest_bp.route("/internal/ml/ingest", methods=["POST"])
 def ingest():
     expected = os.getenv("INTERNAL_CRON_TOKEN", "")
@@ -202,12 +229,28 @@ def ingest():
     lon0, lat0, lon1, lat1 = CA_BBOX
     acq = fires[0][2] if fires else request.args.get("date", "")
 
+    # No-fire label verification (Layer 2 #1): a sampled "no-fire" point must be
+    # genuinely fire-free. We reject it if it is (a) near any fire in a WIDER
+    # window than today's (so a fire from 2-3 days ago, or one FIRMS caught
+    # adjacent, still excludes it), or (b) inside an active NIFC fire perimeter.
+    # Plus a CA-land mask (#2) so no-fire points are never ocean / out-of-state.
+    avoid_fires, _ = (_fetch_firms(max(days, 3)) if FIRMS_MAP_KEY else ([], 0))
+    if not avoid_fires:
+        avoid_fires = fires
+    perimeters = _load_active_perimeters()
+
     nofire_pts, tries = [], 0
-    while len(nofire_pts) < min(MAX_NOFIRE_PER_RUN, max(len(fire_pts), 10)) and tries < 2000:
+    nofire_target = min(MAX_NOFIRE_PER_RUN, max(len(fire_pts), 10))
+    while len(nofire_pts) < nofire_target and tries < 8000:
         tries += 1
         la, lo = rng.uniform(lat0, lat1), rng.uniform(lon0, lon1)
-        if _far_from_fires(la, lo, fires):
-            nofire_pts.append((la, lo, acq))
+        if not on_ca_land(la, lo):
+            continue
+        if not _far_from_fires(la, lo, avoid_fires):
+            continue
+        if in_any_perimeter(la, lo, perimeters):
+            continue
+        nofire_pts.append((la, lo, acq))
 
     crosscheck = CROSSCHECK_ENABLED and request.args.get("crosscheck", "1") != "0"
     rows = []
@@ -400,16 +443,33 @@ def _send_data_health_email(report: dict):
             f'The weekly gated retrain adapts to it automatically; only dig in if a single feature spikes '
             f'unexpectedly or alongside the feed-quality warning above.</p>'
         )
+    # A few random recent rows to eyeball (#4).
+    sample = report.get("sample", []) or []
+    sample_html = ""
+    if sample:
+        cols = ["acq_date", "fire", "source", "evi", "wind", "humidity", "elevation", "kbdi"]
+        head = "".join(f'<th style="padding:3px 8px;text-align:left;font-size:11px;color:#6b7280;">{c}</th>' for c in cols)
+        body = ""
+        for r in sample:
+            body += "<tr>" + "".join(
+                f'<td style="padding:3px 8px;font-size:11px;border-top:1px solid #eee;">{html_escape(r.get(c, ""))}</td>'
+                for c in cols) + "</tr>"
+        sample_html = (
+            '<p style="margin:14px 0 4px;font-size:13px;color:#374151;"><strong>Random sample of recent rows</strong> '
+            '(eyeball check):</p>'
+            f'<table role="presentation" style="border-collapse:collapse;width:100%;"><tr>{head}</tr>{body}</table>'
+        )
     html = (
-        f'<div style="font-family:Arial,Helvetica,sans-serif;color:#111827;max-width:640px;">'
+        f'<div style="font-family:Arial,Helvetica,sans-serif;color:#111827;max-width:680px;">'
         f'<h2 style="margin:0 0 6px;font-size:18px;">FireScope training-data health</h2>'
         f'<p style="margin:0 0 12px;font-size:13px;color:#6b7280;">Layer-2 statistical check on the '
         f'rolling ingest ({report.get("recent_rows","?")} recent rows vs '
         f'{report.get("earlier_rows","?")} earlier; outliers vs '
         f'{report.get("base_rows",0)+report.get("daily_rows",0)} training rows).</p>'
         f'{"".join(parts)}'
+        f'{sample_html}'
         f'<pre style="background:#f6f8fa;border:1px solid #e5e7eb;border-radius:6px;padding:12px;'
-        f'font-size:11px;white-space:pre-wrap;">{html_escape(json.dumps(report, indent=2))}</pre>'
+        f'font-size:11px;white-space:pre-wrap;margin-top:12px;">{html_escape(json.dumps(report, indent=2))}</pre>'
         f'</div>'
     )
     try:
@@ -450,9 +510,179 @@ def data_health():
 
     report = health_report()
     notify = request.args.get("notify", "1") != "0"
+    # digest=1 forces a weekly summary email even when healthy (so you always get
+    # the row sample to eyeball); otherwise we only email when something's wrong.
+    digest = request.args.get("digest", "0") == "1"
     emailed, email_err = False, None
-    if notify and not report.get("healthy", True):
+    if notify and (digest or not report.get("healthy", True)):
         _id, email_err = _send_data_health_email(report)
         emailed = _id is not None
     return jsonify({"ok": True, "emailed": emailed, "email_error": email_err,
                     "report": report}), 200
+
+
+def _send_alert_email(subject: str, message: str):
+    """Generic ops alert to the model owner (feed outages, low backtest recall,
+    feature mismatches). Same Resend path as the other notifications."""
+    try:
+        import resend
+    except ImportError:
+        return None, "resend SDK missing"
+    api_key = os.getenv("RESEND_API_KEY", "")
+    sender_email = os.getenv("SENDER_EMAIL", "alerts@firescope.dev")
+    sender_name = os.getenv("SENDER_NAME", "FireScope Alerts")
+    if not api_key:
+        return None, "RESEND_API_KEY not set"
+    resend.api_key = api_key
+    html = (
+        f'<div style="font-family:Arial,Helvetica,sans-serif;color:#111827;max-width:640px;">'
+        f'<h2 style="font-size:17px;margin:0 0 8px;">{html_escape(subject)}</h2>'
+        f'<pre style="background:#f6f8fa;border:1px solid #e5e7eb;border-radius:6px;padding:12px;'
+        f'font-size:12px;white-space:pre-wrap;">{html_escape(message)}</pre></div>'
+    )
+    try:
+        resp = resend.Emails.send({
+            "from": f"{sender_name} <{sender_email}>",
+            "to": [PROMOTION_EMAIL_TO],
+            "subject": ("FireScope: " + subject)[:120],
+            "html": html, "text": message,
+        })
+        return resp.get("id"), None
+    except Exception as e:
+        logger.warning("alert email failed: %s", e)
+        return None, str(e)
+
+
+@ml_ingest_bp.route("/internal/ml/alert", methods=["POST"])
+def alert():
+    """Generic ops alert (#3 feed-outage etc.). Body: {subject, message}."""
+    expected = os.getenv("INTERNAL_CRON_TOKEN", "")
+    if not expected:
+        return jsonify({"error": "INTERNAL_CRON_TOKEN not configured"}), 500
+    if request.headers.get("X-Internal-Token", "") != expected:
+        return jsonify({"error": "invalid X-Internal-Token"}), 401
+    body = request.get_json(silent=True) or {}
+    mid, err = _send_alert_email(str(body.get("subject", "alert")), str(body.get("message", "")))
+    if err:
+        return jsonify({"ok": False, "error": err}), 502
+    return jsonify({"ok": True, "id": mid}), 200
+
+
+# Backtest (#5): of recent REAL fires, what fraction did the live model rate
+# High+ beforehand? A recall sanity check on the model that's actually serving.
+BACKTEST_RECALL_THRESHOLD = 0.5
+BACKTEST_BUDGET_SECONDS = 45
+
+
+@ml_ingest_bp.route("/internal/ml/backtest", methods=["POST"])
+def backtest():
+    expected = os.getenv("INTERNAL_CRON_TOKEN", "")
+    if not expected:
+        return jsonify({"error": "INTERNAL_CRON_TOKEN not configured"}), 500
+    if request.headers.get("X-Internal-Token", "") != expected:
+        return jsonify({"error": "invalid X-Internal-Token"}), 401
+
+    days = int(request.args.get("days", 3))
+    try:
+        fires, _ = _fetch_firms(days)
+    except Exception as e:
+        return jsonify({"error": f"FIRMS fetch failed: {e}"}), 502
+    try:
+        from ml.inference import predict_from_features
+    except Exception as e:
+        return jsonify({"error": f"inference import failed: {e}"}), 500
+
+    start = time.monotonic()
+    scores = []
+    for lat, lon, _acq in fires[:30]:
+        if time.monotonic() - start > BACKTEST_BUDGET_SECONDS:
+            break
+        try:
+            f = _features_for(lat, lon)
+            r = predict_from_features(f["evi"], f["air_temp_encoded"], f["wind"],
+                                      f["humidity"], f["elevation"], f["kbdi"])
+            scores.append(float(r["risk_score"]))
+        except Exception:
+            continue
+
+    n = len(scores)
+    if n == 0:
+        return jsonify({"ok": True, "report": {"n": 0, "note": "no recent fires to score"}}), 200
+    recall_high = sum(1 for s in scores if s >= 0.40) / n
+    report = {
+        "n": n,
+        "recall_at_high": round(recall_high, 3),
+        "recall_at_moderate": round(sum(1 for s in scores if s >= 0.20) / n, 3),
+        "avg_risk_on_real_fires": round(sum(scores) / n, 3),
+        "recall_threshold": BACKTEST_RECALL_THRESHOLD,
+    }
+    healthy = recall_high >= BACKTEST_RECALL_THRESHOLD
+    emailed = False
+    if request.args.get("notify", "1") != "0" and not healthy:
+        msg = (json.dumps(report, indent=2) +
+               f"\n\nThe live model rated only {recall_high*100:.0f}% of {n} recent real fires as "
+               f"High+ risk beforehand (threshold {BACKTEST_RECALL_THRESHOLD*100:.0f}%). "
+               f"This suggests the model is under-calling real fire conditions — worth investigating "
+               f"the features or training data.")
+        _id, _ = _send_alert_email("model backtest: low recall on recent fires", msg)
+        emailed = _id is not None
+    return jsonify({"ok": True, "healthy": healthy, "emailed": emailed, "report": report}), 200
+
+
+# Feature audit (#6): cross-validate CACHED elevation against an independent DEM
+# (Open-Meteo elevation API). Elevation is static, so a large disagreement means
+# a corrupt cached tile or a bad source. EVI/KBDI have no easy second provider,
+# so they are NOT cross-validated here (honest scope).
+_OPEN_METEO_ELEV = "https://api.open-meteo.com/v1/elevation"
+FEATURE_AUDIT_ELEV_TOL = 120.0  # meters; DEMs agree well within this for terrain
+
+
+def _elevation_second(lat, lon):
+    try:
+        r = requests.get(_OPEN_METEO_ELEV, params={"latitude": lat, "longitude": lon}, timeout=6)
+        r.raise_for_status()
+        return float(r.json()["elevation"][0])
+    except Exception:
+        return None
+
+
+@ml_ingest_bp.route("/internal/ml/feature-audit", methods=["POST"])
+def feature_audit():
+    expected = os.getenv("INTERNAL_CRON_TOKEN", "")
+    if not expected:
+        return jsonify({"error": "INTERNAL_CRON_TOKEN not configured"}), 500
+    if request.headers.get("X-Internal-Token", "") != expected:
+        return jsonify({"error": "invalid X-Internal-Token"}), 401
+
+    rng = random.Random(20260619)
+    lon0, lat0, lon1, lat1 = CA_BBOX
+    checked, mismatches = [], []
+    tries = 0
+    start = time.monotonic()
+    while len(checked) < 8 and tries < 4000 and time.monotonic() - start < 40:
+        tries += 1
+        la, lo = rng.uniform(lat0, lat1), rng.uniform(lon0, lon1)
+        if not on_ca_land(la, lo):
+            continue
+        try:
+            cached = float(get_feature(la, lo, "elevation"))
+        except Exception:
+            continue
+        second = _elevation_second(la, lo)
+        if second is None:
+            continue
+        rec = {"lat": round(la, 4), "lon": round(lo, 4),
+               "cached": round(cached, 1), "independent": round(second, 1),
+               "diff": round(abs(cached - second), 1)}
+        checked.append(rec)
+        if abs(cached - second) > FEATURE_AUDIT_ELEV_TOL:
+            mismatches.append(rec)
+
+    report = {"checked": len(checked), "mismatches": len(mismatches),
+              "tolerance_m": FEATURE_AUDIT_ELEV_TOL, "detail": mismatches,
+              "note": "elevation cross-validated vs Open-Meteo DEM; EVI/KBDI not cross-validated"}
+    emailed = False
+    if request.args.get("notify", "1") != "0" and mismatches:
+        _id, _ = _send_alert_email("feature audit: cached elevation mismatch", json.dumps(report, indent=2))
+        emailed = _id is not None
+    return jsonify({"ok": True, "healthy": not mismatches, "emailed": emailed, "report": report}), 200
