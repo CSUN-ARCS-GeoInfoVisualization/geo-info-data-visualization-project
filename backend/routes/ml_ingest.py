@@ -98,29 +98,53 @@ def _far_from_fires(lat, lon, fires, min_deg=0.15):
     return all((lat - flat) ** 2 + (lon - flon) ** 2 >= min_deg ** 2 for flat, flon, _ in fires)
 
 
+# Label-quality gate (Layer 2a): drop low-confidence FIRMS detections. VIIRS
+# reports confidence as 'l'/'n'/'h' (low/nominal/high); low-confidence pixels are
+# the usual false positives (industrial heat, flares, sun glint), so labelling
+# them fire=1 is label noise. We keep nominal + high only.
+_LOW_CONFIDENCE = {"l", "low"}
+
+
+def _is_low_confidence(val: str) -> bool:
+    v = (val or "").strip().lower()
+    if v in _LOW_CONFIDENCE:
+        return True
+    # MODIS-style numeric confidence (0-100): treat <30 as low.
+    try:
+        return float(v) < 30.0
+    except (ValueError, TypeError):
+        return False
+
+
 def _fetch_firms(days):
+    """Returns (kept_detections, n_low_confidence_dropped). kept = list of
+    (lat, lon, acq_date) for nominal/high-confidence fire pixels only."""
     if not FIRMS_MAP_KEY:
-        return []
+        return [], 0
     lon0, lat0, lon1, lat1 = CA_BBOX
     url = f"{FIRMS_BASE}/{FIRMS_MAP_KEY}/VIIRS_SNPP_NRT/{lon0},{lat0},{lon1},{lat1}/{days}"
     r = requests.get(url, timeout=30)
     r.raise_for_status()
     lines = r.text.strip().split("\n")
     if len(lines) < 2:
-        return []
+        return [], 0
     h = lines[0].split(",")
     try:
         li, oi, di = h.index("latitude"), h.index("longitude"), h.index("acq_date")
     except ValueError:
-        return []
-    out = []
+        return [], 0
+    ci = h.index("confidence") if "confidence" in h else -1
+    out, low = [], 0
     for line in lines[1:]:
         c = line.split(",")
         try:
+            if ci >= 0 and _is_low_confidence(c[ci]):
+                low += 1
+                continue
             out.append((float(c[li]), float(c[oi]), c[di]))
         except (ValueError, IndexError):
             continue
-    return out
+    return out, low
 
 
 @ml_ingest_bp.route("/internal/ml/ingest", methods=["POST"])
@@ -133,7 +157,7 @@ def ingest():
 
     days = int(request.args.get("days", 1))
     try:
-        fires = _fetch_firms(days)
+        fires, firms_lowconf = _fetch_firms(days)
     except Exception as e:
         logger.warning("FIRMS fetch failed: %s", e)
         return jsonify({"error": f"FIRMS fetch failed: {e}"}), 502
@@ -187,7 +211,8 @@ def ingest():
     computed = len(rows) + len(dropped)
     quality_ok = computed > 0 and len(dropped) <= computed * 0.5
 
-    return jsonify({"ok": True, "fires_seen": len(fires), "count": len(rows),
+    return jsonify({"ok": True, "fires_seen": len(fires),
+                    "firms_lowconf_dropped": firms_lowconf, "count": len(rows),
                     "dropped": len(dropped), "dropped_detail": dropped[:20],
                     "quality_ok": quality_ok, "truncated": truncated,
                     "columns": ROW_COLS, "rows": rows}), 200
@@ -279,3 +304,103 @@ def promotion_email():
     if err:
         return jsonify({"ok": False, "error": err}), 502
     return jsonify({"ok": True, "id": msg_id, "to": PROMOTION_EMAIL_TO}), 200
+
+
+def _send_data_health_email(report: dict):
+    """Email a Layer-2 data-health alert. Distinguishes a feed-corruption signal
+    (high outlier rate — urgent) from distribution drift (usually seasonal —
+    informational, the weekly retrain adapts to it)."""
+    try:
+        import resend
+    except ImportError:
+        return None, "resend SDK missing"
+    api_key = os.getenv("RESEND_API_KEY", "")
+    sender_email = os.getenv("SENDER_EMAIL", "alerts@firescope.dev")
+    sender_name = os.getenv("SENDER_NAME", "FireScope Alerts")
+    if not api_key:
+        return None, "RESEND_API_KEY not set"
+    resend.api_key = api_key
+
+    o_rate = report.get("outlier_rate", 0.0)
+    o_thresh = report.get("outlier_rate_threshold", 0.10)
+    drifted = report.get("drifted_features", [])
+    drift = report.get("drift", {})
+
+    parts = []
+    if o_rate > o_thresh:
+        parts.append(
+            f'<p style="margin:0 0 10px;font-size:14px;color:#b91c1c;"><strong>&#9888; Feed quality issue.</strong> '
+            f'{o_rate*100:.1f}% of recent rows are statistical outliers vs the training distribution '
+            f'(threshold {o_thresh*100:.0f}%). This usually means an upstream feed is returning '
+            f'plausible-but-wrong values &mdash; worth investigating before the next promotion.</p>'
+        )
+    if drifted:
+        rows_html = "".join(
+            f'<tr><td style="padding:3px 10px;font-size:13px;font-family:Arial">{html_escape(f)}</td>'
+            f'<td style="padding:3px 10px;font-size:13px;font-family:Arial">PSI {drift[f]["psi"]}</td></tr>'
+            for f in drifted
+        )
+        parts.append(
+            f'<p style="margin:0 0 6px;font-size:14px;color:#92400e;"><strong>&#8505; Distribution drift.</strong> '
+            f'These features have shifted vs earlier ingest (PSI &gt; {report.get("psi_threshold", 0.25)}):</p>'
+            f'<table role="presentation" style="border-collapse:collapse;margin:0 0 10px;">{rows_html}</table>'
+            f'<p style="margin:0 0 10px;font-size:13px;color:#6b7280;">Drift is often just seasonal change. '
+            f'The weekly gated retrain adapts to it automatically; only dig in if a single feature spikes '
+            f'unexpectedly or alongside the feed-quality warning above.</p>'
+        )
+    html = (
+        f'<div style="font-family:Arial,Helvetica,sans-serif;color:#111827;max-width:640px;">'
+        f'<h2 style="margin:0 0 6px;font-size:18px;">FireScope training-data health</h2>'
+        f'<p style="margin:0 0 12px;font-size:13px;color:#6b7280;">Layer-2 statistical check on the '
+        f'rolling ingest ({report.get("recent_rows","?")} recent rows vs '
+        f'{report.get("earlier_rows","?")} earlier; outliers vs '
+        f'{report.get("base_rows",0)+report.get("daily_rows",0)} training rows).</p>'
+        f'{"".join(parts)}'
+        f'<pre style="background:#f6f8fa;border:1px solid #e5e7eb;border-radius:6px;padding:12px;'
+        f'font-size:11px;white-space:pre-wrap;">{html_escape(json.dumps(report, indent=2))}</pre>'
+        f'</div>'
+    )
+    try:
+        flags = []
+        if o_rate > o_thresh:
+            flags.append("feed-quality")
+        if drifted:
+            flags.append(f"drift:{'/'.join(drifted)}")
+        subject = "FireScope data health: " + (", ".join(flags) if flags else "ok")
+        resp = resend.Emails.send({
+            "from": f"{sender_name} <{sender_email}>",
+            "to": [PROMOTION_EMAIL_TO],
+            "subject": subject[:120],
+            "html": html,
+            "text": json.dumps(report, indent=2),
+        })
+        return resp.get("id"), None
+    except Exception as e:
+        logger.warning("data-health email failed: %s", e)
+        return None, str(e)
+
+
+@ml_ingest_bp.route("/internal/ml/data-health", methods=["POST"])
+def data_health():
+    """Layer-2 data-quality monitor: outlier rate + distribution drift over the
+    rolling ingest. Emails the owner when unhealthy (unless ?notify=0). Returns
+    the full report so the caller (weekly workflow) can log it."""
+    expected = os.getenv("INTERNAL_CRON_TOKEN", "")
+    if not expected:
+        return jsonify({"error": "INTERNAL_CRON_TOKEN not configured"}), 500
+    if request.headers.get("X-Internal-Token", "") != expected:
+        return jsonify({"error": "invalid X-Internal-Token"}), 401
+
+    try:
+        from ml.data_quality import health_report
+    except Exception as e:
+        return jsonify({"error": f"data_quality import failed: {e}"}), 500
+
+    report = health_report()
+    notify = request.args.get("notify", "1") != "0"
+    emailed, email_err = False, None
+    if notify and not report.get("healthy", True):
+        _id, email_err = _send_data_health_email(report)
+        emailed = _id is not None
+    return jsonify({"ok": True, "emailed": emailed, "email_error": email_err,
+                    "report": report}), 200

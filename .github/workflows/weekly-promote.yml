@@ -33,6 +33,16 @@ jobs:
       - name: Install deps
         run: pip install -r backend/requirements.txt pandas
 
+      - name: Data-health check (Layer 2 — outliers + drift; emails on issues)
+        env:
+          TOKEN: ${{ secrets.INTERNAL_CRON_TOKEN }}
+        run: |
+          # Non-blocking: surfaces feed-quality / drift and emails Ido if unhealthy.
+          # The promotion below is still gated independently on the trained model.
+          curl -s -X POST --max-time 60 \
+            -H "X-Internal-Token: $TOKEN" \
+            https://firescope-api.onrender.com/api/internal/ml/data-health || true
+
       - name: Gated promote (ships only if the candidate clears physics + metrics)
         id: gate
         working-directory: backend
