@@ -82,6 +82,22 @@ def outlier_rate(X: np.ndarray, stats: dict, k: float = OUTLIER_Z) -> float:
     return float(np.mean(row_max > k))
 
 
+def constant_features(X: np.ndarray, dominant_frac: float = 0.95) -> list:
+    """Return features that are effectively constant in the window — a single
+    value accounts for >= dominant_frac of rows. Catches a 'dead' feature (e.g.
+    the wind=0 field-name bug) that is in-range and so evades the outlier monitor.
+    This is the dedicated constant-feature detector noted as future work."""
+    if X.size == 0:
+        return []
+    dead = []
+    for i, name in enumerate(FEATURE_COLS):
+        col = np.round(X[:, i], 6)
+        _, counts = np.unique(col, return_counts=True)
+        if counts.max() / len(col) >= dominant_frac:
+            dead.append(name)
+    return dead
+
+
 def psi(expected: np.ndarray, actual: np.ndarray, bins: int = 10) -> float:
     """Population Stability Index of `actual` vs `expected` for one feature.
     Bin edges are the deciles of the expected (baseline) distribution."""
@@ -146,6 +162,10 @@ def health_report(recent_window: int = RECENT_WINDOW,
     full = np.vstack([base, daily]) if base.size else daily
     o_rate = outlier_rate(recent, baseline_stats(full))
 
+    # Dead / near-constant feature detector (#3) — catches a flatlined feature
+    # the outlier/drift checks miss.
+    dead = constant_features(recent)
+
     # Drift: recent daily vs earlier daily, only when both halves are big enough.
     drift, drifted, drift_evaluated = {}, [], False
     if len(earlier) >= MIN_DRIFT_ROWS and len(recent) >= MIN_DRIFT_ROWS:
@@ -155,7 +175,7 @@ def health_report(recent_window: int = RECENT_WINDOW,
             drift[name] = {"psi": round(p, 4), "drifted": bool(p > PSI_THRESHOLD)}
         drifted = [n for n, v in drift.items() if v["drifted"]]
 
-    healthy = (o_rate <= OUTLIER_RATE_THRESHOLD) and not drifted
+    healthy = (o_rate <= OUTLIER_RATE_THRESHOLD) and not drifted and not dead
     return {
         "healthy": bool(healthy),
         "base_rows": int(len(base)),
@@ -168,5 +188,6 @@ def health_report(recent_window: int = RECENT_WINDOW,
         "drift_evaluated": drift_evaluated,
         "drift": drift,
         "drifted_features": drifted,
+        "dead_features": dead,
         "sample": sample_recent_rows(),
     }

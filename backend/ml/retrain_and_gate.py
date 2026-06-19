@@ -73,7 +73,18 @@ def _load_dataset():
     if not frames:
         raise FileNotFoundError(f"no training data found at {_BASE} or {_DAILY}")
     df = pd.concat(frames, ignore_index=True).dropna(subset=_DB_COLS).drop_duplicates()
-    return df, " + ".join(parts)
+
+    # Wind sanity check. A provider field-name bug recorded wind == 0 on a block of
+    # ingested rows; being in-range AND constant, it evades the statistical outlier
+    # monitor, so we exclude it here before training/evaluation. Real wind (archive
+    # daily-max or live) is always > 0, so this drops exactly the corrupted rows.
+    before = len(df)
+    df = df[df["wind"] > 0].reset_index(drop=True)
+    dropped_wind = before - len(df)
+    desc = " + ".join(parts)
+    if dropped_wind:
+        desc += f" -{dropped_wind} wind<=0"
+    return df, desc
 
 
 def decide(cand_m, cand_phys_ok, cand_bad_features, prod_m, prod_phys_ok):

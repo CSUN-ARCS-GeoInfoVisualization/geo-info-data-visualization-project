@@ -421,7 +421,15 @@ def _send_data_health_email(report: dict):
     drifted = report.get("drifted_features", [])
     drift = report.get("drift", {})
 
+    dead = report.get("dead_features", [])
     parts = []
+    if dead:
+        parts.append(
+            f'<p style="margin:0 0 10px;font-size:14px;color:#b91c1c;"><strong>&#9888; Dead / constant feature(s): '
+            f'{html_escape(", ".join(dead))}.</strong> One or more features are flatlined in the recent window '
+            f'(a single value dominates) &mdash; usually a broken upstream field. These rows are excluded from '
+            f'training by the sanity check, but the feed should be fixed.</p>'
+        )
     if o_rate > o_thresh:
         parts.append(
             f'<p style="margin:0 0 10px;font-size:14px;color:#b91c1c;"><strong>&#9888; Feed quality issue.</strong> '
@@ -474,6 +482,8 @@ def _send_data_health_email(report: dict):
     )
     try:
         flags = []
+        if dead:
+            flags.append(f"dead:{'/'.join(dead)}")
         if o_rate > o_thresh:
             flags.append("feed-quality")
         if drifted:
