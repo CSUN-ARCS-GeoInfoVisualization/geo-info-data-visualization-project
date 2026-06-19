@@ -23,10 +23,15 @@ All notable changes to FireScope are documented here. The format is based on
   Manual promotion any day before Sunday is preserved.
 - About page (Settings → About): documented the model, scoring, live inputs, data-quality
   safeguards, and the weekly monitoring + auto-promotion.
+- **Constant/dead-feature detector** (`ml/data_quality.constant_features`): flags any feature whose
+  values are ≥95% identical in the recent window (a flatlined feature that, being in-range, evades
+  the outlier monitor). Surfaced in the data-health report + email.
 
 ### Fixed
 - **Dead wind feature**: `_features_for` read the wrong key (`wind` vs Open-Meteo's `wind_speed`), so
-  wind was recorded as `0.0` on every ingested row. Now records real wind (ingest path only).
+  wind was recorded as `0.0` on every ingested row. Now records real wind (ingest path only). A
+  **wind sanity check** in `retrain_and_gate._load_dataset` also excludes the historical zero-wind
+  rows (`wind <= 0`) from the training/evaluation union so they cannot degrade auto-promotion.
 - **Navbar stacking**: header z-index is set inline (this build doesn't compile Tailwind arbitrary
   `z-[…]`), and `<main>` is isolated, so the sticky nav stays above all map overlays on every page.
 - Removed stale "random forest" wording from current model descriptions, GitHub docs, and the

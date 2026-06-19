@@ -17,14 +17,17 @@ A **data-quality + self-updating-model** release. The model now keeps itself cur
   low-confidence FIRMS label filter, no-fire verification (active NIFC perimeter + 3-day fire window),
   California-land mask on no-fire sampling, and cross-source weather corroboration (Open-Meteo vs MET
   Norway, `data/weather_crosscheck.py`). Rejected rows → `training_data/quarantine.csv`.
-- **Weekly monitors** (`backend/ml/data_quality.py` + endpoints): outlier rate + PSI drift, a row-sample
-  digest email, a live-model backtest on recent real fires, and a cached-elevation cross-check.
+- **Weekly monitors** (`backend/ml/data_quality.py` + endpoints): outlier rate + PSI drift, a
+  constant/dead-feature detector, a row-sample digest email, a live-model backtest on recent real
+  fires, and a cached-elevation cross-check.
 - **Weekly gated auto-promotion** (`.github/workflows/weekly-promote.yml`, Sunday 06:00 UTC): retrains +
   promotes only past the physics + AUROC/Brier gate; archives the old model, deploys, emails the owner.
   Daily ingest stays dry-run; manual promote (`daily-retrain.yml` promote=true) preserved.
-- **Fixes**: dead wind feature (wrong dict key → wind was always 0); navbar z-index (inline, `<main>`
-  isolated) so the sticky nav stays above all maps; "random forest" wording removed from current
-  descriptions/docs/site (the live model is monotonic HGB + isotonic; version history left as-is).
+- **Fixes**: dead wind feature (wrong dict key → wind was always 0) — fixed forward, and a wind
+  sanity check in `retrain_and_gate._load_dataset` excludes the 343 historical zero-wind rows from
+  training so auto-promotion isn't degraded; navbar z-index (inline, `<main>` isolated) so the sticky
+  nav stays above all maps; "random forest" wording removed from current descriptions/docs/site (the
+  live model is monotonic HGB + isotonic; version history left as-is).
 - About page now documents the model, scoring, inputs, data-quality safeguards, and auto-promotion.
 
 All new ML safeguards are confined to the ingest/cron path — the live prediction/website path is
