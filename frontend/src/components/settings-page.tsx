@@ -348,9 +348,21 @@ export function SettingsPage({ defaultTab = "profile" }: SettingsPageProps) {
                   />
                   <AboutItem
                     name="Daily training ingest (NASA FIRMS)"
-                    description="Every day at 08:00 UTC a GitHub Actions workflow (.github/workflows/daily-retrain.yml) calls POST /api/internal/ml/ingest, which pulls the latest NASA FIRMS satellite fire detections, computes the six features at each detection plus sampled no-fire points, and appends them to the committed training set (backend/ml/training_data/california_daily.csv). A candidate model is retrained and scored against a quality gate on every run. Scheduled runs are dry-run — the live model is only swapped in through a manual, gated promotion — so the dataset keeps growing every day while the production model changes only when a new candidate actually beats the gate."
+                    description="Every day a GitHub Actions workflow (.github/workflows/daily-retrain.yml) pulls the latest NASA FIRMS satellite fire detections, computes the six features at each detection plus sampled no-fire points, and appends the rows that pass the data-quality checks to the committed training set (backend/ml/training_data/california_daily.csv). It runs all year, so winter no-fire conditions accumulate alongside summer fires — the model learns the full seasonal range through the weather and drought features, not a calendar input."
                     badge="Cron · daily"
                     badgeColor="bg-amber-100 text-amber-700"
+                  />
+                  <AboutItem
+                    name="Data-quality safeguards (every row is vetted)"
+                    description="Before a row can train the model it must clear several checks: physical-range and missing-value sanity; a low-confidence filter on FIRMS fire labels (drops likely false positives); a California-land mask plus active-perimeter and 3-day fire-window check on no-fire points (so a 'no-fire' point is never actually in a burning area); and cross-source weather corroboration — each point's Open-Meteo reading is compared against an independent provider (MET Norway) and dropped if they grossly disagree. Rejected rows are quarantined for review, never trained on."
+                    badge="Data quality"
+                    badgeColor="bg-sky-100 text-sky-700"
+                  />
+                  <AboutItem
+                    name="Weekly monitoring & gated auto-promotion"
+                    description="Every Sunday night the system scans the ingested data for statistical outliers and distribution drift, back-tests the live model against recent real fires, and cross-checks cached terrain data — emailing the team on any problem. It then retrains on the full rolling dataset and auto-promotes the new model to production only if it clears the gate (physics monotonicity + held-out AUROC/Brier non-regression); the previous model is archived. Manual promotion any day before Sunday remains available."
+                    badge="Auto · weekly"
+                    badgeColor="bg-red-100 text-red-700"
                   />
                 </div>
               </div>

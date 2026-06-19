@@ -40,6 +40,32 @@ The model is trained with **monotonic constraints** (`monotonic_cst=[0,1,1,-1,0,
 
 **Promotion gate.** Before any retrained candidate replaces the live model it must pass two checks (`retrain_and_gate.py`): (1) a hard PDP physical-direction check (`validate_monotonicity` sweeps each constrained feature across its range and requires it to move the correct direction), then (2) held-out AUROC and Brier must not regress versus the current model. A model that fails physics is never shipped, even if its raw accuracy looks higher.
 
+## Data quality & continuous training
+
+The training set grows daily and the model self-updates weekly, both fully in GitHub Actions (no DB
+cost-risk — the dataset lives in-repo). Every row is vetted before it can train the model.
+
+**Ingest gate (per row, `routes/ml_ingest.py`):**
+- **Range/sanity** — feature values must be within physical bounds, in California, non-NaN.
+- **Label confidence** — low-confidence FIRMS detections are dropped (likely false positives).
+- **No-fire verification** — a sampled no-fire point is rejected if it's inside an active NIFC
+  perimeter or near a fire in a 3-day FIRMS window, and must fall on CA land (county polygon mask).
+- **Cross-source corroboration** — each point's Open-Meteo weather is compared to an independent
+  provider (MET Norway); grossly disagreeing points are dropped. Fail-open, ingest-only.
+- Rejected rows are appended to `training_data/quarantine.csv` for review.
+
+**Weekly monitors (`POST /api/internal/ml/...`):**
+- `data-health` — robust-z outlier rate + PSI drift (recent vs earlier ingest) + a random row sample.
+- `backtest` — scores recent *real* fires with the live model; alerts if recall@High < 0.5.
+- `feature-audit` — cross-validates cached elevation against an independent DEM.
+- All email the owner on a problem (`alert`); the weekly run sends a digest regardless.
+
+**Promotion:**
+- `daily-retrain.yml` (daily) ingests + retrains a candidate **dry-run** (logs the gate decision).
+- `weekly-promote.yml` (Sunday night) retrains and **auto-promotes** if the candidate clears the gate
+  (physics + AUROC/Brier non-regression), archives the previous model, deploys, and emails the owner.
+- Manual promotion any day: run `daily-retrain.yml` with `promote=true`.
+
 ## Feature encoding
 
 | Feature | Encoding | Notes |
