@@ -83,10 +83,20 @@ inverted, KBDI saturating).
 | `elevation` | USGS 3DEP |
 | `kbdi` | Keetch-Byram Drought Index — 30-day cumulative soil-moisture deficit |
 
-The model **loads once at startup** and is retrained daily by a **GitHub-Actions pipeline** that
-ingests FIRMS detections, appends to an in-repo dataset (zero DB cost-risk), runs a physics-hard +
-metric gate, and promotes on pass. Details in [`backend/ml/README.md`](backend/ml/README.md) and
-[docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+The model **loads once at startup** and is kept current by a **GitHub-Actions pipeline** with no
+database cost-risk (the dataset lives in-repo):
+
+- **Daily ingest** appends new FIRMS detections + sampled no-fire points, but only rows that pass a
+  multi-stage **data-quality gate**: physical-range/sanity checks, a low-confidence FIRMS label
+  filter, a California-land mask + active-NIFC-perimeter / 3-day fire-window check on no-fire points,
+  and **cross-source weather corroboration** (Open-Meteo vs MET Norway). Rejected rows are
+  quarantined, never trained on.
+- **Weekly** the data is scanned for outliers + distribution drift (PSI), the live model is
+  back-tested against recent real fires, and cached terrain is cross-checked — with email alerts.
+- **Weekly gated auto-promotion** retrains on the full rolling set and ships the new model only if it
+  clears the physics-hard + AUROC/Brier non-regression gate (manual promotion also available).
+
+Details in [`backend/ml/README.md`](backend/ml/README.md) and [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
 
 ## Data sources
 

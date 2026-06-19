@@ -1,6 +1,6 @@
 # FireScope — Session Handoff
 
-**Stable tag:** `v3.1-stable` (commit `0b7ed78`, 2026-06-03)
+**Stable tag:** `v3.2-stable` (2026-06-19) — prior: `v3.1-stable` (commit `0b7ed78`, 2026-06-03)
 **Live URL:** https://firescope.dev (custom domain, HTTPS) · https://firescope.netlify.app
 **API:** https://firescope-api.onrender.com/api
 **GitHub Release:** https://github.com/CSUN-ARCS-GeoInfoVisualization/geo-info-data-visualization-project/releases/tag/v3.1-stable
@@ -8,6 +8,27 @@
 This document is the single source of truth for picking up FireScope work in a fresh session. Read this first, then `README.md`, then jump in.
 
 ---
+
+## What v3.2-stable adds (on top of v3.1)
+
+A **data-quality + self-updating-model** release. The model now keeps itself current safely:
+
+- **Multi-stage ingest data-quality gate** (`backend/routes/ml_ingest.py`): range/sanity per row,
+  low-confidence FIRMS label filter, no-fire verification (active NIFC perimeter + 3-day fire window),
+  California-land mask on no-fire sampling, and cross-source weather corroboration (Open-Meteo vs MET
+  Norway, `data/weather_crosscheck.py`). Rejected rows → `training_data/quarantine.csv`.
+- **Weekly monitors** (`backend/ml/data_quality.py` + endpoints): outlier rate + PSI drift, a row-sample
+  digest email, a live-model backtest on recent real fires, and a cached-elevation cross-check.
+- **Weekly gated auto-promotion** (`.github/workflows/weekly-promote.yml`, Sunday 06:00 UTC): retrains +
+  promotes only past the physics + AUROC/Brier gate; archives the old model, deploys, emails the owner.
+  Daily ingest stays dry-run; manual promote (`daily-retrain.yml` promote=true) preserved.
+- **Fixes**: dead wind feature (wrong dict key → wind was always 0); navbar z-index (inline, `<main>`
+  isolated) so the sticky nav stays above all maps; "random forest" wording removed from current
+  descriptions/docs/site (the live model is monotonic HGB + isotonic; version history left as-is).
+- About page now documents the model, scoring, inputs, data-quality safeguards, and auto-promotion.
+
+All new ML safeguards are confined to the ingest/cron path — the live prediction/website path is
+untouched (no latency impact). Email alerts go to `ido.the.cohen@gmail.com`.
 
 ## What v3.1-stable adds (on top of v3.0)
 

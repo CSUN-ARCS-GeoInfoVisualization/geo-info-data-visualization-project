@@ -4,6 +4,41 @@ All notable changes to FireScope are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). The authoritative working notes live in
 [`docs/SESSION_HANDOFF.md`](docs/SESSION_HANDOFF.md).
 
+## [3.2-stable] — 2026-06-19
+
+### Added
+- **Data-quality gate on every ingested row** (`routes/ml_ingest.py`): physical-range/sanity checks,
+  a low-confidence FIRMS label filter, no-fire verification (reject points inside an active NIFC
+  perimeter or near a fire in a 3-day window), a California-land mask on no-fire sampling, and
+  **cross-source weather corroboration** (Open-Meteo vs MET Norway — drop grossly-disagreeing
+  points). Rejected rows are quarantined to `training_data/quarantine.csv`.
+- **Weekly data-quality monitors**: outlier rate (robust z) + distribution drift (PSI, recent vs
+  earlier ingest) via `POST /api/internal/ml/data-health` (weekly digest with a random row sample);
+  `POST /api/internal/ml/backtest` scores recent real fires against the live model (alerts on low
+  recall); `POST /api/internal/ml/feature-audit` cross-validates cached elevation vs an independent
+  DEM. Email alerts via `POST /api/internal/ml/alert` (feed-outage detection in the daily run too).
+- **Weekly gated auto-promotion** (`.github/workflows/weekly-promote.yml`, Sunday night): retrains on
+  the full rolling dataset and promotes only if the candidate clears the physics + AUROC/Brier gate;
+  archives the previous model, deploys, and emails the owner (`POST /api/internal/ml/promotion-email`).
+  Manual promotion any day before Sunday is preserved.
+- About page (Settings → About): documented the model, scoring, live inputs, data-quality
+  safeguards, and the weekly monitoring + auto-promotion.
+
+### Fixed
+- **Dead wind feature**: `_features_for` read the wrong key (`wind` vs Open-Meteo's `wind_speed`), so
+  wind was recorded as `0.0` on every ingested row. Now records real wind (ingest path only).
+- **Navbar stacking**: header z-index is set inline (this build doesn't compile Tailwind arbitrary
+  `z-[…]`), and `<main>` is isolated, so the sticky nav stays above all map overlays on every page.
+- Removed stale "random forest" wording from current model descriptions, GitHub docs, and the
+  website (the live model is the monotonic HistGradientBoosting + isotonic classifier; version
+  history retains its original wording).
+
+### Changed
+- Shelters & Evacuation: surface CalOES shelter-in-place orders; "Show on map" buttons render only
+  when there's something to show; directions live only on open-shelter cards (not evacuation zones).
+- Ingest point-loop budget 55s → 35s for headroom (added perimeter load + wider FIRMS fetch +
+  per-point cross-source call).
+
 ## [3.1-stable] — 2026-06-03
 
 ### Added
