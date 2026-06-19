@@ -1240,20 +1240,6 @@ export function EvacuationRoutes() {
           </p>
         </div>
         <div className="flex gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() =>
-              document.getElementById('shelter-finder-map')?.scrollIntoView({ behavior: 'smooth', block: 'start' })
-            }
-          >
-            <MapPin className="h-4 w-4 mr-2" />
-            Find Shelters on Map
-          </Button>
-          <Button variant="outline" size="sm" onClick={() => setDirectionsOpen(!directionsOpen)}>
-            <Navigation className="h-4 w-4 mr-2" />
-            {directionsOpen ? "Hide Directions" : "Get Directions"}
-          </Button>
           <Button size="sm">
             <Phone className="h-4 w-4 mr-2" />
             Emergency: 911
