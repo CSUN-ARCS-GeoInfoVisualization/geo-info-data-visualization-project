@@ -1,0 +1,120 @@
+name: Weekly model auto-promote
+
+# Self-updating model, gated. Once a week the rolling dataset (grown daily by
+# daily-retrain.yml) is used to train a candidate and PROMOTE it to production —
+# but only if it clears the same gate as a manual promotion:
+#   1. physics: every constrained feature must point the right way
+#      (ml.train_monotonic.validate_monotonicity)
+#   2. metrics: held-out AUROC / Brier must not regress vs the live model
+# If the candidate fails the gate, nothing is shipped (the live model stays).
+# When it DOES promote, the new model is committed + deployed and Ido is emailed.
+#
+# Manual edge is preserved: daily-retrain.yml still runs dry-run every day, and
+# you can promote by hand any time before Sunday (daily-retrain with promote=true).
+
+on:
+  schedule:
+    # Sunday night Pacific. 06:00 UTC Monday = 22:00 PST / 23:00 PDT Sunday.
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  actions: write   # to dispatch sync-domain-deployment after a promotion
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install deps
+        run: pip install -r backend/requirements.txt pandas
+
+      - name: Gated promote (ships only if the candidate clears physics + metrics)
+        id: gate
+        working-directory: backend
+        run: |
+          NOW=$(date -u +%Y-%m-%dT%H:%M:%S)
+          echo "now=$NOW" >> "$GITHUB_OUTPUT"
+          python -m ml.retrain_and_gate --now "$NOW" | tee /tmp/promote.log
+          # The model .pkl is rewritten ONLY on a promotion; a rejected gate
+          # leaves it untouched. That diff is our promote/no-promote signal.
+          if git diff --quiet -- ml/models/wildfire_model_predictive.pkl; then
+            echo "promoted=false" >> "$GITHUB_OUTPUT"
+            echo "No promotion — candidate did not clear the gate (or matched current). Live model unchanged."
+          else
+            echo "promoted=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Commit (model bundle on promote; decision log always)
+        id: commit
+        run: |
+          git config user.name 'IdoCohen560'
+          git config user.email 'ido.the.cohen@gmail.com'
+          # RETRAIN_LOG records every weekly decision (promote or reject).
+          git add backend/ml/models/RETRAIN_LOG.md || true
+          if [ "${{ steps.gate.outputs.promoted }}" = "true" ]; then
+            git add backend/ml/models/wildfire_model_predictive.pkl \
+                    backend/ml/models/wildfire_scaler_predictive.pkl \
+                    backend/ml/models/model_metadata.json \
+                    backend/ml/models/archive || true
+          fi
+          if git diff --cached --quiet; then
+            echo "nothing to commit"
+          else
+            MSG="ml: weekly gate decision ($(date -u +%F))"
+            [ "${{ steps.gate.outputs.promoted }}" = "true" ] && MSG="ml: weekly auto-promotion ($(date -u +%F))"
+            git commit -m "$MSG"
+            git push
+          fi
+
+      - name: Trigger domain-deployment sync (deploy the new model)
+        if: steps.gate.outputs.promoted == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run sync-domain-deployment.yml --repo "${{ github.repository }}"
+
+      - name: Email Ido about the promotion
+        if: steps.gate.outputs.promoted == 'true'
+        env:
+          TOKEN: ${{ secrets.INTERNAL_CRON_TOKEN }}
+          NOW: ${{ steps.gate.outputs.now }}
+        run: |
+          python - <<'PY'
+          import os, re, json, urllib.request
+          # Pull the latest PROMOTED entry from the retrain log for the email body.
+          log_path = "backend/ml/models/RETRAIN_LOG.md"
+          entry, auroc, brier, dataset, rows = "", None, None, "?", "?"
+          try:
+              text = open(log_path).read()
+              blocks = re.split(r"(?=^## )", text, flags=re.M)
+              promoted = [b for b in blocks if "— PROMOTED" in b]
+              if promoted:
+                  entry = promoted[-1].strip()
+                  m = re.search(r"candidate: AUROC=([\d.]+) Brier=([\d.]+)", entry)
+                  if m: auroc, brier = m.group(1), m.group(2)
+                  d = re.search(r"dataset: (.+?) \((\d+) rows\)", entry)
+                  if d: dataset, rows = d.group(1), d.group(2)
+          except Exception as e:
+              entry = f"(could not read log: {e})"
+          payload = json.dumps({
+              "when": os.environ.get("NOW", ""),
+              "dataset": dataset, "rows": rows,
+              "auroc": auroc, "brier": brier,
+              "reasons": "passed physics + metric gate",
+              "log": entry,
+          }).encode()
+          req = urllib.request.Request(
+              "https://firescope-api.onrender.com/api/internal/ml/promotion-email",
+              data=payload, method="POST",
+              headers={"X-Internal-Token": os.environ["TOKEN"], "Content-Type": "application/json"})
+          try:
+              print(urllib.request.urlopen(req, timeout=60).read().decode())
+          except Exception as e:
+              # Don't fail the workflow if the email send hiccups — the model is
+              # already promoted + committed; the email is a notification only.
+              print(f"promotion email POST failed (non-fatal): {e}")
+          PY
