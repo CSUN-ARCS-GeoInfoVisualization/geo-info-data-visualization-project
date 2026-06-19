@@ -46,12 +46,43 @@ jobs:
         run: |
           python - <<'PY'
           import os, csv, json, urllib.request
-          url = "https://firescope-api.onrender.com/api/internal/ml/ingest?days=1"
-          req = urllib.request.Request(url, method="POST",
-                                       headers={"X-Internal-Token": os.environ["INGEST_TOKEN"]})
-          data = json.load(urllib.request.urlopen(req, timeout=120))
+          token = os.environ["INGEST_TOKEN"]
+          base = "https://firescope-api.onrender.com/api/internal/ml"
+
+          def post(path, body=None):
+              data = json.dumps(body).encode() if body is not None else None
+              req = urllib.request.Request(base + path, data=data, method="POST",
+                  headers={"X-Internal-Token": token, "Content-Type": "application/json"})
+              return json.load(urllib.request.urlopen(req, timeout=130))
+
+          def alert(subject, message):
+              try: post("/alert", {"subject": subject, "message": message})
+              except Exception as e: print("alert send failed:", e)
+
+          data = post("/ingest?days=1")
           rows, cols = data.get("rows", []), data.get("columns", [])
-          print(f"fires_seen={data.get('fires_seen')} new_rows={len(rows)}")
+          dropped = (data.get("dropped_detail") or []) + (data.get("cross_source_detail") or [])
+          print(f"fires_seen={data.get('fires_seen')} new_rows={len(rows)} "
+                f"dropped={data.get('dropped')} cross_dropped={data.get('cross_source_dropped')} "
+                f"lowconf={data.get('firms_lowconf_dropped')} quality_ok={data.get('quality_ok')}")
+
+          # #4 Quarantine: keep a record of every dropped row + reason for review.
+          if dropped:
+              qpath = "backend/ml/training_data/quarantine.csv"
+              exists = os.path.exists(qpath)
+              with open(qpath, "a", newline="") as f:
+                  w = csv.DictWriter(f, fieldnames=["lat", "lon", "reason"])
+                  if not exists: w.writeheader()
+                  for d in dropped:
+                      w.writerow({"lat": d.get("lat"), "lon": d.get("lon"), "reason": d.get("reason")})
+              print(f"quarantined {len(dropped)} rows -> {qpath}")
+
+          # #3 Feed-outage / quality alert.
+          if not rows or data.get("quality_ok") is False:
+              alert("daily ingest produced no usable data" if not rows else "daily ingest quality_ok=false",
+                    json.dumps({k: data.get(k) for k in
+                                ("fires_seen","count","dropped","cross_source_dropped","quality_ok")}, indent=2))
+
           if not rows:
               raise SystemExit(0)
           path = "backend/ml/training_data/california_daily.csv"
@@ -79,7 +110,8 @@ jobs:
         run: |
           git config user.name 'IdoCohen560'
           git config user.email 'ido.the.cohen@gmail.com'
-          git add backend/ml/training_data/california_daily.csv || true
+          git add backend/ml/training_data/california_daily.csv \
+                  backend/ml/training_data/quarantine.csv || true
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.promote }}" = "true" ]; then
             git add backend/ml/models/wildfire_model_predictive.pkl \
                     backend/ml/models/wildfire_scaler_predictive.pkl \
