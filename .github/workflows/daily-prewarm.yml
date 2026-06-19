@@ -7,7 +7,7 @@ name: Daily zone-risk pre-warm
 #   2. EVI from MODIS via GEE (cached 16d)
 #   3. Elevation from USGS 3DEP (cached forever)
 #   4. KBDI from NASA POWER (cached 24h — see feature_cache_kbdi)
-#   5. ML inference (calibrated RF, 6 features)
+#   5. ML inference (monotonic HGB, isotonic-calibrated, 6 features)
 #   6. Write zone_risk_cache row
 #
 # Workflow is intentionally a no-code shell job — it just curls the live API.

@@ -247,7 +247,9 @@ backend/
 ├── ml/
 │   ├── inference.py        # predict_from_features() — model loading and scoring
 │   ├── build_dataset.py    # Training-data pipeline (FIRMS + AppEEARS + Open-Meteo)
-│   ├── retrain.py          # Training + evaluation
+│   ├── train_monotonic.py  # Monotonic HGB + isotonic calibration + physics gate (current model)
+│   ├── retrain_and_gate.py # Gated retrain/promote on the rolling dataset
+│   ├── retrain.py          # Training + evaluation (legacy)
 │   └── models/
 │       ├── wildfire_model_predictive.pkl
 │       ├── wildfire_scaler_predictive.pkl

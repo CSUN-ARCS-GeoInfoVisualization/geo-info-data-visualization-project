@@ -1,8 +1,8 @@
 """
 Wildfire Risk Inference Module
 
-Loads the trained RandomForest model and runs inference given pre-extracted
-feature values.
+Loads the trained monotonic gradient-boosted model (HistGradientBoosting with
+isotonic calibration) and runs inference given pre-extracted feature values.
 
 Feature order (must match training): EVI, air_temp_encoded, Wind, Humidity,
 Elevation, KBDI.
