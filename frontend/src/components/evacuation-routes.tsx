@@ -351,7 +351,11 @@ function FireFacilitiesOverlay({
 
   // Update clusters when zoom changes
   useEffect(() => {
-    if (!map || facilitiesData.length === 0) return;
+    if (!map) return;
+    // When there are no open shelters, clear any previously-rendered pins.
+    // Returning early here used to leave clusteredData stale, so shelters
+    // that had since CLOSED kept showing on the map.
+    if (facilitiesData.length === 0) { setClusteredData([]); return; }
 
     const updateClusters = () => {
       const currentZoom = Math.floor(map.getZoom() || 8);
@@ -1325,16 +1329,18 @@ export function EvacuationRoutes() {
                 </>
               )}
             </div>
-            <Button
-              size="sm"
-              className="bg-emerald-600 hover:bg-emerald-700"
-              onClick={() => {
-                document.getElementById('shelter-finder-map')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
-                fitSheltersRef.current?.();
-              }}
-            >
-              Show on map
-            </Button>
+            {openShelterCount > 0 && (
+              <Button
+                size="sm"
+                className="bg-emerald-600 hover:bg-emerald-700"
+                onClick={() => {
+                  document.getElementById('shelter-finder-map')?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                  fitSheltersRef.current?.();
+                }}
+              >
+                Show on map
+              </Button>
+            )}
           </div>
         </AlertDescription>
       </Alert>
