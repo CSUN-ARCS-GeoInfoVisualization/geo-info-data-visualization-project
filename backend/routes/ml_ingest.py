@@ -106,6 +106,61 @@ def _features_for(lat, lon):
     }
 
 
+_ARCHIVE_URL = "https://archive-api.open-meteo.com/v1/archive"
+
+
+def _weather_for_date(lat, lon, date_str):
+    """Daily-archive weather for a specific past date (±3-day mean), matching the
+    base training set's feature definition (wind_speed_10m_max, temp/humidity
+    daily mean). Returns {wind, air_temp_encoded, humidity} or None if the archive
+    has no data yet (recent dates lag a few days). Used by the backtest so recent
+    fires are scored with weather AT fire time, not current weather."""
+    import datetime as _dt
+    try:
+        t = _dt.datetime.strptime(date_str, "%Y-%m-%d")
+    except (ValueError, TypeError):
+        return None
+    start = (t - _dt.timedelta(days=3)).strftime("%Y-%m-%d")
+    end = (t + _dt.timedelta(days=3)).strftime("%Y-%m-%d")
+    try:
+        r = requests.get(_ARCHIVE_URL, params={
+            "latitude": lat, "longitude": lon, "start_date": start, "end_date": end,
+            "daily": "wind_speed_10m_max,temperature_2m_mean,relative_humidity_2m_mean",
+            "wind_speed_unit": "ms", "timezone": "America/Los_Angeles",
+        }, timeout=15)
+        r.raise_for_status()
+        d = r.json().get("daily", {})
+        winds = [v for v in d.get("wind_speed_10m_max", []) if v is not None]
+        temps = [v for v in d.get("temperature_2m_mean", []) if v is not None]
+        hums = [v for v in d.get("relative_humidity_2m_mean", []) if v is not None]
+        if not winds or not temps or not hums:
+            return None
+        import statistics
+        return {
+            "wind": float(statistics.mean(winds)),
+            "air_temp_encoded": (float(statistics.mean(temps)) + 273.15) / 0.02,
+            "humidity": float(statistics.mean(hums)),
+        }
+    except Exception:
+        return None
+
+
+def _features_for_date(lat, lon, date_str):
+    """Like _features_for but with weather AT the given date (archive). Falls back
+    to current weather if the archive has no data for that date yet."""
+    wx = _weather_for_date(lat, lon, date_str)
+    if wx is None:
+        return _features_for(lat, lon)
+    return {
+        "evi": float(get_feature(lat, lon, "evi")),
+        "air_temp_encoded": wx["air_temp_encoded"],
+        "wind": wx["wind"],
+        "humidity": wx["humidity"],
+        "elevation": float(get_feature(lat, lon, "elevation")),
+        "kbdi": float(get_feature(lat, lon, "kbdi")),
+    }
+
+
 # Layer 2c — cross-source corroboration (INGEST ONLY; never the website path).
 # Compares the primary weather (Open-Meteo) against an independent second source
 # (MET Norway) per point and drops the row if they grossly disagree, catching a
@@ -604,11 +659,13 @@ def backtest():
 
     start = time.monotonic()
     scores = []
-    for lat, lon, _acq in fires[:30]:
+    for lat, lon, acq in fires[:30]:
         if time.monotonic() - start > BACKTEST_BUDGET_SECONDS:
             break
         try:
-            f = _features_for(lat, lon)
+            # Score with weather AT the fire's date (archive), not current weather,
+            # so the recall metric reflects conditions the fire actually burned in.
+            f = _features_for_date(lat, lon, acq)
             r = predict_from_features(f["evi"], f["air_temp_encoded"], f["wind"],
                                       f["humidity"], f["elevation"], f["kbdi"])
             scores.append(float(r["risk_score"]))
