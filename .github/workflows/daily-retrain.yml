@@ -110,8 +110,12 @@ jobs:
         run: |
           git config user.name 'IdoCohen560'
           git config user.email 'ido.the.cohen@gmail.com'
-          git add backend/ml/training_data/california_daily.csv \
-                  backend/ml/training_data/quarantine.csv || true
+          # Stage each file independently: a single `git add A B` aborts and
+          # stages NOTHING if any pathspec is missing (quarantine.csv only exists
+          # on days with dropped rows). That regression silently dropped every
+          # daily commit from 2026-06-20 on. Separate adds avoid it.
+          git add backend/ml/training_data/california_daily.csv || true
+          [ -f backend/ml/training_data/quarantine.csv ] && git add backend/ml/training_data/quarantine.csv || true
           if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.promote }}" = "true" ]; then
             git add backend/ml/models/wildfire_model_predictive.pkl \
                     backend/ml/models/wildfire_scaler_predictive.pkl \
