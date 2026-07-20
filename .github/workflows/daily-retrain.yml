@@ -40,6 +40,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history so the staleness watchdog can read california_daily.csv's last-changed date
       - uses: actions/setup-python@v5
         with:
           python-version: '3.12'
@@ -71,8 +73,28 @@ jobs:
               try: post("/alert", {"subject": subject, "message": message})
               except Exception as e: print("alert send failed:", e)
 
-          data = post(f"/ingest?days={days}")
-          rows, cols = data.get("rows", []), data.get("columns", [])
+          # Resilience: FIRMS near-real-time can post late, so a short window may
+          # return empty on a given run. Escalate the look-back until data appears
+          # (bounded to 4 days — larger windows overload the ingest endpoint), so a
+          # transient posting lag self-heals within the run instead of silently
+          # skipping the day. Every attempt passes the SAME server-side quality gate.
+          base_days = int(days)
+          windows = [base_days] + [d for d in (3, 4) if d > base_days]
+          data, rows, cols = None, [], []
+          for d in windows:
+              try:
+                  data = post(f"/ingest?days={d}")
+              except Exception as e:
+                  print(f"ingest days={d} failed: {e}")
+                  continue
+              rows, cols = data.get("rows", []), data.get("columns", [])
+              print(f"attempt days={d}: fires_seen={data.get('fires_seen')} rows={len(rows)}")
+              if rows:
+                  break
+          if data is None:
+              alert("daily ingest: all FIRMS attempts errored",
+                    "every /ingest attempt raised; FIRMS or the backend may be down")
+              raise SystemExit(0)
           dropped = (data.get("dropped_detail") or []) + (data.get("cross_source_detail") or [])
           print(f"fires_seen={data.get('fires_seen')} new_rows={len(rows)} "
                 f"dropped={data.get('dropped')} cross_dropped={data.get('cross_source_dropped')} "
@@ -171,3 +193,25 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: gh workflow run sync-domain-deployment.yml --repo "${{ github.repository }}"
+
+      - name: Staleness watchdog — alert if training data stops growing
+        # Runs even when earlier steps fail. ANY failure mode (FIRMS outage,
+        # endpoint 502, credential lapse, code bug) shows up the same way: the
+        # dataset stops growing. If california_daily.csv has not changed in >=3
+        # days, surface it loudly instead of failing green — this is the alarm the
+        # silent 2026-07-10..07-20 freeze lacked.
+        if: always()
+        env:
+          TOKEN: ${{ secrets.INTERNAL_CRON_TOKEN }}
+        run: |
+          LAST=$(git log -1 --format=%ct -- backend/ml/training_data/california_daily.csv 2>/dev/null || echo 0)
+          NOW=$(date -u +%s)
+          AGE=$(( (NOW - ${LAST:-0}) / 86400 ))
+          echo "training data last grew ${AGE} day(s) ago (last commit ts=${LAST})"
+          if [ "${LAST:-0}" -gt 0 ] && [ "$AGE" -ge 3 ]; then
+            echo "::warning::FireScope training data stalled ${AGE} days"
+            curl -s -X POST --max-time 60 -H "X-Internal-Token: $TOKEN" \
+              -H "Content-Type: application/json" \
+              -d "{\"subject\":\"FireScope: training data stalled ${AGE} days\",\"message\":\"california_daily.csv has not grown in ${AGE} days. The daily ingest/training loop may be silently failing — check the daily-retrain workflow run logs and the FIRMS /ingest endpoint.\"}" \
+              "https://firescope-api.onrender.com/api/internal/ml/alert" || true
+          fi
