@@ -1,8 +1,12 @@
 name: Daily training ingest + gated retrain
 
 # Continuous model improvement, fully in GitHub (zero database cost-risk):
-#   1. ingest  : ask the backend for a day of FIRMS detections + computed
-#                features, append them to the committed california_daily.csv.
+#   1. ingest  : ask the backend for the last 2 days of FIRMS detections +
+#                computed features, and append the NEW ones (deduped against the
+#                committed set) to california_daily.csv. A 2-day window is needed
+#                because FIRMS near-real-time has not posted the current UTC day's
+#                VIIRS granules yet at 08:00 UTC, so days=1 saw fires_seen=0 and
+#                the dataset stopped growing after 2026-07-10.
 #   2. retrain : evaluate a monotonic candidate against the gate.
 #                - scheduled runs are DRY-RUN (log the decision, never touch the
 #                  production model).
@@ -22,6 +26,10 @@ on:
         description: 'Promote the model if the gate passes (commits + deploys)'
         type: boolean
         default: false
+      days:
+        description: 'FIRMS look-back window in days (default 2; raise for a one-time backfill)'
+        type: string
+        default: '2'
 
 permissions:
   contents: write
@@ -40,13 +48,17 @@ jobs:
         # training-only, so add it explicitly for the retrain step.
         run: pip install -r backend/requirements.txt pandas
 
-      - name: Ingest a day of FIRMS detections + features
+      - name: Ingest recent FIRMS detections + features
         env:
           INGEST_TOKEN: ${{ secrets.INTERNAL_CRON_TOKEN }}
+          # Scheduled runs use a 2-day window (previous UTC day is always posted
+          # by 08:00 UTC). A manual run may pass a larger window to backfill gaps.
+          INGEST_DAYS: ${{ github.event_name == 'workflow_dispatch' && inputs.days || '2' }}
         run: |
           python - <<'PY'
           import os, csv, json, urllib.request
           token = os.environ["INGEST_TOKEN"]
+          days = os.environ.get("INGEST_DAYS", "2")
           base = "https://firescope-api.onrender.com/api/internal/ml"
 
           def post(path, body=None):
@@ -59,7 +71,7 @@ jobs:
               try: post("/alert", {"subject": subject, "message": message})
               except Exception as e: print("alert send failed:", e)
 
-          data = post("/ingest?days=1")
+          data = post(f"/ingest?days={days}")
           rows, cols = data.get("rows", []), data.get("columns", [])
           dropped = (data.get("dropped_detail") or []) + (data.get("cross_source_detail") or [])
           print(f"fires_seen={data.get('fires_seen')} new_rows={len(rows)} "
@@ -87,13 +99,32 @@ jobs:
               raise SystemExit(0)
           path = "backend/ml/training_data/california_daily.csv"
           exists = os.path.exists(path)
+          # Dedup: a >=2-day FIRMS window re-returns detections already captured on
+          # a previous run, so append only rows whose (lat, lon, acq_date) is not
+          # already in the committed dataset. Without this, widening the window
+          # would double-count every fire across overlapping days.
+          seen = set()
+          if exists:
+              with open(path, newline="") as f:
+                  for r in csv.DictReader(f):
+                      seen.add((r.get("lat"), r.get("lon"), r.get("acq_date")))
+          new_rows = []
+          for r in rows:
+              key = (str(r.get("lat")), str(r.get("lon")), str(r.get("acq_date")))
+              if key in seen:
+                  continue
+              seen.add(key)
+              new_rows.append(r)
+          print(f"ingest returned {len(rows)} rows; {len(new_rows)} new after dedup")
+          if not new_rows:
+              raise SystemExit(0)
           with open(path, "a", newline="") as f:
               w = csv.DictWriter(f, fieldnames=cols)
               if not exists:
                   w.writeheader()
-              for r in rows:
+              for r in new_rows:
                   w.writerow({c: r.get(c) for c in cols})
-          print(f"appended {len(rows)} rows -> {path}")
+          print(f"appended {len(new_rows)} rows -> {path}")
           PY
 
       - name: Gated retrain
