@@ -4,7 +4,11 @@ services:
     runtime: python
     rootDir: backend
     buildCommand: pip install -r requirements.txt
-    preDeployCommand: FLASK_APP="app:create_app" flask db upgrade
+    # Retry the migration: the Basic-tier DB occasionally enters recovery mode
+    # (restart/OOM), and a pre-deploy that lands in that window fails the whole
+    # deploy with "database system is in recovery mode". Retry up to 6x/15s to
+    # ride out a transient window; a genuine migration error still fails (exit 1).
+    preDeployCommand: bash -c 'for i in 1 2 3 4 5 6; do FLASK_APP="app:create_app" flask db upgrade && exit 0; echo "db upgrade attempt $i failed (DB may be in recovery); retrying in 15s"; sleep 15; done; echo "db upgrade failed after 6 attempts"; exit 1'
     startCommand: gunicorn "app:create_app()" --bind 0.0.0.0:$PORT --timeout 90 --graceful-timeout 30
     envVars:
       - key: FLASK_ENV
