@@ -54,3 +54,9 @@
 - production: AUROC=0.8930 Brier=0.1463 physics_ok=True
 - reasons: AUROC regressed 0.8930 -> 0.8797
 
+## 2026-08-17T06:35:17 — PROMOTED
+- dataset: california_2020_kbdi.csv(1350) + california_daily.csv(767) -343 wind<=0 (1772 rows)
+- candidate: AUROC=0.8684 Brier=0.1226 physics_ok=True
+- production: AUROC=0.8692 Brier=0.1646 physics_ok=True
+- reasons: candidate clears physics + metric gate
+

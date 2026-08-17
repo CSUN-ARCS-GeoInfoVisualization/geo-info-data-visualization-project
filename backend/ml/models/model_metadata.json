@@ -16,8 +16,8 @@
     0,
     1
   ],
-  "trained_at": "2026-06-03T20:32:42",
-  "dataset": "california_2020_kbdi.csv(1350) + california_daily.csv(57)",
-  "rows": 1407,
-  "heldout_auroc": 0.8881438910174543
+  "trained_at": "2026-08-17T06:35:17",
+  "dataset": "california_2020_kbdi.csv(1350) + california_daily.csv(767) -343 wind<=0",
+  "rows": 1772,
+  "heldout_auroc": 0.8684051854085016
 }
