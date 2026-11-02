@@ -120,3 +120,9 @@
 - production: AUROC=0.9333 Brier=0.1005 physics_ok=True
 - reasons: AUROC regressed 0.9333 -> 0.8749; Brier regressed 0.1005 -> 0.1067
 
+## 2026-11-02T14:15:36 — REJECTED
+- dataset: california_2020_kbdi.csv(1350) + california_daily.csv(1531) -344 wind<=0 (2531 rows)
+- candidate: AUROC=0.8808 Brier=0.1061 physics_ok=True
+- production: AUROC=0.9350 Brier=0.0986 physics_ok=True
+- reasons: AUROC regressed 0.9350 -> 0.8808; Brier regressed 0.0986 -> 0.1061
+
